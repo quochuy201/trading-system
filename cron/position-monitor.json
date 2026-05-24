@@ -1,0 +1,8 @@
+{
+  "name": "trading-position-monitor",
+  "schedule": "*/5 9-16 * * 1-5",
+  "timezone": "America/New_York",
+  "prompt": "Run position monitoring check. Use the trading-monitor skill. Check all open positions against their trade plans. Report status. Execute exits if triggered.",
+  "skills": ["trading-monitor"],
+  "enabled": true
+}

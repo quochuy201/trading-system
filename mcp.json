@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "trading-tools": {
+      "command": "uv",
+      "args": ["run", "--directory", "./tools", "server.py"],
+      "env": {
+        "ALPACA_API_KEY": "${ALPACA_API_KEY}",
+        "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",
+        "ALPACA_BASE_URL": "${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}"
+      }
+    }
+  }
+}

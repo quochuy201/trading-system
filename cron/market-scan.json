@@ -1,0 +1,8 @@
+{
+  "name": "trading-market-scan",
+  "schedule": "45 9 * * 1-5",
+  "timezone": "America/New_York",
+  "prompt": "Run the full trading workflow: Phase 1 (health check) → Phase 2 (research scan) → Phase 3 (trade execution). Follow the SOUL.md workflow exactly. Use the day-trade-momentum SOP v1.0.0.",
+  "skills": ["trading-research", "trading-trader"],
+  "enabled": true
+}

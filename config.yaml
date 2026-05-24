@@ -1,0 +1,39 @@
+# Trading System Configuration
+model: claude-sonnet-4-20250514
+temperature: 0
+max_turns: 30
+
+# Scheduling (ET timezone)
+schedule:
+  market_scan: "09:45"
+  eod_review: "16:15"
+  monitor_interval_seconds: 30
+
+# Risk defaults
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_portfolio_concentration_pct: 20.0
+  daily_loss_limit_pct: 3.0
+  max_open_positions: 5
+
+# Income target — used by OPERATING_MANUAL.md §3 to size for "trading for a living".
+# This is NOT a quota; it gates whether the agent runs in NORMAL or DEFENSIVE mode
+# based on rolling 30-day expectancy. Set 0 to disable the gate.
+income:
+  target_per_day_usd: 0
+  weekly_drawdown_halt_pct: 6.0    # OPERATING_MANUAL §4.4
+  monthly_drawdown_halt_pct: 10.0  # OPERATING_MANUAL §4.4
+
+# Broker
+broker:
+  mode: paper  # paper | live | simulation
+  slippage_pct: 0.05
+  fee_per_trade: 0.0
+
+# Notifications
+notifications:
+  enabled: true
+  on_trade: true
+  on_exit: true
+  daily_summary: true
+  alerts: true

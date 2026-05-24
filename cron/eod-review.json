@@ -1,0 +1,8 @@
+{
+  "name": "trading-eod-review",
+  "schedule": "15 16 * * 1-5",
+  "timezone": "America/New_York",
+  "prompt": "Run end-of-day review: Phase 5 from SOUL.md. Check all positions are closed (if not, close them). Calculate daily P&L, journal all trades, send daily summary notification.",
+  "skills": ["trading-monitor"],
+  "enabled": true
+}

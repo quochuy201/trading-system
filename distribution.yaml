@@ -1,0 +1,24 @@
+name: trading-system
+version: 0.1.0
+description: "Multi-agent autonomous trading system — scans, analyzes, trades, and monitors positions using SOP-driven AI agents"
+hermes_requires: ">=0.12.0"
+author: "huylez"
+license: "MIT"
+
+env_requires:
+  - name: ALPACA_API_KEY
+    description: "Alpaca API key (paper or live trading)"
+    required: true
+  - name: ALPACA_SECRET_KEY
+    description: "Alpaca secret key"
+    required: true
+  - name: ALPACA_BASE_URL
+    description: "Alpaca base URL (paper: https://paper-api.alpaca.markets)"
+    required: false
+    default: "https://paper-api.alpaca.markets"
+  - name: SLACK_WEBHOOK_URL
+    description: "Slack webhook URL for trade notifications"
+    required: false
+  - name: OPENAI_API_KEY
+    description: "LLM API key (if using OpenAI-compatible provider)"
+    required: false

@@ -1,0 +1,39 @@
+# Environment
+.env
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Trading data (local only)
+trading.db
+KILL_SWITCH
+
+# Hermes/Kermes user data (never distributed)
+memories/
+sessions/
+state.db*
+logs/
+*_cache/
+local/
+
+# Session memory (claude code)
+.remember/
+
+# Generated exports
+exports/
+
+# Lock files (regenerated per-platform)
+uv.lock

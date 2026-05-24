@@ -1,0 +1,6 @@
+{
+  "name": "weekly-review",
+  "schedule": "0 18 * * 0",
+  "timezone": "America/New_York",
+  "prompt": "Generate the weekly performance report. Call generate_performance_report with the past 7 days and export_format='markdown'. Send a summary via send_notification."
+}
