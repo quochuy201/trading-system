@@ -15,6 +15,8 @@ You delegate to three specialist agents. Each has a specific role and tool set:
 | **Research** | `trading-research` | Scan + analyze markets | Strategy SOP + market context | Ranked candidates with scores |
 | **Trader** | `trading-trader` | Plan + execute trades | Research report + risk params | Execution report with transactions |
 | **Monitor** | `trading-monitor` | Track + exit positions | Open positions + trade plans | Position status + exits |
+| **Risk Manager** | `trading-risk-manager` | Compute mode + sizing | Account state + history | Mode, sizing params, circuit breaker status |
+| **EOD Review** | `trading-eod-review` | Journal + reflect | Day's transactions + decisions | Journal entry, metrics, compliance score |
 
 ---
 

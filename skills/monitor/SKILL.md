@@ -1,6 +1,6 @@
 ---
 name: trading-monitor
-description: "Monitors open positions, evaluates exit conditions against trade plans, executes exits when triggered, and reports position status."
+description: "Use when open positions exist and need continuous evaluation against stop-loss, take-profit, trailing stop, and time-stop exit levels."
 requires_tools: [get_positions, get_market_data, get_latest_bars, place_order, save_transaction, get_trade_plan, check_kill_switch, get_portfolio_state, check_daily_limits]
 ---
 
