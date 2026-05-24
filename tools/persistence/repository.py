@@ -367,3 +367,86 @@ class Repository:
             d["metrics"] = json.loads(d["metrics"] or "{}")
             results.append(d)
         return results
+
+    # --- Backtest ---
+
+    def save_backtest_run(self, run: dict) -> None:
+        self.conn.execute(
+            """INSERT INTO backtest_runs
+            (run_id, started_at, symbols, start_date, end_date, timeframe,
+             initial_capital, sop_version, skill_versions, config_snapshot, status)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (run["run_id"], run["started_at"], run["symbols"],
+             run["start_date"], run["end_date"], run["timeframe"],
+             run["initial_capital"], run.get("sop_version"),
+             run.get("skill_versions"), run.get("config_snapshot"), "running"),
+        )
+        self.conn.commit()
+
+    def get_backtest_run(self, run_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM backtest_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_backtest_run(self, run_id: str, **fields) -> None:
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [run_id]
+        self.conn.execute(f"UPDATE backtest_runs SET {sets} WHERE run_id = ?", vals)
+        self.conn.commit()
+
+    def save_backtest_decision(self, d: dict) -> None:
+        self.conn.execute(
+            """INSERT INTO backtest_decisions
+            (decision_id, run_id, bar_index, timestamp, symbol, phase,
+             input_state, tools_called, rules_evaluated, score, decision,
+             reasoning, trade_plan, workflow_valid, violation_details)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (d["decision_id"], d["run_id"], d["bar_index"], d["timestamp"],
+             d["symbol"], d["phase"], d["input_state"], d["tools_called"],
+             d["rules_evaluated"], d.get("score"), d["decision"],
+             d["reasoning"], d.get("trade_plan"), d["workflow_valid"],
+             d.get("violation_details")),
+        )
+        self.conn.commit()
+
+    def get_backtest_decisions(self, run_id: str, symbol: str = "", limit: int = 10000) -> list[dict]:
+        query = "SELECT * FROM backtest_decisions WHERE run_id = ?"
+        params: list = [run_id]
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        query += " ORDER BY bar_index LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_backtest_decision(self, decision_id: str, **fields) -> None:
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [decision_id]
+        self.conn.execute(f"UPDATE backtest_decisions SET {sets} WHERE decision_id = ?", vals)
+        self.conn.commit()
+
+    def save_backtest_trade(self, t: dict) -> None:
+        self.conn.execute(
+            """INSERT INTO backtest_trades
+            (trade_id, run_id, symbol, side, entry_bar, entry_timestamp,
+             entry_price, entry_quantity, entry_decision_id)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (t["trade_id"], t["run_id"], t["symbol"], t["side"],
+             t["entry_bar"], t["entry_timestamp"], t["entry_price"],
+             t["entry_quantity"], t["entry_decision_id"]),
+        )
+        self.conn.commit()
+
+    def update_backtest_trade(self, trade_id: str, **fields) -> None:
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [trade_id]
+        self.conn.execute(f"UPDATE backtest_trades SET {sets} WHERE trade_id = ?", vals)
+        self.conn.commit()
+
+    def get_backtest_trades(self, run_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM backtest_trades WHERE run_id = ? ORDER BY entry_bar", (run_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]

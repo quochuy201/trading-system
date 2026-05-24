@@ -162,6 +162,78 @@ CREATE TABLE IF NOT EXISTS performance_reports (
     metrics TEXT NOT NULL,
     generated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    run_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    symbols TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    initial_capital REAL NOT NULL,
+    final_equity REAL,
+    total_pnl REAL,
+    total_pnl_pct REAL,
+    total_trades INTEGER,
+    win_rate REAL,
+    expectancy REAL,
+    max_drawdown REAL,
+    sop_version TEXT,
+    skill_versions TEXT,
+    config_snapshot TEXT,
+    status TEXT DEFAULT 'running'
+);
+
+CREATE TABLE IF NOT EXISTS backtest_decisions (
+    decision_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    bar_index INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    input_state TEXT NOT NULL,
+    tools_called TEXT NOT NULL,
+    rules_evaluated TEXT,
+    score REAL,
+    decision TEXT NOT NULL,
+    reasoning TEXT NOT NULL,
+    trade_plan TEXT,
+    workflow_valid INTEGER NOT NULL,
+    violation_details TEXT,
+    outcome_pnl REAL,
+    outcome_pnl_pct REAL,
+    outcome_r_multiple REAL,
+    outcome_exit_bar INTEGER,
+    outcome_exit_price REAL,
+    outcome_exit_reason TEXT,
+    outcome_label TEXT,
+    FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    trade_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    entry_bar INTEGER NOT NULL,
+    entry_timestamp TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    entry_quantity INTEGER NOT NULL,
+    entry_decision_id TEXT NOT NULL,
+    exit_bar INTEGER,
+    exit_timestamp TEXT,
+    exit_price REAL,
+    exit_reason TEXT,
+    exit_decision_id TEXT,
+    pnl REAL,
+    pnl_pct REAL,
+    r_multiple REAL,
+    hold_bars INTEGER,
+    max_favorable_excursion REAL,
+    max_adverse_excursion REAL,
+    FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id)
+);
 """
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent / "trading.db"
