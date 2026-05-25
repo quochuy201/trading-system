@@ -30,6 +30,78 @@ broker:
   slippage_pct: 0.05
   fee_per_trade: 0.0
 
+# Scanner universe — stocks the agent scans daily for candidates
+# The agent reads this list at scan time. Override per-request with specific tickers.
+scanner:
+  universe:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - TSLA
+    - META
+    - GOOGL
+    - AMZN
+    - MU
+    - AVGO
+    - QCOM
+    - CRM
+    - INTC
+    - ORCL
+    - ADBE
+    - NFLX
+    - UBER
+    - SHOP
+    - PLTR
+    - MRVL
+    - LRCX
+    - KLAC
+    - AMAT
+    - ON
+    - SMCI
+    - JPM
+    - GS
+    - MS
+    - BAC
+    - V
+    - MA
+    - AXP
+    - C
+    - UNH
+    - JNJ
+    - LLY
+    - PFE
+    - ABBV
+    - MRK
+    - BMY
+    - XOM
+    - CVX
+    - OXY
+    - SLB
+    - COP
+    - WMT
+    - COST
+    - NKE
+    - SBUX
+    - MCD
+    - DIS
+    - CAT
+    - BA
+    - GE
+    - DE
+    - RTX
+    - LMT
+    - COIN
+    - MARA
+    - RIOT
+    - RIVN
+    - ARM
+    - SNOW
+    - DDOG
+    - NET
+    - CRWD
+  include_spy: true  # always include SPY for relative strength calculation
+
 # Notifications
 notifications:
   enabled: true
