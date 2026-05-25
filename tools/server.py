@@ -1091,5 +1091,210 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
     return str(path)
 
 
+# --- Backtest v2 Tools ---
+
+_harness = None
+
+
+@mcp.tool()
+def start_backtest_v2(
+    symbols: str, start_date: str, end_date: str,
+    lookback_start: str = "",
+    timeframe: str = "1Day", initial_capital: float = 100000.0,
+    sop_version: str = "",
+) -> str:
+    """Initialize a backtest run with workflow enforcement and structured logging.
+
+    When to use: Starting a new backtest session. Sets up the simulation broker,
+    loads historical data (including lookback for indicators), and prepares bar-by-bar stepping.
+
+    Sample input: start_backtest_v2("NVDA,AAPL", "2026-03-01", "2026-03-31", "2025-12-01", "1Day", 100000.0, "v1.0.0")
+
+    Expected output:
+    {"run_id": "bt-abc123def456", "status": "ready", "total_bars": 84, "symbols": ["NVDA", "AAPL"]}
+
+    IMPORTANT: lookback_start should be 3+ months before start_date so indicators (SMA50, RSI) can warm up.
+    If omitted, defaults to 4 months before start_date.
+    """
+    from backtest.harness import BacktestHarness
+    from datetime import datetime as dt, timedelta
+    global _harness, _broker
+
+    symbol_list = [s.strip() for s in symbols.split(",")]
+
+    # Default lookback: 4 months before start
+    if not lookback_start:
+        start_dt = dt.fromisoformat(start_date)
+        lookback_start = (start_dt - timedelta(days=120)).strftime("%Y-%m-%d")
+
+    # Load data including lookback period for indicator warmup
+    from data.cache import load_price_cache as _load
+    _load(get_broker(), get_repo(), symbol_list, lookback_start, end_date, timeframe)
+
+    _harness = BacktestHarness(get_repo())
+    run_id = _harness.start(
+        symbols=symbol_list,
+        start_date=start_date,
+        end_date=end_date,
+        timeframe=timeframe,
+        initial_capital=initial_capital,
+        sop_version=sop_version,
+    )
+
+    # Swap global broker to simulation
+    _broker = _harness.get_broker()
+
+    return json.dumps({
+        "run_id": run_id,
+        "status": "ready",
+        "total_bars": len(_harness._bars),
+        "symbols": symbol_list,
+        "lookback_start": lookback_start,
+    })
+
+
+@mcp.tool()
+def next_backtest_bar() -> str:
+    """Advance the backtest by one bar. Returns the new bar's OHLCV data and portfolio state.
+
+    When to use: During a backtest, call this to move to the next time period.
+    Then use calc_technical_indicators, get_market_data, etc. to analyze the bar
+    and make decisions just like you would in live trading.
+
+    Sample input: next_backtest_bar()
+
+    Expected output:
+    {"bar_index": 5, "timestamp": "2026-01-08", "symbol": "NVDA", "open": 215.2,
+     "high": 220.1, "low": 213.8, "close": 218.5, "volume": 52000000, "remaining": 79,
+     "account": {"equity": 100500, "cash": 100500, "positions": 0}}
+
+    Returns {"done": true, "run_id": "..."} when all bars processed.
+
+    IMPORTANT: After receiving bar data, you MUST follow the full skill workflow:
+    - If no positions: run Research skill (calc_technical_indicators, score, decide)
+    - If positions open: run Monitor skill (check exits against trade plan)
+    - Log your decision with log_backtest_decision before calling next_backtest_bar again
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    bar = _harness.advance_bar()
+    if bar is None:
+        return json.dumps({"done": True, "run_id": _harness.get_run_id()})
+
+    account = _harness.get_broker().get_account()
+    positions = _harness.get_broker().get_positions()
+    bar["account"] = {
+        "equity": round(account["equity"], 2),
+        "cash": round(account["cash"], 2),
+        "positions": len(positions),
+        "open_symbols": [p["symbol"] for p in positions],
+    }
+    return json.dumps(bar, default=str)
+
+
+@mcp.tool()
+def log_backtest_decision(
+    symbol: str, phase: str, decision: str, reasoning: str,
+    input_state: str, tools_called: str, rules_evaluated: str = "[]",
+    score: float | None = None, trade_plan: str = "",
+) -> str:
+    """Log a decision made at the current backtest bar. Validates workflow compliance.
+
+    When to use: After analyzing the current bar and making a decision, log it here.
+    You MUST call this for every bar — even skip/hold decisions.
+
+    Sample input: log_backtest_decision("NVDA", "research", "skip", "RSI overbought at 78",
+                  '{"price": 220.5, "rsi": 78}', '["calc_technical_indicators", "get_market_data"]',
+                  '[{"rule": "RSI_RANGE", "passed": false, "value": "78 > 70"}]')
+
+    Expected output:
+    {"decision_id": "bd-abc123", "workflow_valid": true, "violations": []}
+
+    If workflow violated (you skipped required tool calls):
+    {"decision_id": "bd-abc123", "workflow_valid": false, "violations": ["calc_technical_indicators"]}
+
+    IMPORTANT: The system checks that you called required tools before deciding.
+    For research: calc_technical_indicators + get_market_data required.
+    For trader: check_kill_switch + check_daily_limits + check_portfolio_risk + calc_position_size.
+    For monitor: get_positions + get_market_data.
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    decision_id = _harness.record_decision(
+        symbol=symbol,
+        phase=phase,
+        decision=decision,
+        reasoning=reasoning,
+        input_state=json.loads(input_state),
+        tools_called=json.loads(tools_called),
+        rules_evaluated=json.loads(rules_evaluated),
+        score=score,
+        trade_plan=json.loads(trade_plan) if trade_plan else None,
+    )
+
+    validation = _harness.validator.validate(phase, decision)
+    return json.dumps({
+        "decision_id": decision_id,
+        "workflow_valid": validation["valid"],
+        "violations": validation["missing"],
+    })
+
+
+@mcp.tool()
+def get_backtest_results(run_id: str) -> str:
+    """Get the full results for a completed backtest run.
+
+    When to use: After a backtest completes, retrieve trades, metrics, and decision summary.
+
+    Sample input: get_backtest_results("bt-abc123def456")
+
+    Expected output:
+    {"run": {...}, "trades": [...], "decision_count": 84, "workflow_violations": 2}
+    """
+    repo = get_repo()
+    run = repo.get_backtest_run(run_id)
+    if not run:
+        return json.dumps({"error": f"Run {run_id} not found"})
+    trades = repo.get_backtest_trades(run_id)
+    decisions = repo.get_backtest_decisions(run_id)
+    violations = sum(1 for d in decisions if d["workflow_valid"] == 0)
+
+    return json.dumps({
+        "run": dict(run),
+        "trades": trades,
+        "decision_count": len(decisions),
+        "workflow_violations": violations,
+    }, default=str)
+
+
+@mcp.tool()
+def export_backtest_jsonl(run_id: str) -> str:
+    """Export all decisions from a backtest run as a JSONL file for training pipelines.
+
+    When to use: After a backtest, export structured decision logs for prompt engineering or fine-tuning.
+
+    Sample input: export_backtest_jsonl("bt-abc123def456")
+
+    Expected output:
+    {"file": "/path/to/exports/bt-abc123def456.jsonl", "records": 84}
+    """
+    from backtest.logger import BacktestLogger
+
+    repo = get_repo()
+    logger = BacktestLogger(repo)
+
+    lines = logger.export_jsonl(run_id)
+    exports_dir = Path(__file__).parent.parent / "exports"
+    exports_dir.mkdir(exist_ok=True)
+    path = exports_dir / f"{run_id}.jsonl"
+    path.write_text("\n".join(lines))
+
+    return json.dumps({"file": str(path), "records": len(lines)})
+
+
 if __name__ == "__main__":
     mcp.run()
