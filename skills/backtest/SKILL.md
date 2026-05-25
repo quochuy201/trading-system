@@ -25,17 +25,41 @@ You simulate live trading against historical data. You follow the EXACT same wor
 ## Step 1: Parse the Request
 
 Extract from the user's message:
-- **Symbols** — which stocks to scan (or "use full universe")
+- **Symbols** — specific tickers OR none (determines mode, see below)
 - **Date range** — start and end dates for the backtest
 - **Strategy** — which strategy/SOP to follow (default: swing trade)
 - **Capital** — starting capital (default: $100,000)
-- **Timeframe** — bar size (default: 1Day)
+- **Monitor timeframe** — bar size for entry/exit/monitoring: 1Day (default), 1Hour, or 15Min
 
-If the user says something like "backtest swing trade on NVDA, AMD for May 2026":
-- Symbols: NVDA, AMD (+ SPY for relative strength)
-- Start: 2026-05-01, End: 2026-05-31
-- Strategy: swing trade
-- Capital: $100,000
+### Two Modes:
+
+**Mode A — Fixed List (user gives specific tickers):**
+> "Backtest NVDA, AMD for May 2026"
+
+- SKIP the scanner entirely
+- Go straight to Research DD on those tickers each trading day
+- The agent evaluates these stocks every day regardless of mechanical filters
+- Still do full DD (indicators, news, catalyst assessment) before entering
+
+**Mode B — Scanner Mode (user does NOT give specific tickers):**
+> "Backtest swing trade for May 2026"
+
+- Run the scanner each morning using the universe from `config.yaml` (`scanner.universe`)
+- Scanner uses DAILY bars always to find candidates that pass all 4 mechanical filters
+- Then do Research DD only on candidates the scanner surfaces
+- If scanner finds 0 candidates → skip that day (no forced trades)
+
+### Monitor Timeframe:
+
+Controls how precisely entries and exits are timed:
+- **1Day**: enter at daily bar open, check stops/targets once per day
+- **1Hour**: enter at hourly bar open, check stops every hour (tighter)
+- **15Min**: enter at 15-min bar open, check every 15 min (tightest)
+
+The scanner ALWAYS uses daily bars regardless of monitor timeframe.
+Scanner answers "WHAT to trade." Timeframe answers "WHEN to enter/exit."
+
+In live trading, the monitor timeframe is equivalent to watching real-time market price.
 
 ---
 
@@ -58,17 +82,19 @@ Then call `start_backtest_v2` to initialize the harness:
 
 For each day in the backtest range, repeat this cycle:
 
-### 3a. Morning: Scan for Candidates
+### 3a. Morning: Identify Stocks to Evaluate
 
-Call `scan_for_candidates` with the full symbol list.
+**Mode A (fixed list):** Your candidates are the user's tickers. Evaluate all of them every day. No scanner needed.
 
-This runs the 4-layer mechanical filter:
-1. Liquidity + ATR + RVOL
-2. Relative strength vs SPY
-3. Trend + MAs aligned
-4. Momentum timing (RSI, MACD, Bollinger)
+**Mode B (scanner):** Call `scan_for_candidates` with the config.yaml universe.
 
-If NO candidates pass → log decision "skip" for the day, advance to next day.
+This runs the 4-layer mechanical filter (on daily bars):
+1. Liquidity + ATR + RVOL (tradeable and in play?)
+2. Relative strength vs SPY (leader?)
+3. Trend + MAs aligned (structure?)
+4. Momentum timing — RSI, MACD, Bollinger (timing right?)
+
+If NO candidates pass → log decision "skip" for the day, advance to next bar.
 
 ### 3b. Due Diligence (for each candidate)
 
@@ -136,9 +162,16 @@ For exits: call `place_order(symbol, "sell", "market", quantity)` to log the sim
 
 Call `log_backtest_decision` with decision "exit" or "hold" and reasoning.
 
-### 3e. Advance to Next Day
+### 3e. Advance to Next Bar
 
-Call `next_backtest_bar()` to move to the next trading day.
+Call `next_backtest_bar()` to move to the next bar.
+
+- If monitor_timeframe = 1Day: this advances one trading day
+- If monitor_timeframe = 1Hour: this advances one hour
+- If monitor_timeframe = 15Min: this advances 15 minutes
+
+**Scanner runs once per TRADING DAY** (regardless of monitor timeframe).
+So with 1Hour bars: scan at first bar of the day, then monitor positions on subsequent hourly bars without re-scanning.
 
 **You MUST log a decision for every bar before advancing.**
 The system enforces this — it will refuse to advance if you haven't logged.

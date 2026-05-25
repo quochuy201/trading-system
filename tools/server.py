@@ -1162,8 +1162,8 @@ def export_backtest_jsonl(run_id: str) -> str:
 
 
 @mcp.tool()
-def scan_for_candidates(symbols: str, lookback_days: int = 120) -> str:
-    """Scan a list of symbols through the 4-layer filter to find tradeable candidates.
+def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
+    """Scan symbols through the 4-layer filter to find tradeable candidates.
 
     When to use: At the start of each trading day (or backtest day) to identify
     stocks that pass quantitative filters. Candidates are then evaluated by the
@@ -1172,11 +1172,15 @@ def scan_for_candidates(symbols: str, lookback_days: int = 120) -> str:
     This is the SAME code path used in both live trading and backtesting.
 
     Sample input: scan_for_candidates("AAPL,NVDA,TSLA,AMD,META,SPY", 120)
+                  scan_for_candidates("", 120)  — uses config.yaml universe
+
+    If symbols is empty: reads the universe from config.yaml (scanner.universe).
+    Always include SPY for relative strength calculation.
 
     Expected output:
     {"candidates": [{"symbol": "NVDA", "price": 220.50, "atr": 8.34, "rvol": 1.8, "rs_10d": 5.2, "rsi": 58.3, ...}], "scanned": 5, "passed": 1}
 
-    Filters applied:
+    Filters applied (always on DAILY bars):
     1. Liquidity: price $10-500, avg vol > 2M, ATR 1.5-10%, RVOL > 1.1x
     2. Relative Strength: outperforming SPY by > 2% over 10 days
     3. Trend: above SMA20, SMA20 > SMA50 (aligned)
@@ -1184,9 +1188,19 @@ def scan_for_candidates(symbols: str, lookback_days: int = 120) -> str:
     """
     _track_tool("scan_for_candidates")
     import pandas as pd
+    import yaml
     from scanner.filters import scan_universe
 
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    # If no symbols provided, read from config.yaml
+    if not symbols.strip():
+        config_path = Path(__file__).parent.parent / "config.yaml"
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        symbol_list = config.get("scanner", {}).get("universe", [])
+        if config.get("scanner", {}).get("include_spy", True) and "SPY" not in symbol_list:
+            symbol_list.append("SPY")
+    else:
+        symbol_list = [s.strip() for s in symbols.split(",")]
     broker = get_broker()
     repo = get_repo()
 
