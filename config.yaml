@@ -57,7 +57,7 @@ scanner:
     - LRCX
     - KLAC
     - AMAT
-    - ON
+    - "ON"
     - SMCI
     - JPM
     - GS
