@@ -1162,6 +1162,64 @@ def export_backtest_jsonl(run_id: str) -> str:
 
 
 @mcp.tool()
+def scan_for_candidates(symbols: str, lookback_days: int = 120) -> str:
+    """Scan a list of symbols through the 4-layer filter to find tradeable candidates.
+
+    When to use: At the start of each trading day (or backtest day) to identify
+    stocks that pass quantitative filters. Candidates are then evaluated by the
+    AI agent for Due Diligence (news, catalyst, final decision).
+
+    This is the SAME code path used in both live trading and backtesting.
+
+    Sample input: scan_for_candidates("AAPL,NVDA,TSLA,AMD,META,SPY", 120)
+
+    Expected output:
+    {"candidates": [{"symbol": "NVDA", "price": 220.50, "atr": 8.34, "rvol": 1.8, "rs_10d": 5.2, "rsi": 58.3, ...}], "scanned": 5, "passed": 1}
+
+    Filters applied:
+    1. Liquidity: price $10-500, avg vol > 2M, ATR 1.5-10%, RVOL > 1.1x
+    2. Relative Strength: outperforming SPY by > 2% over 10 days
+    3. Trend: above SMA20, SMA20 > SMA50 (aligned)
+    4. Momentum: RSI 40-70, MACD bullish, not at upper Bollinger
+    """
+    _track_tool("scan_for_candidates")
+    import pandas as pd
+    from scanner.filters import scan_universe
+
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    broker = get_broker()
+    repo = get_repo()
+
+    # Load data for all symbols
+    from datetime import timedelta
+    if hasattr(broker, "current_time") and broker.current_time:
+        end = broker.current_time
+    else:
+        end = datetime.utcnow()
+    start = end - timedelta(days=lookback_days)
+
+    stock_data = {}
+    for sym in symbol_list:
+        bars = repo.query_price_data(sym, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), "1Day")
+        if len(bars) >= 50:
+            df = pd.DataFrame(bars)
+            df["close"] = df["close"].astype(float)
+            df["high"] = df["high"].astype(float)
+            df["low"] = df["low"].astype(float)
+            df["volume"] = df["volume"].astype(float)
+            stock_data[sym] = df
+
+    spy_data = stock_data.get("SPY")
+    candidates = scan_universe(stock_data, spy_data)
+
+    return json.dumps({
+        "candidates": candidates,
+        "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+        "passed": len(candidates),
+    })
+
+
+@mcp.tool()
 def end_backtest() -> str:
     """End the current backtest and restore the live/paper broker.
 
