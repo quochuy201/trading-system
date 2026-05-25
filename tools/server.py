@@ -95,6 +95,12 @@ def _log_to_ledger(
         pass  # never block trading
 
 
+def _track_tool(name: str) -> None:
+    """Register a tool call with the backtest harness (if active) for server-side validation."""
+    if _harness is not None:
+        _harness.record_tool_call(name)
+
+
 # --- Broker Tools ---
 
 
@@ -110,6 +116,7 @@ def get_positions() -> str:
     [{"symbol": "NVDA", "quantity": 10, "side": "long", "entry_price": 220.50,
       "current_price": 225.30, "unrealized_pnl": 48.00, "unrealized_pnl_pct": 2.2}]
     """
+    _track_tool("get_positions")
     broker = get_broker()
     positions = with_retry(broker.get_positions, _retry_config)()
     return json.dumps(positions)
@@ -209,6 +216,7 @@ def get_market_data(symbol: str) -> str:
     {"symbol": "AAPL", "bid": 303.67, "ask": 303.69, "mid": 303.68,
      "bid_size": 200, "ask_size": 100, "timestamp": "2026-05-21T17:00:00+00:00"}
     """
+    _track_tool("get_market_data")
     broker = get_broker()
     data = with_retry(broker.get_market_data, _retry_config)(symbol)
     return json.dumps(data)
@@ -285,11 +293,13 @@ def get_news(query: str) -> str:
       "symbols": ["NVDA", "AAPL"], "created_at": "2026-05-21T10:28:28+00:00",
       "url": "https://..."}, ...]
     """
+    _track_tool("get_news")
     from alpaca.data.historical.news import NewsClient
     from alpaca.data.requests import NewsRequest
 
-    broker = get_broker()
-    client = NewsClient(broker.api_key, broker.secret_key)
+    api_key = os.environ.get("ALPACA_API_KEY", "")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+    client = NewsClient(api_key, secret_key)
     req = NewsRequest(symbols=query, limit=10)
     news_set = client.get_news(req)
     items = news_set.dict().get("news", [])
@@ -324,6 +334,7 @@ def calc_technical_indicators(symbol: str, timeframe: str = "1Day") -> str:
 
     Note: SMA values return None if insufficient data (need 50+ bars for SMA50, 200+ for SMA200).
     """
+    _track_tool("calc_technical_indicators")
     from analysis.indicators import calc_technical_indicators as _calc
     from datetime import timedelta
     broker = get_broker()
@@ -393,6 +404,7 @@ def calc_position_size(
     {"quantity": 200, "risk_amount": 1000.0, "risk_per_share": 5.0}
     (meaning: buy 200 shares, risking $1000 total, $5 per share to stop)
     """
+    _track_tool("calc_position_size")
     risk_per_share = abs(entry_price - stop_loss)
     if risk_per_share == 0:
         return json.dumps({"error": "Entry and stop loss cannot be the same"})
@@ -422,6 +434,7 @@ def check_portfolio_risk(symbol: str, quantity: int, entry_price: float) -> str:
     Expected output (failing):
     {"passed": false, ...checks with "passed": false for the breached limit...}
     """
+    _track_tool("check_portfolio_risk")
     from risk.checks import check_portfolio_risk as _check
     result = _check(get_broker(), symbol, quantity, entry_price)
     return json.dumps(result)
@@ -442,6 +455,7 @@ def check_daily_limits() -> str:
     Expected output (failing):
     {"passed": false, "daily_pnl": -3200.00, "daily_pnl_pct": -3.14, ...}
     """
+    _track_tool("check_daily_limits")
     from risk.checks import check_daily_limits as _check
     result = _check(get_broker())
     return json.dumps(result)
@@ -574,6 +588,7 @@ def check_kill_switch() -> str:
     Expected output (active):
     {"active": true, "triggered_at": "2026-05-21T17:15:47", "reason": "daily loss limit breached"}
     """
+    _track_tool("check_kill_switch")
     import os
     from pathlib import Path
     # Check file-based trigger
@@ -994,25 +1009,27 @@ def start_backtest_v2(
 
 @mcp.tool()
 def next_backtest_bar() -> str:
-    """Advance the backtest by one bar. Returns the new bar's OHLCV data and portfolio state.
+    """Advance the backtest by one bar. Returns the bar's OPEN price only (no future data).
 
     When to use: During a backtest, call this to move to the next time period.
-    Then use calc_technical_indicators, get_market_data, etc. to analyze the bar
-    and make decisions just like you would in live trading.
 
     Sample input: next_backtest_bar()
 
     Expected output:
     {"bar_index": 5, "timestamp": "2026-01-08", "symbol": "NVDA", "open": 215.2,
-     "high": 220.1, "low": 213.8, "close": 218.5, "volume": 52000000, "remaining": 79,
+     "remaining": 79, "previous_bar": {"timestamp": "...", "open": ..., "high": ..., "low": ..., "close": ..., "volume": ...},
      "account": {"equity": 100500, "cash": 100500, "positions": 0}}
 
     Returns {"done": true, "run_id": "..."} when all bars processed.
+    Returns {"error": "Must log a decision..."} if you forgot to log for the previous bar.
 
-    IMPORTANT: After receiving bar data, you MUST follow the full skill workflow:
-    - If no positions: run Research skill (calc_technical_indicators, score, decide)
-    - If positions open: run Monitor skill (check exits against trade plan)
-    - Log your decision with log_backtest_decision before calling next_backtest_bar again
+    IMPORTANT:
+    - You only see the current bar's OPEN price (the market just opened)
+    - You see the PREVIOUS bar's full OHLCV (completed yesterday)
+    - You do NOT see the current bar's high, low, close, or volume (hasn't happened)
+    - You MUST log a decision (log_backtest_decision) before calling this again
+    - calc_technical_indicators uses only completed bars (no current bar close)
+    - Orders fill at this bar's open price (the first available price)
     """
     global _harness
     if _harness is None:
@@ -1021,6 +1038,9 @@ def next_backtest_bar() -> str:
     bar = _harness.advance_bar()
     if bar is None:
         return json.dumps({"done": True, "run_id": _harness.get_run_id()})
+
+    if isinstance(bar, dict) and "error" in bar:
+        return json.dumps(bar)
 
     account = _harness.get_broker().get_account()
     positions = _harness.get_broker().get_positions()
@@ -1036,7 +1056,7 @@ def next_backtest_bar() -> str:
 @mcp.tool()
 def log_backtest_decision(
     symbol: str, phase: str, decision: str, reasoning: str,
-    input_state: str, tools_called: str, rules_evaluated: str = "[]",
+    input_state: str, rules_evaluated: str = "[]",
     score: float | None = None, trade_plan: str = "",
 ) -> str:
     """Log a decision made at the current backtest bar. Validates workflow compliance.
@@ -1045,19 +1065,20 @@ def log_backtest_decision(
     You MUST call this for every bar — even skip/hold decisions.
 
     Sample input: log_backtest_decision("NVDA", "research", "skip", "RSI overbought at 78",
-                  '{"price": 220.5, "rsi": 78}', '["calc_technical_indicators", "get_market_data"]',
+                  '{"price": 220.5, "rsi": 78}',
                   '[{"rule": "RSI_RANGE", "passed": false, "value": "78 > 70"}]')
 
     Expected output:
-    {"decision_id": "bd-abc123", "workflow_valid": true, "violations": []}
+    {"decision_id": "bd-abc123", "workflow_valid": true, "violations": [], "tools_tracked": ["calc_technical_indicators", "get_market_data"]}
 
-    If workflow violated (you skipped required tool calls):
-    {"decision_id": "bd-abc123", "workflow_valid": false, "violations": ["calc_technical_indicators"]}
+    IMPORTANT: You do NOT pass tools_called — the system tracks which MCP tools
+    you actually called since the last next_backtest_bar. The validator checks
+    this server-side record. You cannot fake tool calls.
 
-    IMPORTANT: The system checks that you called required tools before deciding.
-    For research: calc_technical_indicators + get_market_data required.
-    For trader: check_kill_switch + check_daily_limits + check_portfolio_risk + calc_position_size.
-    For monitor: get_positions + get_market_data.
+    Required tools by phase:
+    - research: calc_technical_indicators + get_market_data
+    - trader: check_kill_switch + check_daily_limits + check_portfolio_risk + calc_position_size
+    - monitor: get_positions + get_market_data
     """
     global _harness
     if _harness is None:
@@ -1069,7 +1090,6 @@ def log_backtest_decision(
         decision=decision,
         reasoning=reasoning,
         input_state=json.loads(input_state),
-        tools_called=json.loads(tools_called),
         rules_evaluated=json.loads(rules_evaluated),
         score=score,
         trade_plan=json.loads(trade_plan) if trade_plan else None,
@@ -1080,6 +1100,7 @@ def log_backtest_decision(
         "decision_id": decision_id,
         "workflow_valid": validation["valid"],
         "violations": validation["missing"],
+        "tools_tracked": _harness.validator.get_calls(),
     })
 
 

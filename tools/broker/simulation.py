@@ -33,6 +33,7 @@ class SimulationBrokerAdapter(BrokerAdapter):
         self.timeframe = timeframe
         self.current_time: datetime | None = None
         self._order_counter = 0
+        self._fill_price_bar: dict | None = None  # set by harness for correct fill pricing
 
     def set_time(self, t: datetime) -> None:
         """Advance simulation clock. Data queries respect this."""
@@ -63,7 +64,13 @@ class SimulationBrokerAdapter(BrokerAdapter):
         limit_price: float | None = None,
         stop_price: float | None = None,
     ) -> TradeTransaction:
-        bar = self._get_current_bar(symbol)
+        # Use the fill price bar (current bar set by harness) if available.
+        # This ensures market orders fill at the current bar's OPEN — the first
+        # available price after the agent makes its decision.
+        if self._fill_price_bar and self._fill_price_bar.get("symbol") == symbol:
+            bar = self._fill_price_bar
+        else:
+            bar = self._get_current_bar(symbol)
         order_id = self._next_order_id()
 
         if bar is None:
@@ -164,6 +171,27 @@ class SimulationBrokerAdapter(BrokerAdapter):
         }
 
     def get_market_data(self, symbol: str) -> dict:
+        """Return the last known price.
+
+        During backtest: this returns the PREVIOUS completed bar's close
+        (since current_time is set to just before the current bar).
+        This is equivalent to "last trade price" at market open — you know
+        yesterday's close but not today's close.
+
+        If _fill_price_bar is set (harness mode), return its open as the
+        "current" price — this is the opening print.
+        """
+        if self._fill_price_bar and self._fill_price_bar.get("symbol") == symbol:
+            # In harness mode: the "current price" is the bar's open
+            price = self._fill_price_bar["open"]
+            return {
+                "symbol": symbol,
+                "bid": price * 0.999,
+                "ask": price * 1.001,
+                "mid": price,
+                "timestamp": self._fill_price_bar["timestamp"],
+            }
+
         bar = self._get_current_bar(symbol)
         if not bar:
             return {"symbol": symbol, "bid": 0, "ask": 0, "mid": 0}
