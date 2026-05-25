@@ -142,21 +142,31 @@ If all gates pass:
    - rules_evaluated: which DD layers passed/failed
    - trade_plan: entry, stop, target, R:R, quantity
 
-### 3d. Monitor Positions (mechanical)
+### 3d. Monitor Positions (every bar at monitor_timeframe)
 
-For positions already open, check exit conditions:
+For EACH bar at the monitor timeframe (every hour with 1H, every 15min with 15Min):
 
 1. Call `get_positions()` — see current simulated positions
-2. Call `get_market_data(symbol)` — current price (bar open)
+2. Call `get_market_data(symbol)` — current price (this bar's open)
+3. Check this bar's HIGH and LOW against stop/target:
+   - Bar LOW <= stop_loss → EXIT at stop price (log reason: "STOP_HIT")
+   - Bar HIGH >= take_profit → EXIT at target price (log reason: "TAKE_PROFIT")
+   - Held >= 15 days → EXIT at this bar's open (log reason: "TIME_STOP")
 
-**Mechanical exit checks (no LLM reasoning needed):**
-- Price <= stop_loss → EXIT (log reason: "STOP_HIT")
-- Price >= take_profit → EXIT (log reason: "TAKE_PROFIT")
-- Held >= 15 days → EXIT (log reason: "TIME_STOP")
+**Why check HIGH/LOW:** A stop or target can be hit intrabar. If the hourly bar's
+low touches your stop, you're out — even if price recovered by the close.
+This prevents the false positive of "survived the day" when actually you'd
+have been stopped out at 10am.
 
 **LLM reasoning needed when:**
 - Price dropped > 3% in one bar → assess: is thesis broken or just noise?
 - News changed (new bearish catalyst) → reassess
+- Price approaching stop (within 0.5%) → consider tightening or exiting early
+
+**Intraday entry opportunity:** If a candidate from the morning scan did NOT
+trigger entry (e.g., price was too high at open) but pulls back during the day
+to a better level, the agent CAN enter at a later bar. The scanner identifies
+WHAT to trade; intraday bars determine WHEN.
 
 For exits: call `place_order(symbol, "sell", "market", quantity)` to log the simulated exit.
 
@@ -170,8 +180,24 @@ Call `next_backtest_bar()` to move to the next bar.
 - If monitor_timeframe = 1Hour: this advances one hour
 - If monitor_timeframe = 15Min: this advances 15 minutes
 
-**Scanner runs once per TRADING DAY** (regardless of monitor timeframe).
-So with 1Hour bars: scan at first bar of the day, then monitor positions on subsequent hourly bars without re-scanning.
+**Daily rhythm with intraday bars (e.g., 1Hour):**
+
+```
+First bar of day (e.g., 09:30):
+  → Run scanner (daily bars) to find candidates
+  → DD on candidates → decide entries
+  → Check existing positions vs stop/target
+
+Each subsequent bar (10:30, 11:30, ...):
+  → Check positions: did this bar's low hit stop? high hit target?
+  → If candidate from morning hasn't been entered yet and pulls back
+    to a better price → can enter now (intraday entry)
+  → Log decision (hold/exit/enter/skip)
+```
+
+**Scanner runs once per TRADING DAY** (first bar only).
+Monitoring runs every bar. This means with 1H bars you get ~7 checks per day
+per position — catching exits at the actual hour they happen.
 
 **You MUST log a decision for every bar before advancing.**
 The system enforces this — it will refuse to advance if you haven't logged.
@@ -215,3 +241,19 @@ After running, you can answer:
 - Do exits protect capital (stops work, trails lock profit)?
 - Is the overall system profitable over this timeframe?
 - Where did the system fail and what should be improved?
+
+## Learning From Backtests (Pattern Recognition)
+
+After each backtest, identify and document:
+
+**Bull traps:** Did the agent enter a stock that looked bullish (above SMAs, good RS) but immediately reversed? What signal was missed? Document the pattern so future sessions avoid it.
+
+**Correlated losses:** Did multiple positions stop out on the same day? This means sector/market risk wasn't diversified. Note which sectors were correlated.
+
+**False catalysts:** Did news that seemed bullish (upgrade, partnership) lead to losses? The "news" might have been priced in already, or the market disagreed.
+
+**Missed winners:** Stocks that passed the scanner but the agent skipped — did they go on to rally? What made the agent skip, and was that reasoning wrong?
+
+**Exit timing:** Did stops get hit intraday that would have recovered by close? Or did targets get hit early in a move that continued much further?
+
+These patterns become training data for improving the agent's judgment.
