@@ -948,6 +948,7 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
 # --- Backtest v2 Tools ---
 
 _harness = None
+_original_broker = None  # saved before backtest, restored after
 
 
 @mcp.tool()
@@ -980,6 +981,10 @@ def start_backtest_v2(
     if not lookback_start:
         start_dt = dt.fromisoformat(start_date)
         lookback_start = (start_dt - timedelta(days=120)).strftime("%Y-%m-%d")
+
+    # Save original broker for restoration after backtest
+    global _original_broker
+    _original_broker = _broker
 
     # Load data including lookback period for indicator warmup
     from data.cache import load_price_cache as _load
@@ -1154,6 +1159,38 @@ def export_backtest_jsonl(run_id: str) -> str:
     path.write_text("\n".join(lines))
 
     return json.dumps({"file": str(path), "records": len(lines)})
+
+
+@mcp.tool()
+def end_backtest() -> str:
+    """End the current backtest and restore the live/paper broker.
+
+    When to use: After a backtest is complete, call this to restore normal trading mode.
+    All subsequent MCP tool calls will use the real broker (live or paper) again.
+
+    Sample input: end_backtest()
+
+    Expected output:
+    {"ended": true, "run_id": "bt-abc123", "broker_restored": true}
+    """
+    global _harness, _broker, _original_broker
+    if _harness is None:
+        return json.dumps({"error": "No backtest active."})
+
+    run_id = _harness.get_run_id()
+
+    # Restore original broker
+    if _original_broker is not None:
+        _broker = _original_broker
+        _original_broker = None
+        restored = True
+    else:
+        _broker = None  # will be lazily re-initialized
+        restored = True
+
+    _harness = None
+
+    return json.dumps({"ended": True, "run_id": run_id, "broker_restored": restored})
 
 
 if __name__ == "__main__":

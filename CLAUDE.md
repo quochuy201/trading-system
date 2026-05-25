@@ -30,7 +30,9 @@ The system trades real money (or paper) autonomously. **Safety is not optional.*
 Orchestrator (SOUL.md) — workflow coordinator, never trades directly
   ├── Research Agent (skills/research/SKILL.md) → scan + score candidates
   ├── Trader Agent  (skills/trader/SKILL.md)    → plan + execute orders
-  └── Monitor Agent (skills/monitor/SKILL.md)   → track + exit positions
+  ├── Monitor Agent (skills/monitor/SKILL.md)   → track + exit positions
+  ├── Risk Manager  (skills/risk-manager/SKILL.md) → mode + sizing + circuit breakers
+  └── EOD Review    (skills/eod-review/SKILL.md)   → journal + reflect
 ```
 
 ### Two Layers
@@ -46,7 +48,7 @@ Orchestrator (SOUL.md) — workflow coordinator, never trades directly
 - **Agents never call Alpaca directly.** All market data and orders flow through MCP tools, which handle retry, ledger logging, and kill switch enforcement.
 - **SOPs are human-controlled.** Agents propose changes to `reports/sop-changes/` but never modify files in `sops/` directly.
 - **Kill switch blocks `place_order`** when active — checked via `_kill_switch_state` in `server.py`.
-- **Simulation broker** swaps the global `_broker` reference during backtests. `setup_backtest` → `advance_bar` loop enables bar-by-bar agent-driven replay without future data leakage.
+- **Simulation broker** swaps the global `_broker` reference during backtests. `start_backtest_v2` → `next_backtest_bar` loop enables bar-by-bar agent-driven replay without future data leakage.
 
 ### Data Flow
 
@@ -58,11 +60,66 @@ Agent decision → MCP tool call → broker/adapter.py (abstract)
                                   → notifications/slack.py (fire-and-forget)
 ```
 
+## BACKTEST DEVELOPMENT RULES (CRITICAL)
+
+These rules are NON-NEGOTIABLE. Violating them produces misleading results.
+
+### 1. Never Hardcode Strategy Logic in Backtest Scripts
+
+```
+❌ WRONG: Writing `if rsi > 50: score += 20` in a backtest .py file
+❌ WRONG: Writing exit rules like `if hold_bars >= 10: exit` in Python
+❌ WRONG: Defining thresholds, scoring weights, or entry criteria in code
+
+✅ RIGHT: Strategy rules live in skill files (skills/*/SKILL.md) or SOPs (sops/)
+✅ RIGHT: The AI agent reads the skills and makes decisions via MCP tool calls
+✅ RIGHT: Python only handles MECHANICAL operations (check if price hit stop level)
+```
+
+### 2. Backtest Must Use Same Code Path as Live Trading
+
+The scanner, the DD process, the entry logic, the monitoring — ALL must be the same module whether running in backtest or live. If you build a scanner for backtesting that isn't used live, the backtest proves nothing about the real system.
+
+### 3. Entry at Next-Available Price (Never Signal Price)
+
+```
+❌ WRONG: Scanner finds candidate at today's close ($143), enter at $143
+✅ RIGHT: Scanner finds candidate at today's close, enter at NEXT DAY'S OPEN
+
+The market is closed when the scanner runs. You cannot buy at the close price.
+This prevents fake profits from overnight gaps.
+```
+
+### 4. Gap Detection
+
+- If stock gaps UP > 5% above planned entry → SKIP (missed the move, don't chase)
+- If stock gaps DOWN > 3% below planned entry → SKIP (thesis may be broken)
+
+### 5. The AI Agent Makes Decisions, Not Python
+
+Python's role in the backtest:
+- Advance the clock (next_backtest_bar)
+- Provide data when asked (calc_technical_indicators, get_market_data, get_news)
+- Execute mechanical checks (did price hit stop? did time expire?)
+- Log decisions
+
+The AI agent's role:
+- Read skill files and apply the DD framework
+- Evaluate news/catalysts qualitatively
+- Score candidates and decide enter/skip
+- Determine position sizing based on conviction
+
+### 6. When to Invoke the LLM (Not Every Bar)
+
+- **Start of day:** LLM decides what to trade (research + DD)
+- **Unusual event:** Price drops >3% in one bar → LLM evaluates hold vs exit
+- **Everything else:** Python handles mechanically (stop hits, trailing updates, time stops)
+
 ## Development Best Practices
 
 ### When Modifying MCP Tools (`tools/server.py`)
 
-- Every `@mcp.tool()` function must include a docstring with: purpose, when to use, sample input, and expected output. This is how agents discover tool capabilities.
+- Every `@mcp.tool()` function must include a docstring with: purpose, when to use, sample input, and expected output.
 - Tools that mutate state (place_order, activate_kill_switch) must log to the transaction ledger via `_log_to_ledger()`.
 - Tools must never raise exceptions to the agent — return JSON errors: `{"error": "description"}`.
 - Use `with_retry(fn, _retry_config)()` for any broker call that could transiently fail.
@@ -76,64 +133,46 @@ Agent decision → MCP tool call → broker/adapter.py (abstract)
 ### When Writing Agent Skills (`skills/*/SKILL.md`)
 
 - Follow the [agentskills.io/specification](https://agentskills.io/specification) format: YAML frontmatter with `name` and `description`, then markdown body.
-- `description` field: start with a verb phrase describing what the agent does. Keep under 500 chars.
+- `description` field: start with "Use when..." — triggering conditions only, never workflow summary.
 - `requires_tools` in frontmatter: list only MCP tools this agent actually calls.
 - Skills define BEHAVIOR (what to do, when to stop, what to reject). Tools define CAPABILITY (how to do it).
-- Never embed API keys, broker details, or config values in skill files — those come from the tools layer.
 
 ### When Writing Strategy SOPs (`sops/`)
 
 - SOPs are versioned (semver): `sops/<strategy-name>/v<major>.<minor>.<patch>.md`.
 - SOPs define entry criteria, exit rules, sizing parameters, and scoring thresholds.
 - Changes to SOP logic require a new version file — never edit an existing version in place.
-- The agent's compliance score (`audit/compliance.py`) measures adherence to SOP rules, so every rule must be taggable with a rule ID (e.g., `RVOL_HIGH`, `RR_VALID`).
 
-### When Modifying Risk Logic (`tools/risk/`)
+### When Working on the Scanner
 
-- The risk staircase is defined in OPERATING_MANUAL.md §4. Code in `risk/checks.py` must match those thresholds exactly.
-- Risk checks return `{"passed": bool, ...}` — never silently pass. The Trader agent uses this to gate execution.
-- Daily limits, concentration limits, and max positions are read from `config.yaml` at runtime.
-
-### When Adding Cron Jobs (`cron/`)
-
-- JSON format with schedule, command, and description fields.
-- All times are ET (Eastern Time) — the system operates on US market hours.
-- Cron jobs invoke agent workflows, not tools directly.
+- Scanner code must be a SHARED MODULE used by both backtest and live trading (task #15 pending).
+- Scanner filters are: liquidity + ATR → relative strength → trend/structure → momentum/timing.
+- The scanner outputs CANDIDATES. The AI agent does the final DD and decides.
 
 ## Trading Domain Context
 
-### Why This Matters for Development
-
-Trading systems have unique constraints that inform code design:
-
-- **Idempotency**: Orders can fill partially. A crash + restart must not double-enter a position. The preflight checklist (OPERATING_MANUAL §2) and crash recovery logic handle this.
-- **Time sensitivity**: Stale data (>5 min) is dangerous. The Research agent rejects stale quotes. Time stops (3:45 PM ET for day trades) are hard constraints, not suggestions.
-- **Asymmetric risk**: A missed trade costs $0. A bad trade costs real money. The system is designed to be conservative — when in doubt, skip.
-- **Mode transitions are state-driven, not choice-driven**: The agent computes its mode (NORMAL/DEFENSIVE/HALTED) from account state. It cannot choose to override this.
-
-### Key Concepts in the Code
+### Key Concepts
 
 | Concept | Where | What it means |
 |---------|-------|---------------|
 | Kill switch | `server.py`, `OPERATING_MANUAL.md` | Emergency halt — closes all positions, blocks new orders |
 | R:R (risk/reward) | `sops/`, `skills/trader/` | Ratio of potential profit to potential loss. Minimum 2:1. |
 | ATR | `analysis/indicators.py` | Average True Range — volatility measure for stop placement |
-| RVOL | `sops/`, `skills/research/` | Relative Volume — today's volume vs average. >2x = institutional interest |
-| PDT | `OPERATING_MANUAL.md` | Pattern Day Trader rule — 3 day-trades in 5 days on sub-$25K accounts |
+| RVOL | Scanner | Relative Volume — today's volume vs 20-day average. 1.1x+ for swing trades |
 | Kelly criterion | `OPERATING_MANUAL.md §3.4` | Position sizing formula capped at quarter-Kelly |
-| Expectancy | `OPERATING_MANUAL.md §3.3` | (win_rate × avg_win) - (loss_rate × avg_loss). Must be positive to trade. |
 | Compliance score | `audit/compliance.py` | Fraction of decisions that followed SOP rules. <0.9 forces DEFENSIVE. |
 
-### Market Hours (US Equities, ET)
+### Hybrid Architecture (Scanner + AI Agent)
 
-| Phase | Window | System behavior |
-|-------|--------|-----------------|
-| Pre-market scan | 08:00–09:25 | Data loading only |
-| Research | 09:25–09:45 | Wait for first 15-min candle |
-| Trade execution | 09:45–11:30 | No new entries after 11:30 |
-| Monitoring | continuous | Until all positions flat or 15:45 |
-| Time stop | 15:45 | Close all day-trade positions |
-| EOD review | 16:05–16:30 | Journal, metrics, compliance |
+```
+Strategy Engine (Python, mechanical) → scans universe, applies quantitative filters
+         ↓ candidates
+AI Agent (LLM) → does qualitative DD (reads news, assesses catalyst, makes judgment)
+         ↓ decisions
+Execution (Python, mechanical) → places orders, monitors stops, logs trades
+```
+
+The AI's value over code: interpreting news/sentiment, recognizing novel market conditions, adapting strategy selection, 24/7 monitoring across information sources.
 
 ## Configuration
 
