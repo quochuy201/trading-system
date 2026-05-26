@@ -51,10 +51,13 @@ For each open position, compare current price against the trade plan:
 | Stop-loss | Current price ≤ stop_loss | EXIT at market (retry until filled) |
 | Take-profit | Current price ≥ take_profit | EXIT at market |
 | Trailing stop | Current price ≤ trailing_stop_level | EXIT at market |
-| Time stop | Current time ≥ time_stop | EXIT at market |
+| Dead money | Held 5+ days AND never reached +0.5R | EXIT at market |
+| Time stop | Current time ≥ time_stop (15 days) | EXIT at market |
 | Approaching stop (within 1%) | Price within 1% of stop | ALERT (no exit yet) |
 | Approaching target (within 2%) | Price within 2% of target | ALERT (consider partial) |
 | None triggered | — | Update trailing stop if applicable |
+
+**Dead money rule:** If a position hasn't shown any momentum toward target within 5 trading days (never reached +0.5R from entry), the thesis isn't working. Exit early instead of waiting for the full stop to be hit. This turns -1.0R losses into -0.3R to -0.5R losses. Backtesting showed 62% of losers were "dead money" that slowly drifted to stop without ever gaining meaningfully.
 
 ### Step 4: Execute Exits
 

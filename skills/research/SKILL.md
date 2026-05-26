@@ -110,14 +110,39 @@ Before looking at ANY individual stock:
 
 **Kill if:** No clear trend. Below SMA200 for longs. Fighting the tape.
 
-### Layer 3: Catalyst & Thesis
+### Layer 3: Catalyst & Thesis (AI-Powered — Use All Available Tools)
 
-- Is there a REAL catalyst? (earnings, guidance, analyst change, product news, regulatory, macro, unusual flow)
-- Is it FRESH or stale? (Day-1 catalyst = strong. Day-3+ = priced in)
-- Can you state the thesis in ONE sentence?
-- Has the market already priced it in?
+This layer requires REAL reasoning, not keyword matching. Use every tool available to answer: **did something CHANGE that the market hasn't fully priced in?**
 
-**Kill if:** Can't articulate thesis. Stale news. No edge over what's priced in.
+**Step 1: Check news** — call `get_news(symbol)`
+- Read the actual headlines. Does the news represent CHANGE or just maintenance?
+- CHANGE (real catalyst): "upgrades to Buy," "beats earnings," "new $2B contract," "FDA approval"
+- NOT CHANGE (noise): "maintains Buy," "reiterates Outperform," "here's how much you'd have made," historical articles
+- Is it FRESH? (today or yesterday = actionable. 3+ days old = priced in)
+
+**Step 2: Check social buzz** — search web for "{SYMBOL} reddit" or "{SYMBOL} stock twitter"
+- Is this stock being TALKED ABOUT right now? High buzz = in play, traders are watching
+- Is the tone bullish, bearish, or mixed?
+- Are there unusual mentions (sudden spike in discussion = something happening)
+- WSB/investing subreddit mentions signal retail attention
+
+**Step 3: Look for convergence**
+- Analyst upgrade + social buzz + volume spike = STRONG catalyst (multiple sources agree)
+- Analyst upgrade alone with no buzz = WEAK (might be priced in already)
+- Social buzz alone with no fundamental news = RISKY (hype without substance)
+- News + social buzz + price already ran 10% = LATE (move happened, you're chasing)
+
+**Step 4: Assess if priced in**
+- If stock already ran >5% in the 5 days BEFORE today: the catalyst likely already moved the price. You're late.
+- If analyst upgrades AFTER a big run: they're upgrading because it went up, not the other way around. This is a FALSE catalyst — the analyst is following, not leading.
+
+**Kill if:**
+- Can't articulate thesis in one sentence
+- News is "maintains/reiterates" (no change)
+- Catalyst is >2 days old (stale)
+- Stock already ran on this news (priced in)
+- No social buzz AND no fresh news (no one cares)
+- Analyst upgrade AFTER a >10% run (they're following the price, not leading it)
 
 ### Layer 4: Technical Setup
 

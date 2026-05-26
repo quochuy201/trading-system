@@ -44,7 +44,7 @@ From the Research agent's report, extract:
 - R:R < 2:1
 - Entry zone is stale (price has moved > 1 ATR away from recommended entry)
 
-### Step 2: Get Live Price
+### Step 2: Get Live Price + First-Hour Confirmation
 
 Call `get_market_data(symbol)` for the current bid/ask.
 
@@ -52,6 +52,14 @@ Call `get_market_data(symbol)` for the current bid/ask.
 - Is current price within the recommended entry zone?
 - If price has run past the entry zone → SKIP (don't chase)
 - If price is below entry zone → wait or use limit order at entry level
+
+**First-hour confirmation (for intraday timeframes):**
+When using 1H or 15Min monitoring, do NOT enter at the very first bar of the day blindly. Wait for the first 1-2 bars to confirm direction:
+- First bar MUST be green (close > open) OR hold above previous day's close
+- If first bar is red AND drops > 1% → SKIP for today (selling pressure)
+- This prevents entering into immediate selloffs (e.g., stock gaps up on news but immediately fades)
+
+Why: Backtesting showed 1/8 losses was a -11% crash on entry day (NVDA Feb 26). First-hour confirmation would have prevented it.
 
 ### Step 3: Calculate Position Size
 

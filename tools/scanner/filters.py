@@ -111,7 +111,16 @@ def _evaluate_stock(sym: str, df: pd.DataFrame, spy_ret_10d: float, check_rs: bo
     if not (40 <= rsi <= 70 and macd_bullish and bb_pos < 0.95):
         return None
 
-    # === PASSED ALL 4 FILTERS ===
+    # === CHASING FILTER: Reject entries at/near highs after a run ===
+    # If price within 2% of 10-day high AND ran >5% in 5 days → chasing
+    recent_high_10d = float(high.iloc[-10:].max())
+    pct_from_high = (price - recent_high_10d) / recent_high_10d * 100
+    momentum_5d = (price / float(close.iloc[-6]) - 1) * 100 if len(close) >= 6 else 0
+
+    if pct_from_high > -2 and momentum_5d > 5:
+        return None  # chasing an exhausted move
+
+    # === PASSED ALL FILTERS ===
     return {
         "symbol": sym,
         "price": round(price, 2),
