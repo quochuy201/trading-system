@@ -296,11 +296,22 @@ def get_news(query: str) -> str:
     _track_tool("get_news")
     from alpaca.data.historical.news import NewsClient
     from alpaca.data.requests import NewsRequest
+    from datetime import timedelta
 
     api_key = os.environ.get("ALPACA_API_KEY", "")
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     client = NewsClient(api_key, secret_key)
-    req = NewsRequest(symbols=query, limit=10)
+
+    # During backtest: only fetch news available AT OR BEFORE the simulation time
+    # This prevents look-ahead bias in catalyst assessment
+    broker = get_broker()
+    if hasattr(broker, "current_time") and broker.current_time:
+        end_time = broker.current_time
+        start_time = end_time - timedelta(days=3)  # last 3 days of news
+        req = NewsRequest(symbols=query, start=start_time, end=end_time, limit=10)
+    else:
+        req = NewsRequest(symbols=query, limit=10)
+
     news_set = client.get_news(req)
     items = news_set.dict().get("news", [])
     return json.dumps([
