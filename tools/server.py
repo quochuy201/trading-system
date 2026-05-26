@@ -302,11 +302,13 @@ def get_news(query: str) -> str:
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     client = NewsClient(api_key, secret_key)
 
-    # During backtest: only fetch news available AT OR BEFORE the simulation time
-    # This prevents look-ahead bias in catalyst assessment
+    # During backtest: only fetch news available BEFORE this trading day
+    # The agent is at market open — it can see yesterday's news and overnight news
+    # but not today's intraday news (which hasn't happened yet in simulation)
     broker = get_broker()
     if hasattr(broker, "current_time") and broker.current_time:
-        end_time = broker.current_time
+        # End at midnight of current simulation day (sees all of yesterday + overnight)
+        end_time = broker.current_time.replace(hour=23, minute=59, second=59)
         start_time = end_time - timedelta(days=3)  # last 3 days of news
         req = NewsRequest(symbols=query, start=start_time, end=end_time, limit=10)
     else:
