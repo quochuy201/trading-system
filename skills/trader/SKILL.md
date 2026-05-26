@@ -53,20 +53,40 @@ Call `get_market_data(symbol)` for the current bid/ask.
 - If price has run past the entry zone → SKIP (don't chase)
 - If price is below entry zone → wait or use limit order at entry level
 
-**Entry Timing (LLM judgment — not a fixed rule):**
+**Entry Timing (LLM judgment — the most critical skill):**
 
-Do NOT enter at market open blindly. Watch the first 1-2 hourly bars and JUDGE:
+**DO NOT enter at market open.** The scanner + DD tells you WHAT to trade and WHY. Your job as the Trader is to decide WHEN and AT WHAT PRICE.
 
-- Is the stock showing buying pressure? (holding above open, volume on up-moves)
-- Or is it fading? (sellers in control, drifting below open, weak bounces)
+**After Research approves a candidate, put it on the WATCHLIST. Then watch hourly bars and wait for a good entry:**
 
-**ENTER when:** Price holds above open OR bounces from a support level with volume. The stock is confirming strength.
+What you're looking for:
+- Price pulling back toward a support level (SMA20, VWAP, prior breakout level, prior day's low)
+- A bounce off that support with a green bar + volume = ENTRY SIGNAL
+- The stop goes just below that support level (tight, structural)
 
-**SKIP when:** Price immediately fades from open, breaks below previous close, or shows distribution (high volume on down-moves). Come back tomorrow.
+What makes you SKIP (don't enter today):
+- Price opens and immediately runs away from you (gap up, no pullback) → missed it, don't chase
+- Price collapses from open with heavy volume → sellers in control, thesis may be wrong
+- Price never reaches your entry zone → no trade today, try tomorrow
 
-This is NOT a fixed rule ("first bar must be green"). A stock can dip briefly and recover — that's fine. The agent reads the context like a real trader watching a screen.
+**The entry ZONE:**
+Before watching bars, identify WHERE you want to buy:
+- Near SMA20 (short-term support)
+- Near VWAP (fair value for the day)
+- Near prior breakout level (old resistance = new support)
+- Near prior day's low (if uptrend still intact)
 
-Why this matters: Backtesting showed 4/5 losers in Feb immediately went against entry from bar 1. The one winner (COP) showed immediate follow-through and never came back to entry. Entry timing is the difference between -1R loss and +2R winner — same thesis, different execution.
+If price is far above all these levels at open → WAIT. It will either:
+- Pull back to one of these levels (enter on the bounce) — good entry
+- Never pull back (runs without you) — missed it, no trade
+
+**Never chase. Never enter at a random price just because DD said "buy." The PRICE matters as much as the thesis.**
+
+Why this matters: Feb 2026 backtest showed 3/5 losers entered at open and immediately went against us. The one big winner (COP +2.0R) entered near SMA20 support and never looked back. Same catalyst quality, different entry price = completely different outcome.
+
+Example:
+- LRCX: catalyst valid (partnership), but entered at $231 with SMA20 at $220. If waited for pullback to $220-222 and entered there: stop at $215 (tighter), and the Feb 4 crash to $211 might still have stopped us BUT with -0.5R loss instead of -1.1R.
+- COP: entered at $103.87, SMA20 was at $100. Entry was NEAR support. Stop below support. Never came close to stop. This is what a good entry looks like.
 
 ### Step 3: Calculate Position Size
 
