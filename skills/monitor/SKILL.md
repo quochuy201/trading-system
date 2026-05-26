@@ -68,9 +68,12 @@ For each exit triggered:
 ### Step 5: Update Trailing Stops
 
 For positions still open where price moved favorably:
-- If unrealized profit > 1R: move stop to breakeven
-- If unrealized profit > 1.5R: trail stop by 1× ATR below current price
+- If unrealized profit >= 1R: move stop to breakeven (entry price). This makes it a "free trade."
+- If unrealized profit >= 1.5R: start trailing at 1.5× ATR below the highest high reached.
 - **Trailing stop NEVER moves down** — only up (for longs)
+- Trail distance of 1.5×ATR gives the stock its full daily range as breathing room while protecting against real reversals.
+
+Why 1.5×ATR (not 1×ATR): backtesting showed 1×ATR is too tight — normal intraday pullbacks trigger the trail prematurely, cutting winners short before they reach target. 1.5×ATR survives routine pullbacks but catches genuine trend breaks.
 
 ### Step 6: Report
 
