@@ -138,6 +138,62 @@ expected_daily_pnl$ = expectancy_per_trade$ × expected_trades_per_day
 
 ---
 
+## Crash Protection (Systemic Risk Rules)
+
+These rules protect against market-wide selloffs that invalidate stock-specific catalysts.
+
+### Rule 1: Sector Concentration Limit
+
+**Max 1 position per correlated sector.** If you already hold a tech/semiconductor stock, don't enter another one regardless of how good the catalyst looks.
+
+Sector groups (correlated):
+- **Tech/AI/Semis:** NVDA, AMD, LRCX, AMAT, MU, AVGO, QCOM, ON, SMCI, MRVL, KLAC, INTC, ARM
+- **Tech/Cloud/Software:** AAPL, MSFT, GOOGL, AMZN, META, CRM, ADBE, NFLX, SNOW, DDOG, NET, CRWD, PLTR, SHOP
+- **Finance:** JPM, GS, MS, BAC, V, MA, AXP, C
+- **Healthcare:** UNH, JNJ, LLY, PFE, ABBV, MRK, BMY
+- **Energy:** XOM, CVX, OXY, SLB, COP
+- **Consumer:** WMT, COST, NKE, SBUX, MCD, DIS
+- **Industrial/Defense:** CAT, BA, GE, DE, RTX, LMT
+- **Crypto/Speculative:** COIN, MARA, RIOT, RIVN
+
+Why: On Feb 4, 2026, holding LRCX + GOOGL + RTX (3 tech/AI positions) resulted in 3× loss when AMD's earnings shock dragged all tech. Max 1 per sector limits damage to 1× loss.
+
+### Rule 2: Range Expansion Warning (Crash Day Detection)
+
+Compute SPY's True Range vs its 20-day ATR. If today's range is expanding abnormally:
+
+```
+SPY_TR_today / SPY_ATR_20 > 1.5 → DEFENSIVE mode (half size, tighten stops)
+SPY_TR_today / SPY_ATR_20 > 2.0 → HALTED (no new entries, tighten all stops to breakeven)
+```
+
+Check this INTRADAY: if by midday SPY's range already exceeds 1.5× ATR, the day is abnormal.
+
+### Rule 3: "Good News, Bad Price" Sector Kill
+
+If a sector leader reports good news (earnings beat, upgrade) BUT the stock drops >5%:
+- Kill ALL entries in that sector for 48 hours
+- This signals extreme positioning/froth in the sector
+- Example: AMD beat earnings Feb 4 but dropped -17% → kill ALL semi/AI entries for 2 days
+
+### Rule 4: Sector Rotation Divergence
+
+If tech (QQQ) is down >1.5% AND defensive sectors (DIA/XLP) are UP on the same day:
+- Do NOT enter tech/growth positions
+- Consider entering defensive/value positions instead
+- This signals institutional rotation out of risk assets
+
+### Rule 5: Tighten Stops on Market Weakness
+
+If SPY drops >1% intraday while you hold positions:
+- Move all profitable positions to breakeven stop (protect gains)
+- Do NOT move losing positions (they already have stops)
+- Log: "market weakness → stops tightened"
+
+This limits damage on crash continuation days (Feb 4 → Feb 5 → Feb 6 was 3 days of selling).
+
+---
+
 ## Output Format
 
 When computing risk state, report:
