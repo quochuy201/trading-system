@@ -53,13 +53,20 @@ Call `get_market_data(symbol)` for the current bid/ask.
 - If price has run past the entry zone → SKIP (don't chase)
 - If price is below entry zone → wait or use limit order at entry level
 
-**First-hour confirmation (for intraday timeframes):**
-When using 1H or 15Min monitoring, do NOT enter at the very first bar of the day blindly. Wait for the first 1-2 bars to confirm direction:
-- First bar MUST be green (close > open) OR hold above previous day's close
-- If first bar is red AND drops > 1% → SKIP for today (selling pressure)
-- This prevents entering into immediate selloffs (e.g., stock gaps up on news but immediately fades)
+**Entry Timing (LLM judgment — not a fixed rule):**
 
-Why: Backtesting showed 1/8 losses was a -11% crash on entry day (NVDA Feb 26). First-hour confirmation would have prevented it.
+Do NOT enter at market open blindly. Watch the first 1-2 hourly bars and JUDGE:
+
+- Is the stock showing buying pressure? (holding above open, volume on up-moves)
+- Or is it fading? (sellers in control, drifting below open, weak bounces)
+
+**ENTER when:** Price holds above open OR bounces from a support level with volume. The stock is confirming strength.
+
+**SKIP when:** Price immediately fades from open, breaks below previous close, or shows distribution (high volume on down-moves). Come back tomorrow.
+
+This is NOT a fixed rule ("first bar must be green"). A stock can dip briefly and recover — that's fine. The agent reads the context like a real trader watching a screen.
+
+Why this matters: Backtesting showed 4/5 losers in Feb immediately went against entry from bar 1. The one winner (COP) showed immediate follow-through and never came back to entry. Entry timing is the difference between -1R loss and +2R winner — same thesis, different execution.
 
 ### Step 3: Calculate Position Size
 

@@ -48,7 +48,7 @@ For each open position, compare current price against the trade plan:
 
 | Check | Condition | Action |
 |-------|-----------|--------|
-| Stop-loss | Current price ≤ stop_loss | EXIT at market (retry until filled) |
+| Stop-loss | Bar CLOSES below stop_loss | EXIT at market (retry until filled) |
 | Take-profit | Current price ≥ take_profit | EXIT at market |
 | Trailing stop | Current price ≤ trailing_stop_level | EXIT at market |
 | Dead money | Held 5+ days AND never reached +0.5R | EXIT at market |
@@ -67,6 +67,8 @@ For each exit triggered:
 3. Log exit reason
 
 **Stop-loss orders: RETRY UNTIL FILLED.** Never leave a position unprotected.
+
+**Close-based stop rule:** The stop only triggers when a bar CLOSES below the level — not on intraday wicks. A wick that touches your stop but recovers by bar close is noise, not a real breakdown. Backtesting showed this saves ~$1,100/month by avoiding shakeouts on intraday volatility spikes (MCD Feb 11: wick hit $319, bar closed $322, stock recovered to $333+).
 
 ### Step 5: Update Trailing Stops
 
