@@ -215,3 +215,10 @@ class SimulationBrokerAdapter(BrokerAdapter):
             effective_end.strftime("%Y-%m-%dT%H:%M:%S"),
             timeframe,
         )
+
+    def get_tradeable_universe(self) -> list[str]:
+        """Return all symbols that have daily data in the DB."""
+        rows = self.repo.conn.execute(
+            "SELECT DISTINCT symbol FROM price_data WHERE timeframe = '1Day'"
+        ).fetchall()
+        return [r["symbol"] for r in rows]

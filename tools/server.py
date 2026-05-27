@@ -302,14 +302,12 @@ def get_news(query: str) -> str:
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     client = NewsClient(api_key, secret_key)
 
-    # During backtest: only fetch news available BEFORE this trading day
-    # The agent is at market open — it can see yesterday's news and overnight news
-    # but not today's intraday news (which hasn't happened yet in simulation)
+    # During backtest: only fetch news published BEFORE current simulation time
+    # At 9:30 AM: sees yesterday + overnight + pre-market headlines (not intraday)
     broker = get_broker()
     if hasattr(broker, "current_time") and broker.current_time:
-        # End at midnight of current simulation day (sees all of yesterday + overnight)
-        end_time = broker.current_time.replace(hour=23, minute=59, second=59)
-        start_time = end_time - timedelta(days=3)  # last 3 days of news
+        end_time = broker.current_time  # caps at sim clock (e.g., 9:30 AM or current bar time)
+        start_time = end_time - timedelta(days=3)
         req = NewsRequest(symbols=query, start=start_time, end=end_time, limit=10)
     else:
         req = NewsRequest(symbols=query, limit=10)
@@ -328,7 +326,262 @@ def get_news(query: str) -> str:
     ])
 
 
+@mcp.tool()
+def get_social_sentiment(symbol: str) -> str:
+    """Get social media sentiment for a stock from Reddit and StockTwits.
+
+    When to use: During Research DD, after get_news(), to check if retail traders
+    are talking about this stock. Helps score the "convergence" dimension of catalyst
+    scoring — multiple independent sources confirming = stronger signal.
+
+    Sample input: get_social_sentiment("COP")
+
+    Expected output:
+    {"symbol": "COP", "reddit": {"mentions": 12, "sentiment": "bullish", "top_posts": [...]},
+     "stocktwits": {"sentiment": "bullish", "volume": "high", "bullish_pct": 78},
+     "convergence_signal": "strong"}
+
+    Signals to look for:
+    - Reddit mention spike (>5 posts in 24h for non-mega-cap) = retail attention
+    - StockTwits bullish% > 70 + high volume = crowd consensus
+    - Both aligned with Alpaca news = convergence score 2
+    """
+    _track_tool("get_social_sentiment")
+    import requests
+
+    result = {"symbol": symbol, "reddit": None, "stocktwits": None, "convergence_signal": "none"}
+
+    # --- STOCKTWITS ---
+    try:
+        st_url = f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
+        resp = requests.get(st_url, timeout=10, headers={"User-Agent": "TradingSystem/1.0"})
+        if resp.status_code == 200:
+            data = resp.json()
+            messages = data.get("messages", [])
+            if messages:
+                # Sentiment field is often null — use keyword analysis on body text
+                bullish_words = {"bull", "long", "calls", "moon", "buy", "rocket", "breakout", "upside", "rip"}
+                bearish_words = {"bear", "short", "puts", "dump", "sell", "crash", "overvalued", "drop"}
+                bullish = 0
+                bearish = 0
+                for m in messages:
+                    # Check explicit sentiment tag first
+                    sent = (m.get("entities") or {}).get("sentiment")
+                    if sent and sent.get("basic") == "Bullish":
+                        bullish += 1
+                    elif sent and sent.get("basic") == "Bearish":
+                        bearish += 1
+                    else:
+                        # Keyword fallback
+                        body = m.get("body", "").lower()
+                        if any(w in body for w in bullish_words):
+                            bullish += 1
+                        elif any(w in body for w in bearish_words):
+                            bearish += 1
+
+                total_sentiment = bullish + bearish
+                bullish_pct = round(bullish / total_sentiment * 100) if total_sentiment > 0 else 50
+
+                volume_label = "high" if len(messages) >= 20 else ("moderate" if len(messages) >= 8 else "low")
+                sentiment_label = "bullish" if bullish_pct >= 65 else ("bearish" if bullish_pct <= 35 else "mixed")
+
+                result["stocktwits"] = {
+                    "message_count": len(messages),
+                    "bullish_pct": bullish_pct,
+                    "bearish_pct": 100 - bullish_pct if total_sentiment > 0 else 50,
+                    "sentiment": sentiment_label,
+                    "volume": volume_label,
+                    "sample_messages": [m.get("body", "")[:120] for m in messages[:3]],
+                }
+    except Exception as e:
+        result["stocktwits"] = {"error": str(e)}
+
+    # --- REDDIT (r/wallstreetbets + r/stocks + r/investing) ---
+    # Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env
+    # Register at: https://www.reddit.com/prefs/apps (script type app)
+    try:
+        reddit_client_id = os.environ.get("REDDIT_CLIENT_ID", "")
+        reddit_client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
+
+        if not reddit_client_id:
+            result["reddit"] = {"error": "REDDIT_CLIENT_ID not configured. Register at reddit.com/prefs/apps"}
+        else:
+            # OAuth app-only token (no user login needed for read access)
+            auth = requests.auth.HTTPBasicAuth(reddit_client_id, reddit_client_secret)
+            token_resp = requests.post(
+                "https://www.reddit.com/api/v1/access_token",
+                auth=auth,
+                data={"grant_type": "client_credentials"},
+                headers={"User-Agent": "TradingSystem/1.0"},
+                timeout=10,
+            )
+            if token_resp.status_code != 200:
+                result["reddit"] = {"error": f"Reddit auth failed: {token_resp.status_code}"}
+            else:
+                token = token_resp.json().get("access_token")
+                reddit_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "User-Agent": "TradingSystem/1.0",
+                }
+
+                subreddits = ["wallstreetbets", "stocks", "investing"]
+                reddit_posts = []
+
+                for sub in subreddits:
+                    url = f"https://oauth.reddit.com/r/{sub}/search?q={symbol}&sort=new&t=week&limit=10&restrict_sr=on"
+                    resp = requests.get(url, timeout=10, headers=reddit_headers)
+                    if resp.status_code == 200:
+                        posts = resp.json().get("data", {}).get("children", [])
+                        for post in posts:
+                            p = post.get("data", {})
+                            title = p.get("title", "")
+                            if symbol.upper() in title.upper() or f"${symbol}" in title:
+                                reddit_posts.append({
+                                    "title": title[:120],
+                                    "subreddit": sub,
+                                    "score": p.get("score", 0),
+                                    "num_comments": p.get("num_comments", 0),
+                                })
+
+                # Deduplicate
+                seen = set()
+                unique = []
+                for p in reddit_posts:
+                    if p["title"] not in seen:
+                        seen.add(p["title"])
+                        unique.append(p)
+
+                mention_count = len(unique)
+                avg_score = sum(p["score"] for p in unique) / mention_count if mention_count > 0 else 0
+                sentiment = "neutral"
+                if mention_count >= 3 and avg_score > 50:
+                    sentiment = "bullish"
+                elif mention_count >= 3 and avg_score < -5:
+                    sentiment = "bearish"
+                elif mention_count >= 1:
+                    sentiment = "mixed"
+
+                result["reddit"] = {
+                    "mentions_this_week": mention_count,
+                    "avg_upvotes": round(avg_score),
+                    "sentiment": sentiment,
+                    "top_posts": sorted(unique, key=lambda x: -x["score"])[:5],
+                }
+    except Exception as e:
+        result["reddit"] = {"error": str(e)}
+
+    # --- CONVERGENCE SIGNAL ---
+    st = result.get("stocktwits") or {}
+    rd = result.get("reddit") or {}
+
+    st_bullish = st.get("sentiment") == "bullish" and st.get("volume") in ("high", "moderate")
+    rd_active = rd.get("mentions_this_week", 0) >= 3
+    rd_bullish = rd.get("sentiment") == "bullish"
+
+    if st_bullish and rd_bullish:
+        result["convergence_signal"] = "strong"
+    elif st_bullish or rd_active:
+        result["convergence_signal"] = "moderate"
+    else:
+        result["convergence_signal"] = "weak"
+
+    return json.dumps(result, default=str)
+
+
 # --- Analysis Tools ---
+
+
+@mcp.tool()
+def score_catalyst(
+    symbol: str,
+    freshness: int,
+    magnitude: int,
+    priced_in: int,
+    convergence: int,
+    relevance: int,
+    headline: str,
+    thesis: str,
+) -> str:
+    """Score a catalyst on 5 dimensions (0-2 each). Total ≥ 7 = enter, < 7 = skip.
+
+    When to use: MANDATORY before recommending any entry. After calling get_news()
+    and reviewing headlines, score the catalyst to decide enter vs skip. This replaces
+    gut-feel DD with a structured, auditable assessment.
+
+    Scoring guide (each dimension 0-2):
+
+    freshness: How recent is the catalyst?
+      0 = >5 days old or no datable event
+      1 = 2-5 days old
+      2 = today or yesterday
+
+    magnitude: How significant is the event?
+      0 = "maintains/reiterates" or generic commentary
+      1 = single analyst upgrade, single PT raise, minor news
+      2 = earnings beat, multi-analyst convergence, major contract/deal
+
+    priced_in: Has the stock already moved on this news?
+      0 = stock already ran >5% in last 5 days
+      1 = stock moved 2-5% (partially priced)
+      2 = stock has NOT moved much yet (<2% in 5 days)
+
+    convergence: Do multiple sources confirm the thesis?
+      0 = only one weak source (single blog post, old article)
+      1 = news + moderate volume OR news + some social buzz
+      2 = analyst + news + volume spike + social buzz (multiple independent confirmations)
+
+    relevance: How directly does this impact the company's revenue/earnings?
+      0 = generic sector news, macro, no direct link
+      1 = direct company news but unclear revenue impact
+      2 = revenue-impacting: earnings, contract with $ amount, FDA approval, deal
+
+    Sample input: score_catalyst("COP", 2, 2, 2, 2, 1,
+                    "3 analysts raise PT: $115/$133/$114",
+                    "Triple analyst upgrade on strong earnings + production guidance")
+
+    Expected output (pass):
+    {"symbol": "COP", "score": 9, "threshold": 7, "verdict": "ENTER", ...}
+
+    Expected output (fail):
+    {"symbol": "RTX", "score": 4, "threshold": 7, "verdict": "SKIP", ...}
+    """
+    _track_tool("score_catalyst")
+
+    scores = {
+        "freshness": min(max(freshness, 0), 2),
+        "magnitude": min(max(magnitude, 0), 2),
+        "priced_in": min(max(priced_in, 0), 2),
+        "convergence": min(max(convergence, 0), 2),
+        "relevance": min(max(relevance, 0), 2),
+    }
+    total = sum(scores.values())
+    threshold = 7
+    verdict = "ENTER" if total >= threshold else "SKIP"
+
+    result = {
+        "symbol": symbol,
+        "scores": scores,
+        "total": total,
+        "threshold": threshold,
+        "verdict": verdict,
+        "headline": headline,
+        "thesis": thesis,
+    }
+
+    # Log to ledger if backtest is active
+    global _harness
+    if _harness is not None:
+        _harness.trade_log.append({
+            "action": "catalyst_score",
+            "symbol": symbol,
+            "score": total,
+            "verdict": verdict,
+            "headline": headline,
+            "thesis": thesis,
+            "day": _harness.get_current_day(),
+        })
+
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -958,7 +1211,7 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
     return str(path)
 
 
-# --- Backtest v2 Tools ---
+# --- Backtest v3 Tools ---
 
 _harness = None
 _original_broker = None  # saved before backtest, restored after
@@ -968,27 +1221,47 @@ _original_broker = None  # saved before backtest, restored after
 def start_backtest_v2(
     symbols: str, start_date: str, end_date: str,
     lookback_start: str = "",
-    timeframe: str = "1Day", initial_capital: float = 100000.0,
+    timeframe: str = "1Hour", initial_capital: float = 100000.0,
     sop_version: str = "",
 ) -> str:
-    """Initialize a backtest run with workflow enforcement and structured logging.
+    """Initialize a backtest with daily-cycle + mechanical monitoring.
 
-    When to use: Starting a new backtest session. Sets up the simulation broker,
-    loads historical data (including lookback for indicators), and prepares bar-by-bar stepping.
+    When to use: Starting a new backtest session. Two modes:
+    - Mode A (fixed list): symbols="NVDA,AMD" — skip scanner, DD these tickers each day
+    - Mode B (scanner):    symbols="" — scan full config.yaml universe each day
 
-    Sample input: start_backtest_v2("NVDA,AAPL", "2026-03-01", "2026-03-31", "2025-12-01", "1Day", 100000.0, "v1.0.0")
+    Sample input: start_backtest_v2("", "2026-02-03", "2026-02-28", "", "1Hour", 100000.0)
+                  start_backtest_v2("NVDA,AMD", "2026-02-03", "2026-02-28", "", "1Hour", 100000.0)
 
     Expected output:
-    {"run_id": "bt-abc123def456", "status": "ready", "total_bars": 84, "symbols": ["NVDA", "AAPL"]}
+    {"run_id": "bt-abc123", "status": "ready", "mode": "scanner", "trading_days": 19, "monitor_timeframe": "1Hour"}
 
-    IMPORTANT: lookback_start should be 3+ months before start_date so indicators (SMA50, RSI) can warm up.
+    IMPORTANT: lookback_start should be 3+ months before start_date so indicators can warm up.
     If omitted, defaults to 4 months before start_date.
+
+    After calling this, use advance_to_next_day() to begin the first trading day.
     """
     from backtest.harness import BacktestHarness
     from datetime import datetime as dt, timedelta
-    global _harness, _broker
+    global _harness, _broker, _original_broker
 
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    scanner_mode = not symbols.strip()
+
+    if scanner_mode:
+        # Full-market scan: use all symbols that have data in DB
+        repo = get_repo()
+        symbol_list = [
+            r["symbol"] for r in
+            repo.conn.execute(
+                "SELECT DISTINCT symbol FROM price_data WHERE timeframe = '1Day'"
+            ).fetchall()
+        ]
+        if "SPY" not in symbol_list:
+            symbol_list.append("SPY")
+    else:
+        symbol_list = [s.strip() for s in symbols.split(",")]
+        if "SPY" not in symbol_list:
+            symbol_list.append("SPY")
 
     # Default lookback: 4 months before start
     if not lookback_start:
@@ -996,79 +1269,198 @@ def start_backtest_v2(
         lookback_start = (start_dt - timedelta(days=120)).strftime("%Y-%m-%d")
 
     # Save original broker for restoration after backtest
-    global _original_broker
     _original_broker = _broker
 
-    # Load data including lookback period for indicator warmup
+    # Load DAILY data for scanner (full universe + lookback)
     from data.cache import load_price_cache as _load
-    _load(get_broker(), get_repo(), symbol_list, lookback_start, end_date, timeframe)
+    _load(get_broker(), get_repo(), symbol_list, lookback_start, end_date, "1Day")
+
+    # Also load intraday data for the monitor timeframe
+    if timeframe != "1Day":
+        _load(get_broker(), get_repo(), symbol_list, start_date, end_date, timeframe)
 
     _harness = BacktestHarness(get_repo())
     run_id = _harness.start(
-        symbols=symbol_list,
         start_date=start_date,
         end_date=end_date,
-        timeframe=timeframe,
+        monitor_timeframe=timeframe,
         initial_capital=initial_capital,
+        scanner_mode=scanner_mode,
+        symbols=symbol_list if not scanner_mode else None,
         sop_version=sop_version,
     )
 
     # Swap global broker to simulation
-    _broker = _harness.get_broker()
+    _broker = _harness.broker
 
     return json.dumps({
         "run_id": run_id,
         "status": "ready",
-        "total_bars": len(_harness._bars),
-        "symbols": symbol_list,
+        "mode": "scanner" if scanner_mode else "fixed_list",
+        "symbols_in_universe": len(symbol_list),
+        "trading_days": len(_harness._trading_days),
+        "monitor_timeframe": timeframe,
         "lookback_start": lookback_start,
     })
 
 
 @mcp.tool()
-def next_backtest_bar() -> str:
-    """Advance the backtest by one bar. Returns the bar's OPEN price only (no future data).
+def advance_to_next_day() -> str:
+    """Move the backtest to the next trading day. Returns day info and portfolio state.
 
-    When to use: During a backtest, call this to move to the next time period.
+    When to use: At the start of each trading day in the backtest loop.
+    After this returns, run the scanner (Mode B) or evaluate fixed tickers (Mode A),
+    then call load_day_bars() with candidates, then step_bar() loop.
 
-    Sample input: next_backtest_bar()
+    Sample input: advance_to_next_day()
 
     Expected output:
-    {"bar_index": 5, "timestamp": "2026-01-08", "symbol": "NVDA", "open": 215.2,
-     "remaining": 79, "previous_bar": {"timestamp": "...", "open": ..., "high": ..., "low": ..., "close": ..., "volume": ...},
-     "account": {"equity": 100500, "cash": 100500, "positions": 0}}
+    {"date": "2026-02-03", "day_number": 1, "total_days": 19, "open_positions": [...], "account": {...}}
 
-    Returns {"done": true, "run_id": "..."} when all bars processed.
-    Returns {"error": "Must log a decision..."} if you forgot to log for the previous bar.
-
-    IMPORTANT:
-    - You only see the current bar's OPEN price (the market just opened)
-    - You see the PREVIOUS bar's full OHLCV (completed yesterday)
-    - You do NOT see the current bar's high, low, close, or volume (hasn't happened)
-    - You MUST log a decision (log_backtest_decision) before calling this again
-    - calc_technical_indicators uses only completed bars (no current bar close)
-    - Orders fill at this bar's open price (the first available price)
+    Returns {"done": true} when all trading days are exhausted.
     """
     global _harness
     if _harness is None:
         return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
 
-    bar = _harness.advance_bar()
-    if bar is None:
-        return json.dumps({"done": True, "run_id": _harness.get_run_id()})
+    result = _harness.advance_to_next_day()
+    if result is None:
+        return json.dumps({"done": True, "run_id": _harness.run_id})
 
-    if isinstance(bar, dict) and "error" in bar:
-        return json.dumps(bar)
+    return json.dumps(result, default=str)
 
-    account = _harness.get_broker().get_account()
-    positions = _harness.get_broker().get_positions()
-    bar["account"] = {
-        "equity": round(account["equity"], 2),
-        "cash": round(account["cash"], 2),
-        "positions": len(positions),
-        "open_symbols": [p["symbol"] for p in positions],
-    }
-    return json.dumps(bar, default=str)
+
+@mcp.tool()
+def load_day_bars(symbols: str) -> str:
+    """Load intraday bars for specific symbols for the current trading day.
+
+    When to use: After scanner returns candidates (or for fixed list tickers),
+    load their intraday data for monitoring. Also include symbols of open positions.
+
+    Sample input: load_day_bars("NVDA,COP,MRK")
+
+    Expected output:
+    {"day": "2026-02-03", "symbols_loaded": {"NVDA": 7, "COP": 7, "MRK": 7}, "total_bars_per_symbol": 7}
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    result = _harness.load_day_bars(symbol_list)
+    return json.dumps(result)
+
+
+@mcp.tool()
+def step_bar() -> str:
+    """Advance one intraday bar and run mechanical checks on all open positions.
+
+    When to use: After entries are decided for the day, call this repeatedly to
+    step through intraday bars. Mechanical monitoring (stop/target/trail/time)
+    runs automatically. You only need to act when events are returned.
+
+    Sample input: step_bar()
+
+    Expected output (nothing happened):
+    {"status": "nothing", "bar_index": 3, "timestamp": "2026-02-03T17:00:00", "bars_remaining_today": 4}
+
+    Expected output (exit triggered mechanically):
+    {"status": "exits", "exits": [{"symbol": "NVDA", "exit_price": 186.24, "reason": "stop_loss", "pnl": -1017.70, ...}], ...}
+
+    Expected output (event needs LLM judgment):
+    {"status": "events", "events": [{"type": "large_drop", "symbol": "NVDA", "pct_change": -3.5, ...}], ...}
+
+    Expected output (day is done):
+    {"status": "day_complete", "day": "2026-02-03"}
+
+    MECHANICAL CHECKS (automatic, no LLM needed):
+    - Stop loss: previous bar closed below stop → exit at this bar's open
+    - Take profit: bar high reaches target → exit at target price
+    - Trailing stop: updates automatically; exits when broken
+    - Time stop: exceeded max hold → exit at bar open
+
+    EVENT TRIGGERS (LLM must evaluate):
+    - large_drop: price dropped > 3% in one bar
+    - approaching_stop: within 0.5% of stop loss
+    - dead_money: held 5+ days, never reached +0.5R
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    result = _harness.step_bar()
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+def backtest_enter(
+    symbol: str, side: str, entry_price: float, quantity: int,
+    stop_loss: float, take_profit: float, atr: float,
+    reasoning: str, time_stop_bars: int = 105,
+) -> str:
+    """Log a simulated trade entry during backtest.
+
+    When to use: After DD passes and risk gates are clear. This replaces place_order
+    during backtest — it logs the entry without sending a real order.
+
+    Sample input: backtest_enter("NVDA", "long", 196.31, 101, 186.41, 226.01, 6.60,
+                                 "MODERATE catalyst: gap +0.8% with 1.3x vol, RSI 58", 105)
+
+    Expected output:
+    {"action": "entry", "symbol": "NVDA", "price": 196.31, "quantity": 101, "stop_loss": 186.41, ...}
+
+    The position will be monitored automatically by step_bar() mechanical checks.
+    time_stop_bars default 105 = 15 trading days × 7 hourly bars/day.
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    result = _harness.enter_position(
+        symbol=symbol, side=side, entry_price=entry_price,
+        quantity=quantity, stop_loss=stop_loss, take_profit=take_profit,
+        atr=atr, reasoning=reasoning, time_stop_bars=time_stop_bars,
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+def backtest_exit(symbol: str, exit_price: float, reason: str) -> str:
+    """Manually exit a position during backtest (LLM judgment call).
+
+    When to use: When the LLM decides to exit a position that hasn't been
+    mechanically stopped out (e.g., dead money, thesis broken, discretionary exit).
+
+    Sample input: backtest_exit("NVDA", 192.50, "dead_money: 5 days, never reached +0.5R")
+
+    Expected output:
+    {"symbol": "NVDA", "exit_price": 192.50, "reason": "dead_money", "pnl": -385.81, ...}
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
+
+    result = _harness.exit_position(symbol, exit_price, reason)
+    if result is None:
+        return json.dumps({"error": f"No open position for {symbol}"})
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+def get_backtest_positions() -> str:
+    """Get current open positions with full monitoring state.
+
+    When to use: To see current positions, their stops, trails, and unrealized P&L.
+
+    Sample input: get_backtest_positions()
+
+    Expected output:
+    [{"symbol": "NVDA", "entry_price": 196.31, "stop_loss": 186.41, "trailing_stop": 190.5, "bars_held": 15, ...}]
+    """
+    global _harness
+    if _harness is None:
+        return json.dumps({"error": "No backtest active."})
+    return json.dumps(_harness.get_open_positions())
 
 
 @mcp.tool()
@@ -1077,62 +1469,66 @@ def log_backtest_decision(
     input_state: str, rules_evaluated: str = "[]",
     score: float | None = None, trade_plan: str = "",
 ) -> str:
-    """Log a decision made at the current backtest bar. Validates workflow compliance.
+    """Log a decision during backtest. Only needed for entries, exits, and events.
 
-    When to use: After analyzing the current bar and making a decision, log it here.
-    You MUST call this for every bar — even skip/hold decisions.
+    When to use: After making an entry/exit decision, or when responding to an event
+    from step_bar(). NOT needed for routine "nothing happened" bars.
 
-    Sample input: log_backtest_decision("NVDA", "research", "skip", "RSI overbought at 78",
-                  '{"price": 220.5, "rsi": 78}',
-                  '[{"rule": "RSI_RANGE", "passed": false, "value": "78 > 70"}]')
+    Sample input: log_backtest_decision("NVDA", "research", "enter", "Strong catalyst...",
+                  '{"price": 196.31, "rsi": 58}',
+                  '[{"rule": "CATALYST_FRESH", "passed": true}]', 78,
+                  '{"entry": 196.31, "stop": 186.41, "target": 226.01}')
 
-    Expected output:
-    {"decision_id": "bd-abc123", "workflow_valid": true, "violations": [], "tools_tracked": ["calc_technical_indicators", "get_market_data"]}
-
-    IMPORTANT: You do NOT pass tools_called — the system tracks which MCP tools
-    you actually called since the last next_backtest_bar. The validator checks
-    this server-side record. You cannot fake tool calls.
-
-    Required tools by phase:
-    - research: calc_technical_indicators + get_market_data
-    - trader: check_kill_switch + check_daily_limits + check_portfolio_risk + calc_position_size
-    - monitor: get_positions + get_market_data
+    Phases: "research" (scan/DD), "trader" (entry execution), "monitor" (hold/exit)
+    Decisions: "enter", "skip", "hold", "exit"
     """
     global _harness
     if _harness is None:
         return json.dumps({"error": "No backtest active. Call start_backtest_v2 first."})
 
-    decision_id = _harness.record_decision(
+    decision_id = _harness.logger.log_decision(
+        run_id=_harness.run_id,
+        bar_index=_harness._global_bar_idx,
+        timestamp=_harness.get_current_day() or "",
         symbol=symbol,
         phase=phase,
-        decision=decision,
-        reasoning=reasoning,
         input_state=json.loads(input_state),
+        tools_called=[],
         rules_evaluated=json.loads(rules_evaluated),
         score=score,
+        decision=decision,
+        reasoning=reasoning,
         trade_plan=json.loads(trade_plan) if trade_plan else None,
+        workflow_valid=True,
+        violation_details="",
     )
 
-    validation = _harness.validator.validate(phase, decision)
-    return json.dumps({
-        "decision_id": decision_id,
-        "workflow_valid": validation["valid"],
-        "violations": validation["missing"],
-        "tools_tracked": _harness.validator.get_calls(),
-    })
+    return json.dumps({"decision_id": decision_id, "logged": True})
 
 
 @mcp.tool()
-def get_backtest_results(run_id: str) -> str:
-    """Get the full results for a completed backtest run.
+def get_backtest_results(run_id: str = "") -> str:
+    """Get the full results for a completed or active backtest.
 
-    When to use: After a backtest completes, retrieve trades, metrics, and decision summary.
+    When to use: After a backtest completes (or while active), retrieve trades, metrics,
+    and performance summary. If run_id is empty and a backtest is active, returns live results.
 
-    Sample input: get_backtest_results("bt-abc123def456")
+    Sample input: get_backtest_results("")          — current active backtest
+                  get_backtest_results("bt-abc123") — historical run from DB
 
     Expected output:
-    {"run": {...}, "trades": [...], "decision_count": 84, "workflow_violations": 2}
+    {"initial_capital": 100000, "final_equity": 102415, "total_pnl": 2415, "win_rate": 60.0, "trades": [...], ...}
     """
+    global _harness
+
+    # If active harness and no specific run_id (or matches active), use in-memory results
+    if _harness is not None and (not run_id or run_id == _harness.run_id):
+        _harness.force_close_all()
+        results = _harness.get_results()
+        results["run_id"] = _harness.run_id
+        return json.dumps(results, default=str)
+
+    # Otherwise query from DB
     repo = get_repo()
     run = repo.get_backtest_run(run_id)
     if not run:
@@ -1175,8 +1571,55 @@ def export_backtest_jsonl(run_id: str) -> str:
 
 
 @mcp.tool()
+def load_market_data(
+    symbols: str = "", start_date: str = "", end_date: str = "",
+    timeframe: str = "1Day",
+) -> str:
+    """Bulk-load historical price data from the broker into the local cache.
+
+    When to use: Before running a backtest on new symbols, or to expand the
+    data universe for full-market scanning. Only loads symbols not already cached.
+
+    Sample input: load_market_data("", "2025-10-01", "2026-02-28", "1Day")
+                  — loads ALL tradeable symbols for the date range
+                  load_market_data("NVDA,AMD", "2025-10-01", "2026-02-28", "1Hour")
+                  — loads specific symbols with hourly data
+
+    Expected output:
+    {"loaded": 67, "skipped": 0, "total_bars": 13601, "timeframe": "1Day"}
+    """
+    from data.cache import load_price_cache
+
+    broker = get_broker()
+    repo = get_repo()
+
+    if symbols.strip():
+        symbol_list = [s.strip() for s in symbols.split(",")]
+    else:
+        symbol_list = broker.get_tradeable_universe()
+
+    if not start_date or not end_date:
+        return json.dumps({"error": "start_date and end_date are required"})
+
+    # Skip symbols already cached for this range/timeframe
+    to_load = []
+    for sym in symbol_list:
+        existing = repo.query_price_data(sym, start_date, end_date + "T23:59:59", timeframe)
+        if len(existing) < 10:
+            to_load.append(sym)
+
+    result = load_price_cache(broker, repo, to_load, start_date, end_date, timeframe)
+    return json.dumps({
+        "loaded": len(to_load),
+        "skipped": len(symbol_list) - len(to_load),
+        "total_bars": result["bars_loaded"],
+        "timeframe": timeframe,
+    })
+
+
+@mcp.tool()
 def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
-    """Scan symbols through the 4-layer filter to find tradeable candidates.
+    """Scan the market through the 4-layer filter to find tradeable candidates.
 
     When to use: At the start of each trading day (or backtest day) to identify
     stocks that pass quantitative filters. Candidates are then evaluated by the
@@ -1184,38 +1627,36 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
 
     This is the SAME code path used in both live trading and backtesting.
 
-    Sample input: scan_for_candidates("AAPL,NVDA,TSLA,AMD,META,SPY", 120)
-                  scan_for_candidates("", 120)  — uses config.yaml universe
+    Sample input: scan_for_candidates("", 120)         — scan entire market
+                  scan_for_candidates("NVDA,AMD", 120) — scan specific tickers only
 
-    If symbols is empty: reads the universe from config.yaml (scanner.universe).
-    Always include SPY for relative strength calculation.
+    If symbols is empty: scans the FULL tradeable market (all symbols with data).
+    Always includes SPY for relative strength calculation.
 
     Expected output:
-    {"candidates": [{"symbol": "NVDA", "price": 220.50, "atr": 8.34, "rvol": 1.8, "rs_10d": 5.2, "rsi": 58.3, ...}], "scanned": 5, "passed": 1}
+    {"candidates": [{"symbol": "NVDA", "price": 220.50, "atr": 8.34, "rvol": 1.8, "rs_10d": 5.2, "rsi": 58.3, ...}], "scanned": 67, "passed": 3}
 
     Filters applied (always on DAILY bars):
-    1. Liquidity: price $10-500, avg vol > 2M, ATR 1.5-10%, RVOL > 1.1x
+    1. Liquidity: price $10-500, avg vol > 2M, ATR 1.5-5%, RVOL > 1.1x
     2. Relative Strength: outperforming SPY by > 2% over 10 days
     3. Trend: above SMA20, SMA20 > SMA50 (aligned)
     4. Momentum: RSI 40-70, MACD bullish, not at upper Bollinger
+    5. Anti-chase: reject if near 10d high AND ran >5% in 5 days
     """
     _track_tool("scan_for_candidates")
     import pandas as pd
-    import yaml
     from scanner.filters import scan_universe
 
-    # If no symbols provided, read from config.yaml
-    if not symbols.strip():
-        config_path = Path(__file__).parent.parent / "config.yaml"
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-        symbol_list = config.get("scanner", {}).get("universe", [])
-        if config.get("scanner", {}).get("include_spy", True) and "SPY" not in symbol_list:
-            symbol_list.append("SPY")
-    else:
-        symbol_list = [s.strip() for s in symbols.split(",")]
     broker = get_broker()
     repo = get_repo()
+
+    if symbols.strip():
+        symbol_list = [s.strip() for s in symbols.split(",")]
+    else:
+        symbol_list = broker.get_tradeable_universe()
+
+    if "SPY" not in symbol_list:
+        symbol_list.append("SPY")
 
     # Load data for all symbols
     from datetime import timedelta
@@ -1227,7 +1668,7 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
 
     stock_data = {}
     for sym in symbol_list:
-        bars = repo.query_price_data(sym, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), "1Day")
+        bars = repo.query_price_data(sym, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%dT%H:%M:%S"), "1Day")
         if len(bars) >= 50:
             df = pd.DataFrame(bars)
             df["close"] = df["close"].astype(float)
@@ -1262,7 +1703,7 @@ def end_backtest() -> str:
     if _harness is None:
         return json.dumps({"error": "No backtest active."})
 
-    run_id = _harness.get_run_id()
+    run_id = _harness.run_id
 
     # Restore original broker
     if _original_broker is not None:

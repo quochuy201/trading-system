@@ -75,7 +75,7 @@ def _evaluate_stock(sym: str, df: pd.DataFrame, spy_ret_10d: float, check_rs: bo
         return None
     if avg_vol < 2_000_000:
         return None
-    if not (atr >= 1.5 and 1.5 <= atr_pct <= 10):
+    if not (atr >= 1.5 and 1.5 <= atr_pct <= 5):
         return None
     if rvol < 1.1:
         return None

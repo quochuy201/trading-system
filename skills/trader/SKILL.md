@@ -1,7 +1,7 @@
 ---
 name: trading-trader
 description: "Use when research candidates are ready and need risk-validated execution with position sizing and order placement via the broker."
-requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch]
+requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch, score_catalyst]
 ---
 
 # Trader Agent
@@ -55,57 +55,95 @@ Call `get_market_data(symbol)` for the current bid/ask.
 
 **Entry Timing (LLM judgment — the most critical skill):**
 
-**DO NOT enter at market open.** The scanner + DD tells you WHAT to trade and WHY. Your job as the Trader is to decide WHEN and AT WHAT PRICE.
+**Catalyst STRENGTH determines entry timing.** Not a fixed rule. The agent assesses how strong the catalyst is and acts accordingly.
 
-**After Research approves a candidate, put it on the WATCHLIST. Then watch hourly bars and wait for a good entry:**
+### OVERWHELMING CATALYST → Enter at open (it won't come back)
 
-What you're looking for:
-- Price pulling back toward a support level (SMA20, VWAP, prior breakout level, prior day's low)
-- A bounce off that support with a green bar + volume = ENTRY SIGNAL
-- The stop goes just below that support level (tight, structural)
+Signals:
+- Multiple independent sources confirming (3+ analysts raised PT, or analyst + earnings beat + social buzz)
+- Fresh earnings beat with revenue AND guidance raise
+- Major contract/deal with specific dollar amount announced
+- Stock opens near support (within 3% of SMA20) — already at a good price
 
-What makes you SKIP (don't enter today):
-- Price opens and immediately runs away from you (gap up, no pullback) → missed it, don't chase
-- Price collapses from open with heavy volume → sellers in control, thesis may be wrong
-- Price never reaches your entry zone → no trade today, try tomorrow
+Action: Enter at market open. Don't wait. Strong catalysts drive immediate sustained moves that never pull back to entry.
 
-**The entry ZONE:**
-Before watching bars, identify WHERE you want to buy:
-- Near SMA20 (short-term support)
-- Near VWAP (fair value for the day)
-- Near prior breakout level (old resistance = new support)
-- Near prior day's low (if uptrend still intact)
+Example: COP Feb 6 — three analysts raised PT on same day ($115/$133/$114). Entered at open $103.87. Never pulled back. Hit target +2.0R in 8 days.
 
-If price is far above all these levels at open → WAIT. It will either:
-- Pull back to one of these levels (enter on the bounce) — good entry
-- Never pull back (runs without you) — missed it, no trade
+### MODERATE CATALYST → Watch first 2 hours, enter on strength
 
-**Never chase. Never enter at a random price just because DD said "buy." The PRICE matters as much as the thesis.**
+Signals:
+- Single analyst upgrade or single PT raise
+- Partnership/deal without clear revenue impact
+- Stock is 4-6% above SMA20 (somewhat extended)
 
-Why this matters: Feb 2026 backtest showed 3/5 losers entered at open and immediately went against us. The one big winner (COP +2.0R) entered near SMA20 support and never looked back. Same catalyst quality, different entry price = completely different outcome.
+Action: Put on watchlist. Watch first 2 hourly bars:
+- If stock holds above open AND shows green bar with volume → ENTER
+- If stock fades below open in first 2 hours → SKIP today, revisit tomorrow
 
-Example:
-- LRCX: catalyst valid (partnership), but entered at $231 with SMA20 at $220. If waited for pullback to $220-222 and entered there: stop at $215 (tighter), and the Feb 4 crash to $211 might still have stopped us BUT with -0.5R loss instead of -1.1R.
-- COP: entered at $103.87, SMA20 was at $100. Entry was NEAR support. Stop below support. Never came close to stop. This is what a good entry looks like.
+Example: A single "Analyst raises PT" is real but not overwhelming. Wait to see if the market agrees before committing.
 
-### Step 3: Calculate Position Size
+### WEAK / LATE CATALYST → Skip entirely
+
+Signals:
+- "Maintains" or "reiterates" (no actual change)
+- Stock already ran 10%+ in last 5 days on this news (priced in)
+- Analyst upgrade AFTER a big run (following price, not leading)
+- Mixed signals (one bullish + one bearish headline)
+- Stock opens >6% above SMA20 (extended, chasing)
+
+Action: Do not enter. No watchlist. Move on.
+
+Example: NVDA Feb 26 — "JP Morgan Raises PT" but stock already ran from $176 to $196 (+11%) in prior days. The PT raise followed the move. Price was 4.8% above SMA20. Entered and immediately crashed -$10. Should have been classified as LATE catalyst → skip.
+
+### NO CATALYST = NO ENTRY
+
+If the Research agent's DD finds NO fresh catalyst (no earnings, no analyst action, no news event), the stock is a "technical-only setup." **Do not enter technical-only setups.** They have a >50% failure rate in backtesting (e.g., RTX Feb 23 — scanner-valid, first-hour confirmed, but no catalyst → stopped out -1R within 2 days).
+
+A "catalyst" means a specific, datable event that changed the stock's outlook:
+- Earnings beat/miss in the last 5 trading days
+- Analyst upgrade/downgrade/PT change in last 5 days
+- Partnership, contract, or deal announcement
+- Sector-wide event (oil price spike for energy, chip demand for semis)
+
+"Stock is above SMA20 and RSI is 60" is NOT a catalyst. That's a technical setup. Skip it.
+
+### Why this matters:
+
+Feb 2026 tested mechanically — "wait for pullback to SMA20" missed COP (+$2,000 winner because it never pulled back) and still lost on NVDA (pulled back THROUGH support). The pullback approach doesn't work because strong catalyst stocks don't pull back.
+
+The correct approach: judge catalyst STRENGTH, not price distance from support. Enter strong catalysts NOW, skip weak ones entirely. And REQUIRE a catalyst — technical setups without news drivers have inferior odds.
+
+### Step 3: Calculate Position Size (Conviction-Scaled)
+
+The catalyst score determines BOTH the target R:R AND the risk per trade:
+
+| Catalyst Score | Risk % | Target R:R | Rationale |
+|---------------|--------|------------|-----------|
+| 9-10 (overwhelming) | 2.0% | 3:1 | High conviction, size up, let it run |
+| 8 (strong) | 1.5% | 2.5:1 | Good catalyst, moderate sizing |
+| 7 (threshold) | 1.0% | 2:1 | Minimum viable, standard size |
 
 Call `calc_position_size(account_value, risk_pct, entry_price, stop_loss)`
 
-The SOP defines risk_pct (typically 1%). The tool returns the quantity.
+Use the risk_pct from the table above based on catalyst score.
 
-**Verify:**
-- Quantity > 0
-- Total position value doesn't exceed max concentration (check_portfolio_risk handles this)
+**Position size formula:**
+```
+qty = min(risk_budget / risk_per_share, available_cash / entry_price)
+```
+
+The risk % controls exposure. No separate concentration cap needed — available cash and max positions (5) naturally diversify.
 
 ### Step 4: Build the Trade Plan
 
 Construct the plan with:
-- **Entry**: Limit order at entry zone (or market if SOP says score >= 80)
-- **Stop loss**: Below invalidation level
-- **Take profit**: At target (2:1+ R:R)
-- **Trailing stop**: Defined by SOP (e.g., after 1R profit, trail by 1 ATR)
-- **Time stop**: If day trading, must close by EOD
+- **Entry**: Limit order at entry zone (or market if catalyst score ≥ 9 with strong first-hour)
+- **Stop loss**: Below invalidation level (1.5×ATR below entry)
+- **Take profit**: Based on catalyst score (2:1 / 2.5:1 / 3:1 — see Step 3)
+- **Trailing stop**: After +1R profit, trail below highest close:
+  - Stocks with ATR% > 3%: trail at 2×ATR (volatile, need room)
+  - Stocks with ATR% ≤ 3%: trail at 1.5×ATR (tighter for calmer stocks)
+- **Time stop**: 15 trading days max hold (swing trades that don't move are dead money)
 
 ### Step 5: Execute
 

@@ -1,7 +1,7 @@
 ---
 name: trading-research
 description: "Use when the orchestrator needs ranked trading candidates from a broad market scan with scored due diligence across equities, options, crypto, or prediction markets."
-requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, calc_technical_indicators, load_price_cache, query_price_cache, get_account]
+requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, get_social_sentiment, calc_technical_indicators, score_catalyst, load_price_cache, query_price_cache, get_account]
 ---
 
 # Research Agent
@@ -120,11 +120,11 @@ This layer requires REAL reasoning, not keyword matching. Use every tool availab
 - NOT CHANGE (noise): "maintains Buy," "reiterates Outperform," "here's how much you'd have made," historical articles
 - Is it FRESH? (today or yesterday = actionable. 3+ days old = priced in)
 
-**Step 2: Check social buzz** — search web for "{SYMBOL} reddit" or "{SYMBOL} stock twitter"
+**Step 2: Check social buzz** — call `get_social_sentiment(symbol)`
+- Reddit (r/wallstreetbets, r/stocks, r/investing): mention count + sentiment
+- StockTwits: bullish/bearish ratio + message volume
 - Is this stock being TALKED ABOUT right now? High buzz = in play, traders are watching
-- Is the tone bullish, bearish, or mixed?
-- Are there unusual mentions (sudden spike in discussion = something happening)
-- WSB/investing subreddit mentions signal retail attention
+- convergence_signal: "strong" (both bullish), "moderate" (one active), "weak" (no buzz)
 
 **Step 3: Look for convergence**
 - Analyst upgrade + social buzz + volume spike = STRONG catalyst (multiple sources agree)
@@ -136,13 +136,26 @@ This layer requires REAL reasoning, not keyword matching. Use every tool availab
 - If stock already ran >5% in the 5 days BEFORE today: the catalyst likely already moved the price. You're late.
 - If analyst upgrades AFTER a big run: they're upgrading because it went up, not the other way around. This is a FALSE catalyst — the analyst is following, not leading.
 
+**Step 5: Score the catalyst** — call `score_catalyst(symbol, freshness, magnitude, priced_in, convergence, relevance, headline, thesis)`
+
+This is MANDATORY. You cannot recommend an entry without a catalyst score. Score each dimension 0-2:
+- **freshness**: 0=>5 days old, 1=2-5 days, 2=today/yesterday
+- **magnitude**: 0=maintains/reiterates, 1=single upgrade, 2=earnings beat or multi-source
+- **priced_in**: 0=stock ran >5% already, 1=ran 2-5%, 2=hasn't moved yet (<2%)
+- **convergence**: 0=one weak source, 1=news + volume, 2=analyst + news + volume + buzz
+- **relevance**: 0=generic/macro, 1=company news unclear impact, 2=revenue-impacting event
+
+**Total ≥ 7 → ENTER** (strong catalyst, proceed to Layer 4)
+**Total 5-6 → WATCH** (borderline, only enter with OVERWHELMING first-hour confirmation)
+**Total < 5 → SKIP** (no real catalyst, technical-only setup, historically >50% failure rate)
+
 **Kill if:**
+- score_catalyst returns verdict "SKIP" (total < 5)
 - Can't articulate thesis in one sentence
-- News is "maintains/reiterates" (no change)
-- Catalyst is >2 days old (stale)
-- Stock already ran on this news (priced in)
-- No social buzz AND no fresh news (no one cares)
-- Analyst upgrade AFTER a >10% run (they're following the price, not leading it)
+- News is "maintains/reiterates" (no change) → freshness=0, magnitude=0
+- Catalyst is >5 days old (stale) → freshness=0
+- Stock already ran >5% on this news (priced in) → priced_in=0
+- Analyst upgrade AFTER a >10% run (they're following the price, not leading it) → priced_in=0, magnitude=0
 
 ### Layer 4: Technical Setup
 

@@ -9,8 +9,9 @@ from alpaca.trading.requests import (
     LimitOrderRequest,
     StopOrderRequest,
     StopLimitOrderRequest,
+    GetAssetsRequest,
 )
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderType
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderType, AssetClass, AssetStatus
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import (
     StockLatestQuoteRequest,
@@ -164,4 +165,18 @@ class AlpacaBrokerAdapter(BrokerAdapter):
                 "timeframe": timeframe,
             }
             for bar in bars[symbol]
+        ]
+
+    def get_tradeable_universe(self) -> list[str]:
+        """Return all active, tradeable US equities from Alpaca (excludes OTC)."""
+        req = GetAssetsRequest(
+            asset_class=AssetClass.US_EQUITY,
+            status=AssetStatus.ACTIVE,
+        )
+        assets = self.trading_client.get_all_assets(req)
+        return [
+            a.symbol for a in assets
+            if a.tradable and a.exchange in ("NYSE", "NASDAQ", "ARCA", "BATS")
+            and not a.symbol.endswith("W")  # skip warrants
+            and "." not in a.symbol  # skip preferred shares (BRK.B etc.)
         ]

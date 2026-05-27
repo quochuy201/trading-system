@@ -42,3 +42,11 @@ class BrokerAdapter(ABC):
         self, symbol: str, start: datetime, end: datetime, timeframe: str = "1Day"
     ) -> list[dict]:
         ...
+
+    def get_tradeable_universe(self) -> list[str]:
+        """Return all tradeable symbols. Override per broker.
+
+        Default returns empty — subclasses that can enumerate the full market
+        should return active, tradeable US equities (no OTC, no warrants).
+        """
+        return []
