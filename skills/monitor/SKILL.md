@@ -1,7 +1,7 @@
 ---
 name: trading-monitor
 description: "Use when open positions exist and need continuous evaluation against stop-loss, take-profit, trailing stop, and time-stop exit levels."
-requires_tools: [get_positions, get_market_data, get_latest_bars, place_order, save_transaction, get_trade_plan, check_kill_switch, get_portfolio_state, check_daily_limits]
+requires_tools: [get_positions, get_market_data, get_latest_bars, place_order, save_transaction, get_trade_plan, check_kill_switch, get_portfolio_state, check_daily_limits, log_decision, get_options_positions, get_options_market_data]
 ---
 
 # Monitor Agent
@@ -173,3 +173,186 @@ To save LLM tokens on routine checks:
 Call `log_decision` at these points:
 - **When holding (each check cycle)**: action="hold", rules_triggered=PRICE_ABOVE_STOP or similar, reasoning=brief status
 - **When triggering an exit**: action="exit", rules_triggered=STOP_HIT/TAKE_PROFIT/TIME_STOP/TRAILING_STOP, reasoning=what happened, market_context=current price
+
+---
+
+## Options Exit Loop (Cross-Day — 15:30 ET Daily)
+
+This section governs monitoring of open **options positions** under the `options-vol-edge` SOP. It is a separate loop from the equity day-trade monitoring above and runs once per day at **15:30 ET**.
+
+### Overnight Hold — No 15:45 Flatten
+
+Options positions under this SOP are **swing holds** (30–120 DTE). The equity day-trade time stop at 15:45 ET does **not** apply here. The 15:30 check is a structured review that may or may not produce an exit; positions that pass all checks remain open overnight and into the next session. Do not close options positions solely because the equity time stop would have fired.
+
+### Two-Tier Design (Token Discipline)
+
+**Tier 1 — Mechanical tool-only (runs on every position, every day):**
+
+- Fetch current position marks, DTE, credit-collected or debit-paid, and best-mark-since-entry via tool calls.
+- Evaluate all always-on mechanical rules (50% profit, 21-DTE, 2× loss, no-expiration-holding) and the trailing value stops numerically.
+- If no rule triggers and no emergency condition is present → log status (action="hold"), do NOT escalate to the LLM.
+
+**Tier 2 — LLM escalation (only when needed):**
+
+- An emergency condition is detected (gap-through-strike, regime collapse, binary event).
+- An always-on mechanical rule or trailing stop has triggered → LLM confirms and directs execution.
+- A thesis integrity check is due (regime, vol-thesis, short-strike safety must be evaluated qualitatively).
+- A single-leg IV-crush or time-stop assessment requires judgment.
+- Roll eligibility needs evaluation.
+
+The LLM is **not** invoked on Tier 1 passes — routine arithmetic checks do not consume tokens.
+
+---
+
+### Exit Loop Ordering (Most-Urgent-First)
+
+Evaluate positions in this order every day at 15:30 ET. Stop at the first family that fires for a given position and act; do not continue evaluating lower-priority families for that position until the action is complete.
+
+#### 1. Emergency (Act Same-Day — highest priority)
+
+Check before anything else. If any of the three emergency triggers is present, execute a defensive exit before end of day regardless of how the position otherwise looks. **Never use a market order:** place a limit at or near mid; if unfilled after 2 minutes, widen to the current bid (closing a long leg) or ask (closing a short leg).
+
+| Trigger | Action | Exit reason |
+|---------|---------|-------------|
+| **Gap through strike** — underlying opens beyond the short strike of a credit spread or through the long strike of a protective spread | Immediate defensive limit exit, same day | `gap_through_strike` |
+| **SPY regime collapse** — per `OPERATING_MANUAL.md §4.4`: drawdown from peak equity ≥ 10% in rolling 20 days, or SPY EMA20 crosses below SMA50 (UPTREND entry) / above SMA50 (DOWNTREND entry) with accelerating slope | Immediate defensive limit exit on all options positions; activate kill switch if Manual §4.4 triggers apply | `market_regime_collapse` |
+| **Binary event inside window** — a confirmed earnings date, FDA decision, merger announcement, or other binary event newly falls inside the expiry window and was not present at entry | Immediate defensive limit exit, same day | `binary_event_in_window` |
+
+Full detail: SOP Phase 6 → Emergency section.
+
+---
+
+#### 2. Always-On Mechanical (No LLM judgment required)
+
+These rules fire on position data alone. Evaluate every position every day. Exit reason is fixed.
+
+| Rule | Condition | Action | Exit reason |
+|------|-----------|--------|-------------|
+| **50% profit close** | Credit spread current value ≤ 50% of credit collected | Close spread (limit at mid) | `50pct_profit` |
+| **21-DTE hard close** | Credit spread with DTE ≤ 21 | Close spread (gamma zone; pin risk outweighs remaining theta) | `21dte_hard_close` |
+| **2× loss limit** | Credit spread: current value ≥ 2× credit collected. Debit/single-leg: unrealized loss exceeds 2× debit paid | Close position | `2x_loss_limit` |
+| **No-expiration-holding** | Any open position with DTE = 1 (one trading day to expiry) | Close — never hold through expiration | `21dte_hard_close` (or `manual_early_close` if operator-directed) |
+
+Full detail: SOP Phase 6 → Always-On section.
+
+---
+
+#### 3. Trailing Profit-Protection Stops
+
+Track best-mark-since-entry. Escalate to LLM to confirm trigger; execution is mechanical.
+
+**Credit spreads — value stop:** Compute `given_back_pct = (current_value − best_mark) / best_mark × 100`. If `given_back_pct > 20` → close. Exit reason: `trailing_stop`.
+
+**Scale at +100% (credit):** If the spread's value has fallen to ≤ 25% of credit collected (= 75% profit), consider closing 50% of contracts to lock gains; let the remaining 50% run to the 50%-profit trigger.
+
+**Debit spreads and single-leg longs — value stop:** Compute `retained_pct = current_value / best_mark × 100`. If `retained_pct < 75` → close. Exit reason: `trailing_stop`.
+
+**Scale at +100% (debit/single-leg):** If current value ≥ 2× debit paid, close 50% of the position. Reset the trailing stop on the remaining 50% from the +100% level.
+
+Full detail: SOP Phase 6 → Trailing section.
+
+---
+
+#### 4. Thesis Integrity (LLM required)
+
+Run at 15:30 ET. The LLM reads current regime and vol data and makes a qualitative judgment on three sub-checks.
+
+**Regime check (EMA20 / SMA50):**
+- INTACT → no action
+- WEAKENING → note in log; re-evaluate at next 15:30 check
+- BROKEN → close full position, exit reason: `thesis_broken_regime`
+
+**Vol-thesis check (IVR / IV-HV):**
+- INTACT → no action
+- BROKEN (IVR reverted to neutral 25–75 from credit-spread entry; or IVR expanded above 50 from single-leg long entry) → close full position, exit reason: `thesis_broken_vol`
+
+**Short-strike safety (credit spreads only):**
+
+| Status | Condition | Action | Exit reason |
+|--------|-----------|--------|-------------|
+| SAFE | Distance > 8% from current price AND short-strike delta < 0.25 | No action | — |
+| CAUTION | Distance 4–8% OR delta 0.25–0.35 | Note in log; re-evaluate next 15:30 | — |
+| THREATENED + regime WEAKENING | Distance < 4% OR delta > 0.35, AND regime is weakening | Reduce position by 50% (close half the contracts) | `strike_threatened_size_reduce` |
+| THREATENED (regime intact) | Distance < 4% OR delta > 0.35, regime still intact | Note in log; escalate at next check | — |
+
+Full detail: SOP Phase 6 → Thesis Integrity section.
+
+---
+
+#### 5. Single-Leg Specific (LLM judgment required)
+
+**IV-crush rule** — evaluate after any earnings event, catalyst, or major vol-compressing event:
+
+| Outcome | Condition | Action | Exit reason |
+|---------|-----------|--------|-------------|
+| Moved AND IV crushed | Underlying moved in the expected direction AND IV/HV is now < 0.85 | Take profit — vol is gone and the move is captured | `50pct_profit` (if profitable) or `trailing_stop` |
+| No move AND IV crushed | Underlying did NOT move (or moved against) AND implied vol has compressed | Cut the position — thesis failed, no remaining catalyst | `iv_crush_no_move` |
+
+**Time stop** — if a single-leg position is not profitable (current value < debit paid) by mid-DTE (half the original DTE has elapsed), close the position. A single-leg not working by its midpoint is unlikely to recover with remaining theta working against it.
+
+| Scenario | Exit reason |
+|----------|-------------|
+| At a loss at mid-DTE | `2x_loss_limit` |
+| Near breakeven but time-stopped by mid-DTE rule | `manual_early_close` |
+
+Full detail: SOP Phase 6 → Single-Leg Specific section.
+
+---
+
+#### 6. Roll Evaluation (Only If Position Is Clean)
+
+Rolling is permitted only after the position has passed checks 1–5 with no exit triggered. All four conditions must hold:
+
+1. Position is **untested** (short strike not approached) OR **profitable** (current P&L > 0).
+2. Vol edge is **still intact** at entry conditions for the new position.
+3. The new position would pass **all Phase 5 hard gates** as if it were a fresh entry.
+4. Rolling does **not** increase total max-loss vs. the current position.
+
+**Never roll a breached position** to avoid recognizing a loss. Rolling a loser forward is loss-deferral, not risk management. If the position is breached: take the loss and close cleanly.
+
+Exit reason for the closing leg of a roll: `roll_replaced`.
+
+Full detail: SOP Phase 6 → Roll Logic section.
+
+---
+
+### Exit Logging (Options)
+
+Every options exit must be logged via `log_decision(action="exit", ...)` with:
+
+**`exit_reason`** set to exactly one value from the 13-value enum (verbatim — do not abbreviate, pluralize, or modify):
+
+```
+50pct_profit
+21dte_hard_close
+trailing_stop
+2x_loss_limit
+gap_through_strike
+market_regime_collapse
+binary_event_in_window
+strike_threatened_size_reduce
+thesis_broken_regime
+thesis_broken_vol
+iv_crush_no_move
+roll_replaced
+manual_early_close
+```
+
+The `rules_triggered` list must also include the same exit-reason value.
+
+**Base fields** (`OPERATING_MANUAL.md §6`, required on every log):
+
+| Field | Required content |
+|-------|-----------------|
+| `agent` | `monitor` |
+| `action` | `exit` (or `adjust` for partial closes) |
+| `rules_triggered` | List including the exit-reason value |
+| `reasoning` | One-sentence description of what triggered the exit |
+| `market_context` | Snapshot of price, regime, vol at the time of the decision |
+| `sop_version` | `options-vol-edge/v1.0.0` |
+
+**Options-specific fields** (required on every options exit — defined in SOP Phase 7):
+
+`iv_rank`, `iv_hv`, `delta`, `theta`, `vega`, `structure`, `engine`, `max_profit`, `max_loss`, `breakeven`, `dte`.
+
+Full schema: SOP Phase 7 → Journal Schema section.
