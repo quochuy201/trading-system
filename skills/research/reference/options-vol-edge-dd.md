@@ -102,9 +102,12 @@ Only candidates that have passed **all** Phase 1 gates above are scored. A rejec
 
 | Grade | Score | Usage |
 |---|---|---|
-| A+ | ≥ 80 | Required in DEFENSIVE mode; full conviction sizing |
+| A+ | 90–100 | Highest conviction; full conviction sizing |
+| A | 80–89 | Strong; standard conviction sizing |
 | B+ | 70–79 | Permitted in NORMAL mode; reduced conviction sizing |
 | Reject | < 70 | Do not trade |
+
+The Manual's DEFENSIVE-mode gate ("A+ setups only, score ≥ 80") maps to **score ≥ 80 (grade A or A+)**.
 
 ---
 
@@ -166,7 +169,7 @@ Produce a ranked candidate list. Each row must carry all five fields below:
 - Universe scanned: [N]
 - Passed scan gates: [N]
 - Engine A candidates: [N]  Engine B candidates: [N]
-- A+ (≥ 80): [N]  B+ (70–79): [N]  Rejected (< 70): [N]
+- A+ (90–100): [N]  A (80–89): [N]  B+ (70–79): [N]  Rejected (< 70): [N]
 - SPY regime: [UPTREND / DOWNTREND / NEUTRAL]
 - VIX: [X] ([band])
 - SOP version: options-vol-edge/v1.0.0

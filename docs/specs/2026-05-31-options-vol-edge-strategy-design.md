@@ -91,7 +91,7 @@ into the SOP (strategy) + the three agent skills (behavior), per repo convention
 6. **Scoring (0–100), two rubrics → one scale** so the Manual's A+ gate (≥ 80) and DEFENSIVE
    mode work unchanged:
    - Vol-Edge score: IVR magnitude, IV/HV confirm, regime strength, RS63 rank, liquidity/spread,
-     earnings buffer, put-skew, (optional) social.
+     earnings buffer, put-skew. (Social signal is a Phase-5 soft gate, not a scoring component.)
    - Momentum score: RS63 rank, regime strength, continuation-setup quality (pullback-to-EMA20 /
      consolidation breakout / MACD resumption), liquidity, IV sanity (penalize extreme IV for single-leg).
 7. **Entry gates** (hard = skip on failure; soft = reduce size) + **order placement**

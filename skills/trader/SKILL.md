@@ -1,7 +1,7 @@
 ---
 name: trading-trader
 description: "Use when research candidates are ready and need risk-validated execution with position sizing and order placement via the broker."
-requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch, score_catalyst]
+requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_account, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch, score_catalyst]
 ---
 
 # Trader Agent
