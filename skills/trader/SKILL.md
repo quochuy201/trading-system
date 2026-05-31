@@ -235,6 +235,147 @@ After execution, report:
 
 ---
 
+## Options Execution — Vol-Edge SOP
+
+This section applies when the Research agent delivers a scored options candidate under
+`sops/options-vol-edge/v1.0.0.md`. The equity execution flow above does NOT apply to options
+positions. Work through the steps below in order.
+
+### Step O-1: Confirm the candidate is ready
+
+Research must have supplied:
+- Symbol, engine (A or B), structure type, grade (B+ / A / A+)
+- Phase 1 vol routing (IVR zone, SPY regime)
+- Phase 3 score (≥ 70; reject anything below 70 without sizing)
+
+If any of these is absent, send back to Research. Do not guess.
+
+### Step O-2: Select structure, strikes, and expiry
+
+Apply `sops/options-vol-edge/v1.0.0.md` Phase 2 rules. Key selection rules are:
+
+**Structure from vol signal × regime (Engine A):**
+
+| Vol signal | SPY regime | Structure |
+|---|---|---|
+| IVR > 75 (rich) | UPTREND | Bull put spread |
+| IVR > 75 (rich) | DOWNTREND | Bear call spread |
+| IVR < 25 (cheap) | UPTREND or DOWNTREND | Debit vertical |
+
+**Engine B structures:** momentum debit spread (RS63-driven continuation) or single-leg long
+(IVR < 50 only; prefer debit spread when IVR ≥ 50). Requires a confirmed continuation setup —
+see SOP Phase 2 for the three accepted setups.
+
+**Strike selection:**
+- Credit spread short strike: **0.20–0.25 delta**; move to **0.15 delta** when IVR > 90.
+- Debit vertical long leg: **0.45–0.55 delta** (ATM); short leg ~1 expected-move OTM.
+  `expected_move = stock_price × IV × √(DTE / 365)`
+
+**Spread width by account tier** (live equity at session open):
+
+| Tier | Equity | Width |
+|---|---|---|
+| Small | $3.5k–$10k | $1–$2.50 |
+| Standard | $10k–$25k | $5 |
+| Pro | $25k+ | $5+ |
+
+**DTE windows** (never open a position that already violates these):
+
+| Structure | DTE window | Hard floor |
+|---|---|---|
+| Credit spreads (Engine A) | 30–45 DTE | Never < 21 DTE at entry |
+| Debit verticals (Engine A) | 60–90 DTE | — |
+| Momentum debit spreads (Engine B) | 60–90 DTE | — |
+| Single-leg longs (Engine B) | 60–120 DTE | — |
+
+For full parameter tables and earnings-vs-expiry rules, see SOP Phase 2.
+
+### Step O-3: Run entry gates (mandatory before sizing or order placement)
+
+All Phase 5 hard gates must pass. A single failure → **skip today**, log `action="gate_fail"`
+with the rule ID.
+
+| Gate | Rule ID |
+|---|---|
+| SPY regime agrees with trade direction | `HARD_SPY_REGIME` |
+| Stock's own EMA20/SMA50 aligns with structure | `HARD_STOCK_REGIME` |
+| Engine A: IVR in correct zone · Engine B: continuation setup confirmed | `HARD_IVR_ZONE` / `HARD_CONTINUATION` |
+| Confirmed earnings entirely outside expiry window (skip if earnings date unknown) | `HARD_EARNINGS_CLEAR` |
+| Current time ≥ 9:45 ET | `HARD_TIME_GATE` |
+| Net spread bid-ask ≤ 20% of mid (single-leg: option bid-ask ≤ 20% of mid) | `HARD_SPREAD_WIDTH` |
+| Portfolio heat after this trade ≤ 6% of live equity | `HARD_HEAT_CAP` |
+| Single-leg sub-bucket heat ≤ 3% of live equity (single-leg entries only) | `HARD_SINGLELEG_LEASH` |
+
+Soft-gate failures (`SOFT_IVHV_CONFIRM`, `SOFT_PUTSKEW`, `SOFT_OPTION_VOLUME`, `SOFT_SOCIAL`)
+do not cancel the trade — they trigger a one-step conviction reduction: A+ → A risk_pct,
+A → B+ risk_pct. Log with `action="gate_fail"` and the size adjustment.
+
+### Step O-4: Size the position (conviction-scaled)
+
+Read **live equity `E` from `get_account` at order time** — never use a cached value.
+
+```
+risk_dollars      = E * risk_pct                       # E = live equity from get_account
+
+max_loss_per_unit = (spread_width - credit) * 100      # credit spreads
+                  = debit_paid * 100                   # debit spreads / single-leg
+
+contracts         = floor(risk_dollars / max_loss_per_unit)   # must be >= 1, else SKIP
+```
+
+If `contracts < 1` after the floor: **SKIP**. Log `rules_triggered: ["SIZE_TOO_SMALL"]`.
+Do not round up; a sub-1-contract result means the account is below the practical minimum.
+
+**Conviction `risk_pct` by grade:**
+
+| Grade | Score | Per-trade risk |
+|---|---|---|
+| B+ | 70–79 | ~1.5% |
+| A | 80–89 | ~3% |
+| A+ | 90–100 | Up to full heat headroom (no fixed cap) |
+
+"Full heat headroom" for an A+ trade means whatever remains between current portfolio heat
+and the 6% cap. If existing positions already consume 4% heat, max available is 2%.
+
+**Backstops — HELD, non-negotiable:**
+
+- **6% portfolio heat cap:** `sum(max_loss_per_unit × contracts for all open positions) / E ≤ 6%`
+- **Single-leg sub-leash — 3%:** total open max-loss across single-leg positions only ≤ 3% of equity
+- **Manual circuit breakers (`OPERATING_MANUAL.md §4`):**
+  - Realized P&L ≤ −3% in one day → HALT, close all, activate kill switch
+  - Drawdown from peak ≥ −6% in 5 trading days → HALT for the week
+  - Drawdown from peak ≥ −10% in any rolling 20 days → HALT indefinitely
+- **Kelly cap (`OPERATING_MANUAL.md §3.4`):** `size_cap_pct = max(0, min(risk_pct, 0.25 × kelly_pct))`
+  Use `size_cap_pct` as the effective `risk_pct` when it is smaller than the conviction target.
+
+Full sizing-framework rationale in SOP Phase 4 and `OPERATING_MANUAL.md §3`.
+
+### Step O-5: Place the order
+
+**Multi-leg spreads (bull put, bear call, debit vertical, momentum debit spread):**
+
+- Place as a **single limit order at the net mid price — NEVER use market orders on spreads.**
+  The bid-ask gap makes market fills unacceptable.
+- **Credit spreads:** start $0.05–$0.10 better than mid (collect slightly more than mid).
+  If unfilled after 5 minutes, relax to mid. Do not go below mid.
+- **Debit spreads:** start at mid. If unfilled after 5 minutes, relax to $0.05–$0.10 above mid.
+  Do not chase beyond $0.10 over mid — if still unfilled, cancel and reassess liquidity.
+- **Partial fill:** cancel the remaining legs immediately. A partial fill on a spread converts
+  defined-risk into undefined-risk — do not hold an unbalanced leg.
+
+**Single-leg longs:**
+
+- Place a **limit order at or near the mid.** Adjust by one tick if the market is moving;
+  do not chase by more than $0.05 above ask.
+- If unfilled after 10 minutes: cancel and reassess whether the thesis still holds.
+
+**On fill — log immediately** via `log_decision(action="enter", ...)` with all
+`OPERATING_MANUAL.md §6` base fields plus the options-specific fields required by SOP Phase 7:
+`iv_rank`, `iv_hv`, `delta`, `theta`, `vega`, `structure`, `engine`, `max_profit`, `max_loss`,
+`breakeven`, `dte`. Set `exit_reason` reserved field to `null`.
+
+---
+
 ## Market-Specific Execution Notes
 
 ### Equities (Day Trade)
@@ -243,10 +384,9 @@ After execution, report:
 - All positions must close by 3:45 PM ET
 
 ### Options
-- Limit orders only (never market order on options)
-- Entry limit = ask × 1.03
-- Max 3 entries per day
-- Check IV Rank before entry (from research report)
+- See "Options Execution — Vol-Edge SOP" section above for the full flow.
+- This SOP is a **swing strategy** — positions are held overnight; no mechanical end-of-day
+  flatten. The Monitor agent runs an exit check at 15:30 ET (see SOP Phase 6).
 
 ### Crypto
 - 24/7 market — check liquidity before large orders
