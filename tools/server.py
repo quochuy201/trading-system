@@ -5,6 +5,7 @@ to the trading system agents via Model Context Protocol.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 from datetime import datetime
@@ -1209,6 +1210,518 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
 
     path.write_text("\n".join(lines))
     return str(path)
+
+
+# --- Options Tools ---
+
+
+@mcp.tool()
+def get_options_chain(
+    underlying: str,
+    expiration_gte: str = "",
+    expiration_lte: str = "",
+    strike_gte: float | None = None,
+    strike_lte: float | None = None,
+    option_type: str = "",
+) -> str:
+    """Fetch the options chain for an underlying symbol with greeks and IV.
+
+    When to use: Research agent evaluating option contracts for a trade, or
+    Trader agent selecting a specific strike/expiration. Filters narrow the
+    result set by expiration window, strike range, and type (call/put).
+
+    Sample input: get_options_chain("AAPL", "2026-06-15", "2026-06-30", 220.0, 240.0, "call")
+
+    Expected output:
+    [{"symbol": "AAPL260620C00230000", "underlying": "AAPL", "strike": 230.0,
+      "type": "C", "expiration": "260620", "dte": 18, "bid": 2.50, "ask": 2.60,
+      "mid": 2.55, "volume": 1200, "open_interest": 0, "iv": 0.28,
+      "greeks": {"delta": 0.45, "gamma": 0.03, "theta": -0.05, "vega": 0.12, "rho": 0.01}}, ...]
+
+    If no contracts found:
+    {"error": "No contracts found for AAPL with given filters"}
+    """
+    _track_tool("get_options_chain")
+    broker = get_broker()
+    try:
+        chain = with_retry(broker.get_option_chain, _retry_config)(
+            underlying=underlying,
+            expiration_date_gte=expiration_gte or None,
+            expiration_date_lte=expiration_lte or None,
+            strike_price_gte=strike_gte,
+            strike_price_lte=strike_lte,
+            option_type=option_type or None,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch options chain: {str(e)}"})
+
+    if not chain:
+        return json.dumps({"error": f"No contracts found for {underlying} with given filters"})
+
+    # Opportunistically cache today's ATM IV
+    _cache_atm_iv(underlying, chain)
+
+    return json.dumps(chain)
+
+
+@mcp.tool()
+def get_options_market_data(option_symbols: str) -> str:
+    """Get real-time snapshot (quote, greeks, IV) for specific option contracts.
+
+    When to use: Trader agent checking live prices before entry, Monitor agent
+    tracking P&L and greeks on open option positions.
+
+    Sample input: get_options_market_data("AAPL260620C00230000, AAPL260620P00220000")
+
+    Expected output:
+    [{"symbol": "AAPL260620C00230000", "underlying": "AAPL", "strike": 230.0,
+      "type": "C", "expiration": "260620", "dte": 18, "bid": 2.50, "ask": 2.60,
+      "mid": 2.55, "volume": 1200, "open_interest": 0, "iv": 0.28,
+      "greeks": {"delta": 0.45, "gamma": 0.03, "theta": -0.05, "vega": 0.12, "rho": 0.01}}, ...]
+
+    If error:
+    {"error": "Failed to fetch option snapshots: ..."}
+    """
+    _track_tool("get_options_market_data")
+    symbols = [s.strip() for s in option_symbols.split(",") if s.strip()]
+    if not symbols:
+        return json.dumps({"error": "No option symbols provided"})
+
+    broker = get_broker()
+    try:
+        snapshots = with_retry(broker.get_option_snapshot, _retry_config)(symbols)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch option snapshots: {str(e)}"})
+
+    return json.dumps(snapshots)
+
+
+@mcp.tool()
+def get_options_positions() -> str:
+    """Get all open option positions with greeks and P&L.
+
+    When to use: Monitor agent checking option position health, or Orchestrator
+    assessing portfolio exposure before new trades.
+
+    Sample input: (no arguments)
+
+    Expected output:
+    [{"symbol": "AAPL260620C00230000", "underlying": "AAPL", "strike": 230.0,
+      "type": "C", "expiration": "260620", "quantity": 2, "side": "long",
+      "entry_price": 2.50, "current_price": 3.10, "unrealized_pnl": 120.0,
+      "unrealized_pnl_pct": 24.0, "greeks": {"delta": 0.45, ...}}, ...]
+
+    Returns empty list if no option positions open.
+    """
+    _track_tool("get_options_positions")
+    broker = get_broker()
+    try:
+        positions = with_retry(broker.get_options_positions, _retry_config)()
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch options positions: {str(e)}"})
+
+    return json.dumps(positions)
+
+
+@mcp.tool()
+def calc_iv_rank(symbol: str) -> str:
+    """Calculate IV Rank (0-100) for a symbol by comparing current ATM IV to 52-week history.
+
+    When to use: Research agent assessing whether options are cheap or expensive
+    relative to their own history — high IVR (>50) means elevated premium (good
+    for selling), low IVR (<30) means cheap premium (good for buying).
+
+    Sample input: calc_iv_rank("AAPL")
+
+    Expected output:
+    {"symbol": "AAPL", "iv_rank": 72.5, "current_iv": 0.32,
+     "iv_high_52w": 0.45, "iv_low_52w": 0.18, "data_points": 252}
+
+    If insufficient data:
+    {"error": "Insufficient IV history for AAPL (need 60+ data points, have 12)"}
+    """
+    _track_tool("calc_iv_rank")
+    from analysis.options import calc_iv_rank as _calc_iv_rank
+
+    broker = get_broker()
+    repo = get_repo()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Get current ATM IV from chain
+    try:
+        chain = with_retry(broker.get_option_chain, _retry_config)(underlying=symbol)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch chain for {symbol}: {str(e)}"})
+
+    current_iv = _get_atm_iv(chain)
+    if current_iv is None:
+        return json.dumps({"error": f"Could not determine ATM IV for {symbol} from chain"})
+
+    # Cache today's IV
+    repo.save_iv_data(symbol, today, current_iv, "snapshot")
+
+    # Check cache depth, bootstrap if needed
+    count = repo.count_iv_history(symbol)
+    if count < 60:
+        _bootstrap_iv_cache(symbol, broker, repo)
+
+    # Query history and compute rank
+    iv_history = repo.query_iv_history(symbol, min_days=60)
+    if not iv_history:
+        current_count = repo.count_iv_history(symbol)
+        return json.dumps({
+            "error": f"Insufficient IV history for {symbol} (need 60+ data points, have {current_count})"
+        })
+
+    rank = _calc_iv_rank(current_iv, iv_history)
+    iv_high = max(iv_history)
+    iv_low = min(iv_history)
+
+    return json.dumps({
+        "symbol": symbol,
+        "iv_rank": round(rank, 1),
+        "current_iv": round(current_iv, 4),
+        "iv_high_52w": round(iv_high, 4),
+        "iv_low_52w": round(iv_low, 4),
+        "data_points": len(iv_history),
+    })
+
+
+@mcp.tool()
+def calc_hv(symbol: str, window: int = 20) -> str:
+    """Calculate annualized historical volatility from daily closing prices.
+
+    When to use: Compare HV to IV to find mispriced options — if IV >> HV the
+    market is overpricing volatility (sell premium); if IV << HV the market
+    underprices volatility (buy premium).
+
+    Sample input: calc_hv("AAPL", 20)
+
+    Expected output:
+    {"symbol": "AAPL", "hv20": 0.245, "window": 20, "period_days": 252}
+
+    If error:
+    {"error": "Insufficient price data for AAPL (need 252 days)"}
+    """
+    _track_tool("calc_hv")
+    from analysis.options import calc_hv as _calc_hv
+    from datetime import timedelta
+
+    broker = get_broker()
+    end = datetime.now()
+    start = end - timedelta(days=365)
+
+    try:
+        bars = with_retry(broker.get_historical_data, _retry_config)(
+            symbol=symbol, start=start, end=end, timeframe="1Day"
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch price data for {symbol}: {str(e)}"})
+
+    if len(bars) < window + 1:
+        return json.dumps({
+            "error": f"Insufficient price data for {symbol} (need {window + 1} bars, have {len(bars)})"
+        })
+
+    closes = [bar["close"] for bar in bars]
+    hv = _calc_hv(closes, window)
+
+    if math.isnan(hv):
+        return json.dumps({"error": f"HV calculation returned NaN for {symbol}"})
+
+    return json.dumps({
+        "symbol": symbol,
+        f"hv{window}": round(hv, 4),
+        "window": window,
+        "period_days": len(bars),
+    })
+
+
+@mcp.tool()
+def get_put_skew(symbol: str, expiration: str, target_delta: float = 0.25) -> str:
+    """Calculate put/call IV skew at a target delta for a given expiration.
+
+    When to use: Assess demand for downside protection. Skew > 1.0 means puts
+    are priced higher than calls (normal). Elevated skew (>1.3) signals fear;
+    compressed skew (<1.0) signals complacency.
+
+    Sample input: get_put_skew("AAPL", "2026-06-20", 0.25)
+
+    Expected output:
+    {"symbol": "AAPL", "expiration": "2026-06-20", "put_skew": 1.25,
+     "put_iv": 0.35, "call_iv": 0.28, "target_delta": 0.25}
+
+    If error:
+    {"error": "Could not compute put skew for AAPL: insufficient contracts at target delta"}
+    """
+    _track_tool("get_put_skew")
+    from analysis.options import calc_put_skew as _calc_put_skew
+
+    broker = get_broker()
+
+    try:
+        chain = with_retry(broker.get_option_chain, _retry_config)(
+            underlying=symbol,
+            expiration_date_gte=expiration,
+            expiration_date_lte=expiration,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch chain for {symbol}: {str(e)}"})
+
+    if not chain:
+        return json.dumps({"error": f"No contracts found for {symbol} at expiration {expiration}"})
+
+    # Prepare chain data with delta and iv for the calc function
+    # The chain from broker already has greeks.delta and iv
+    calc_chain = []
+    for c in chain:
+        delta = abs(c.get("greeks", {}).get("delta", 0.0))
+        iv = c.get("iv", 0.0)
+        opt_type = "put" if c.get("type", "").upper() == "P" else "call"
+        if delta > 0 and iv > 0:
+            calc_chain.append({"type": opt_type, "delta": delta, "iv": iv})
+
+    skew = _calc_put_skew(calc_chain, target_delta)
+
+    if math.isnan(skew):
+        return json.dumps({
+            "error": f"Could not compute put skew for {symbol}: insufficient contracts at target delta"
+        })
+
+    # Extract the matched put and call IVs for reporting
+    puts = [c for c in calc_chain if c["type"] == "put"]
+    calls = [c for c in calc_chain if c["type"] == "call"]
+    best_put = min(puts, key=lambda c: abs(c["delta"] - target_delta)) if puts else None
+    best_call = min(calls, key=lambda c: abs(c["delta"] - target_delta)) if calls else None
+
+    return json.dumps({
+        "symbol": symbol,
+        "expiration": expiration,
+        "put_skew": round(skew, 4),
+        "put_iv": round(best_put["iv"], 4) if best_put else 0.0,
+        "call_iv": round(best_call["iv"], 4) if best_call else 0.0,
+        "target_delta": target_delta,
+    })
+
+
+@mcp.tool()
+def calc_expected_move(symbol: str, dte: int) -> str:
+    """Calculate the expected 1-sigma price move over a given number of days.
+
+    When to use: Sizing option trades — the expected move tells you how far
+    the stock is likely to move, which helps set strike selection (sell outside
+    expected move for high probability, buy inside for directional bets).
+
+    Sample input: calc_expected_move("AAPL", 30)
+
+    Expected output:
+    {"symbol": "AAPL", "expected_move": 12.45, "stock_price": 225.50,
+     "iv": 0.28, "dte": 30}
+
+    If error:
+    {"error": "Could not determine ATM IV for AAPL"}
+    """
+    _track_tool("calc_expected_move")
+    from analysis.options import calc_expected_move as _calc_expected_move
+
+    broker = get_broker()
+
+    # Get current stock price
+    try:
+        quote = with_retry(broker.get_market_data, _retry_config)(symbol)
+        stock_price = quote.get("mid", 0.0)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch stock price for {symbol}: {str(e)}"})
+
+    if stock_price <= 0:
+        return json.dumps({"error": f"Invalid stock price for {symbol}: {stock_price}"})
+
+    # Get ATM IV from chain
+    try:
+        chain = with_retry(broker.get_option_chain, _retry_config)(underlying=symbol)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch options chain for {symbol}: {str(e)}"})
+
+    iv = _get_atm_iv(chain)
+    if iv is None:
+        return json.dumps({"error": f"Could not determine ATM IV for {symbol}"})
+
+    expected = _calc_expected_move(stock_price, iv, dte)
+
+    return json.dumps({
+        "symbol": symbol,
+        "expected_move": round(expected, 2),
+        "stock_price": round(stock_price, 2),
+        "iv": round(iv, 4),
+        "dte": dte,
+    })
+
+
+@mcp.tool()
+def place_multileg_order(
+    legs: str,
+    order_type: str,
+    limit_price: float | None = None,
+    plan_id: str = "",
+) -> str:
+    """Place a multi-leg option order (vertical spreads, iron condors, etc.). Blocked when kill switch is active.
+
+    When to use: Trader agent executing option spread entries or exits. The legs
+    parameter is a JSON string containing a list of leg dicts, each with
+    symbol, side (buy_to_open/buy_to_close/sell_to_open/sell_to_close), and ratio_qty.
+
+    Sample input:
+    place_multileg_order(
+        '[{"symbol":"AAPL260620C00230000","side":"buy_to_open","ratio_qty":1},{"symbol":"AAPL260620C00240000","side":"sell_to_open","ratio_qty":1}]',
+        "limit", 1.50, "plan-opts-001"
+    )
+
+    Expected output:
+    {"transaction_id": "abc-123", "plan_id": "plan-opts-001", "order_class": "mleg",
+     "order_type": "limit", "limit_price": 1.50, "status": "submitted",
+     "legs": [...], "broker_order_id": "xyz-789", "timestamp": "2026-06-02T10:30:00"}
+
+    If kill switch active:
+    {"error": "Kill switch is active", "reason": "daily loss limit breached"}
+    """
+    _track_tool("place_multileg_order")
+
+    # Kill switch check
+    if _kill_switch_state["active"]:
+        return json.dumps({"error": "Kill switch is active", "reason": _kill_switch_state["reason"]})
+
+    # Parse legs JSON
+    try:
+        parsed_legs = json.loads(legs)
+    except (json.JSONDecodeError, TypeError) as e:
+        return json.dumps({"error": f"Invalid legs JSON: {str(e)}"})
+
+    if not parsed_legs or not isinstance(parsed_legs, list):
+        return json.dumps({"error": "legs must be a non-empty JSON array of leg dicts"})
+
+    broker = get_broker()
+    try:
+        tx = with_retry(broker.place_multileg_order, _retry_config)(
+            legs=parsed_legs,
+            order_type=order_type,
+            limit_price=limit_price,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Multi-leg order failed: {str(e)}"})
+
+    # Determine action based on whether any leg is a close
+    has_close = any("close" in leg.get("side", "").lower() for leg in parsed_legs)
+    action = "multileg_exit" if has_close else "multileg_entry"
+
+    # Log to ledger
+    _log_to_ledger(
+        action=action,
+        symbol=tx.symbol,
+        quantity=tx.quantity,
+        order_type=order_type,
+        price=tx.price,
+        status=tx.status,
+        broker_order_id=tx.broker_order_id,
+        plan_id=plan_id,
+    )
+
+    # Save transaction if plan_id provided
+    if plan_id:
+        tx.plan_id = plan_id
+        get_repo().save_transaction(tx)
+
+    return json.dumps({
+        "transaction_id": tx.transaction_id,
+        "plan_id": plan_id,
+        "order_class": "mleg",
+        "order_type": order_type,
+        "limit_price": limit_price,
+        "status": tx.status,
+        "legs": parsed_legs,
+        "broker_order_id": tx.broker_order_id,
+        "timestamp": tx.timestamp.isoformat() if hasattr(tx.timestamp, "isoformat") else str(tx.timestamp),
+    })
+
+
+# --- Options Helpers ---
+
+
+def _get_atm_iv(chain: list[dict]) -> float | None:
+    """Extract aggregate ATM IV (avg of nearest ATM call + put IV by delta closest to 0.50).
+
+    Searches the chain for the call and put whose absolute delta is closest to
+    0.50, then returns the average of their IVs. Returns None if no suitable
+    contracts are found.
+    """
+    calls = [c for c in chain if c.get("type", "").upper() == "C" and c.get("iv", 0) > 0]
+    puts = [c for c in chain if c.get("type", "").upper() == "P" and c.get("iv", 0) > 0]
+
+    if not calls and not puts:
+        return None
+
+    ivs = []
+    if calls:
+        best_call = min(calls, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
+        if abs(abs(best_call.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
+            ivs.append(best_call["iv"])
+
+    if puts:
+        best_put = min(puts, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
+        if abs(abs(best_put.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
+            ivs.append(best_put["iv"])
+
+    if not ivs:
+        # Fallback: use any contract with delta closest to 0.50
+        all_with_delta = [c for c in chain if c.get("iv", 0) > 0 and c.get("greeks", {}).get("delta")]
+        if all_with_delta:
+            best = min(all_with_delta, key=lambda c: abs(abs(c["greeks"]["delta"]) - 0.50))
+            return best["iv"]
+        return None
+
+    return sum(ivs) / len(ivs)
+
+
+def _cache_atm_iv(underlying: str, chain: list[dict]) -> None:
+    """Opportunistically cache today's ATM IV when fetching a chain.
+
+    Called by get_options_chain to build up the IV history cache without
+    requiring a separate API call. No-ops if IV cannot be determined.
+    """
+    iv = _get_atm_iv(chain)
+    if iv is not None and iv > 0:
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            get_repo().save_iv_data(underlying, today, iv, "snapshot")
+        except Exception:
+            pass  # never block the main flow
+
+
+def _bootstrap_iv_cache(symbol: str, broker, repo) -> None:
+    """Cold-start: derive historical IV from option bars via BSM inversion.
+
+    Fetches historical option data for the symbol and inverts Black-Scholes
+    to recover implied volatility for each bar. Stores results in the IV cache
+    so that calc_iv_rank has enough history to compute a rank.
+    """
+    try:
+        iv_data = broker.get_option_historical_iv(symbol, lookback_days=252)
+    except Exception:
+        return
+
+    if not iv_data:
+        return
+
+    rows = [
+        {"symbol": symbol, "date": point["date"], "iv": point["iv"], "source": "bootstrap"}
+        for point in iv_data
+        if point.get("iv") and point["iv"] > 0
+    ]
+
+    if rows:
+        try:
+            repo.save_iv_data_batch(rows)
+        except Exception:
+            pass  # never block
 
 
 # --- Backtest v3 Tools ---
