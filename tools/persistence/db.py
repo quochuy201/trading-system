@@ -234,6 +234,14 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     max_adverse_excursion REAL,
     FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id)
 );
+
+CREATE TABLE IF NOT EXISTS iv_history (
+    symbol TEXT NOT NULL,
+    date TEXT NOT NULL,
+    iv REAL NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (symbol, date)
+);
 """
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent / "trading.db"

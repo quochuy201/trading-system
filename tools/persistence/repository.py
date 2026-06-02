@@ -450,3 +450,40 @@ class Repository:
             "SELECT * FROM backtest_trades WHERE run_id = ? ORDER BY entry_bar", (run_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # --- IV History ---
+
+    def save_iv_data(self, symbol: str, date: str, iv: float, source: str = "snapshot") -> None:
+        """Cache a single IV data point. Idempotent (INSERT OR IGNORE)."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO iv_history (symbol, date, iv, source) VALUES (?, ?, ?, ?)",
+            (symbol, date, iv, source),
+        )
+        self.conn.commit()
+
+    def save_iv_data_batch(self, rows: list[dict]) -> None:
+        """Batch insert IV data points. Each row: {symbol, date, iv, source}."""
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO iv_history (symbol, date, iv, source) VALUES (:symbol, :date, :iv, :source)",
+            rows,
+        )
+        self.conn.commit()
+
+    def query_iv_history(self, symbol: str, min_days: int = 60) -> list[float]:
+        """Return list of historical IV values, sorted ascending by date.
+        Returns empty list if fewer than min_days data points exist."""
+        rows = self.conn.execute(
+            "SELECT iv FROM iv_history WHERE symbol = ? ORDER BY date ASC",
+            (symbol,),
+        ).fetchall()
+        if len(rows) < min_days:
+            return []
+        return [r["iv"] for r in rows]
+
+    def count_iv_history(self, symbol: str) -> int:
+        """Return number of cached IV data points for a symbol."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM iv_history WHERE symbol = ?",
+            (symbol,),
+        ).fetchone()
+        return row["cnt"] if row else 0
