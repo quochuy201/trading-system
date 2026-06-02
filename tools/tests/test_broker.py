@@ -89,6 +89,21 @@ class TestBrokerAdapterABC:
             def get_historical_data(self, symbol, start, end, timeframe="1Day"):
                 return []
 
+            def get_option_chain(self, underlying, **kwargs):
+                return []
+
+            def get_option_snapshot(self, option_symbols):
+                return []
+
+            def get_option_historical_iv(self, underlying, lookback_days=252):
+                return []
+
+            def get_options_positions(self):
+                return []
+
+            def place_multileg_order(self, legs, order_type, **kwargs):
+                return TradeTransaction(symbol="TEST", side="buy", quantity=1)
+
         broker = FakeBroker()
         tx = broker.place_order("AAPL", "buy", "market", 10)
         assert tx.symbol == "AAPL"

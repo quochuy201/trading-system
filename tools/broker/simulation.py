@@ -222,3 +222,18 @@ class SimulationBrokerAdapter(BrokerAdapter):
             "SELECT DISTINCT symbol FROM price_data WHERE timeframe = '1Day'"
         ).fetchall()
         return [r["symbol"] for r in rows]
+
+    def get_option_chain(self, underlying, **kwargs) -> list[dict]:
+        raise NotImplementedError("Options simulation requires Phase 4 implementation")
+
+    def get_option_snapshot(self, option_symbols) -> list[dict]:
+        raise NotImplementedError("Options simulation requires Phase 4 implementation")
+
+    def get_option_historical_iv(self, underlying, lookback_days=252) -> list[dict]:
+        raise NotImplementedError("Options simulation requires Phase 4 implementation")
+
+    def get_options_positions(self) -> list[dict]:
+        raise NotImplementedError("Options simulation requires Phase 4 implementation")
+
+    def place_multileg_order(self, legs, order_type, **kwargs):
+        raise NotImplementedError("Options simulation requires Phase 4 implementation")

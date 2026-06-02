@@ -1,8 +1,11 @@
-"""Tests for options analysis pure functions (stdlib math only, no pandas/numpy)."""
+"""Tests for options analysis pure functions (stdlib math only, no pandas/numpy)
+and Alpaca options adapter methods (mocked SDK).
+"""
 
 import math
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -408,3 +411,219 @@ class TestImpliedVolFromPrice:
         price = black_scholes_price(100.0, 90.0, 45, 0.04, 0.22, "put")
         iv = implied_vol_from_price(price, 100.0, 90.0, 45, 0.04, "put")
         assert abs(iv - 0.22) < 1e-4
+
+
+# ---------------------------------------------------------------------------
+# AlpacaBrokerAdapter — options methods (mocked SDK)
+# ---------------------------------------------------------------------------
+
+
+def _make_alpaca_adapter():
+    """Construct AlpacaBrokerAdapter with all Alpaca SDK clients mocked."""
+    with patch.dict("os.environ", {
+        "ALPACA_API_KEY": "test-key",
+        "ALPACA_SECRET_KEY": "test-secret",
+    }):
+        with patch("broker.alpaca.TradingClient"), \
+             patch("broker.alpaca.StockHistoricalDataClient"), \
+             patch("broker.alpaca.OptionHistoricalDataClient"):
+            from broker.alpaca import AlpacaBrokerAdapter
+            adapter = AlpacaBrokerAdapter()
+            # Replace clients with plain MagicMocks for easy stubbing
+            adapter.trading_client = MagicMock()
+            adapter.data_client = MagicMock()
+            adapter.option_data_client = MagicMock()
+            return adapter
+
+
+def _make_snapshot(bid, ask, iv, delta=0.45, gamma=0.03, theta=-0.05, vega=0.12, rho=0.01, trade_size=100):
+    """Build a mock OptionsSnapshot as returned by Alpaca SDK."""
+    snap = MagicMock()
+    snap.latest_quote.bid_price = bid
+    snap.latest_quote.ask_price = ask
+    snap.implied_volatility = iv
+    snap.greeks.delta = delta
+    snap.greeks.gamma = gamma
+    snap.greeks.theta = theta
+    snap.greeks.vega = vega
+    snap.greeks.rho = rho
+    snap.latest_trade.size = trade_size
+    return snap
+
+
+class TestAlpacaOptionsAdapter:
+    """Tests for the 5 options adapter methods on AlpacaBrokerAdapter."""
+
+    # --- get_option_chain ---
+
+    def test_get_option_chain_shape(self):
+        """Verify that get_option_chain returns dicts with all required keys."""
+        adapter = _make_alpaca_adapter()
+
+        symbol = "AAPL260620C00230000"
+        snap = _make_snapshot(bid=2.50, ask=2.60, iv=0.28)
+        adapter.option_data_client.get_option_chain.return_value = {symbol: snap}
+
+        result = adapter.get_option_chain("AAPL")
+
+        assert len(result) == 1
+        row = result[0]
+        # All required keys present
+        required_keys = {
+            "symbol", "underlying", "strike", "type", "expiration",
+            "dte", "bid", "ask", "mid", "volume", "open_interest", "iv", "greeks",
+        }
+        assert required_keys.issubset(set(row.keys()))
+
+        assert row["symbol"] == symbol
+        assert row["underlying"] == "AAPL"
+        assert row["strike"] == 230.0
+        assert row["type"] == "C"
+        assert row["bid"] == 2.50
+        assert row["ask"] == 2.60
+        assert abs(row["mid"] - 2.55) < 0.001
+        assert row["iv"] == 0.28
+        assert isinstance(row["greeks"], dict)
+        assert "delta" in row["greeks"]
+        assert row["greeks"]["delta"] == 0.45
+
+    def test_get_option_chain_filters_call_type(self):
+        """ContractType.CALL is passed when option_type='call'."""
+        adapter = _make_alpaca_adapter()
+        adapter.option_data_client.get_option_chain.return_value = {}
+
+        adapter.get_option_chain("AAPL", option_type="call")
+
+        call_args = adapter.option_data_client.get_option_chain.call_args
+        req = call_args[0][0]
+        from alpaca.trading.enums import ContractType
+        assert req.type == ContractType.CALL
+
+    def test_get_option_chain_empty_response(self):
+        """Empty chain response returns empty list."""
+        adapter = _make_alpaca_adapter()
+        adapter.option_data_client.get_option_chain.return_value = {}
+
+        result = adapter.get_option_chain("AAPL")
+        assert result == []
+
+    # --- get_option_snapshot ---
+
+    def test_get_option_snapshot_shape(self):
+        """Verify snapshot returns same shape as chain."""
+        adapter = _make_alpaca_adapter()
+
+        symbol = "TSLA260620P00220000"
+        snap = _make_snapshot(bid=1.80, ask=1.90, iv=0.35, delta=-0.35)
+        adapter.option_data_client.get_option_snapshot.return_value = {symbol: snap}
+
+        result = adapter.get_option_snapshot([symbol])
+
+        assert len(result) == 1
+        row = result[0]
+        assert row["symbol"] == symbol
+        assert row["underlying"] == "TSLA"
+        assert row["type"] == "P"
+        assert row["strike"] == 220.0
+        assert row["greeks"]["delta"] == -0.35
+
+    def test_get_option_snapshot_empty_list(self):
+        """Passing empty list returns empty without API call."""
+        adapter = _make_alpaca_adapter()
+
+        result = adapter.get_option_snapshot([])
+
+        assert result == []
+        adapter.option_data_client.get_option_snapshot.assert_not_called()
+
+    # --- get_options_positions ---
+
+    def test_get_options_positions_filters_options(self):
+        """Only positions with 'option' in asset_class are returned."""
+        adapter = _make_alpaca_adapter()
+
+        # Equity position — should be excluded
+        eq_pos = MagicMock()
+        eq_pos.symbol = "AAPL"
+        eq_pos.asset_class = "us_equity"
+
+        # Option position — should be included
+        opt_pos = MagicMock()
+        opt_pos.symbol = "AAPL260620C00230000"
+        opt_pos.asset_class = "us_option"
+        opt_pos.qty = "2"
+        opt_pos.side = MagicMock(value="long")
+        opt_pos.avg_entry_price = "2.50"
+        opt_pos.current_price = "3.10"
+        opt_pos.unrealized_pl = "120.0"
+        opt_pos.unrealized_plpc = "0.24"
+
+        adapter.trading_client.get_all_positions.return_value = [eq_pos, opt_pos]
+        # Stub snapshot enrichment
+        adapter.option_data_client.get_option_snapshot.return_value = {}
+
+        result = adapter.get_options_positions()
+
+        assert len(result) == 1
+        row = result[0]
+        assert row["symbol"] == "AAPL260620C00230000"
+        assert row["underlying"] == "AAPL"
+        assert row["strike"] == 230.0
+        assert row["type"] == "C"
+        assert row["quantity"] == 2
+        assert row["entry_price"] == 2.50
+        assert row["current_price"] == 3.10
+        assert row["unrealized_pnl"] == 120.0
+        assert abs(row["unrealized_pnl_pct"] - 24.0) < 0.001
+
+    def test_get_options_positions_empty_account(self):
+        """No positions returns empty list."""
+        adapter = _make_alpaca_adapter()
+        adapter.trading_client.get_all_positions.return_value = []
+
+        result = adapter.get_options_positions()
+        assert result == []
+
+    # --- place_multileg_order ---
+
+    def test_place_multileg_order(self):
+        """Verify OrderClass.MLEG and OptionLegRequest construction."""
+        adapter = _make_alpaca_adapter()
+
+        mock_order = MagicMock()
+        mock_order.id = "mleg-order-001"
+        mock_order.qty = "2"
+        mock_order.filled_avg_price = "1.50"
+        mock_order.status = MagicMock(value="accepted")
+        adapter.trading_client.submit_order.return_value = mock_order
+
+        legs = [
+            {"symbol": "AAPL260620C00230000", "side": "buy_to_open", "ratio_qty": 1},
+            {"symbol": "AAPL260620C00240000", "side": "sell_to_open", "ratio_qty": 1},
+        ]
+        tx = adapter.place_multileg_order(legs, order_type="limit", limit_price=1.50)
+
+        assert adapter.trading_client.submit_order.called
+        call_args = adapter.trading_client.submit_order.call_args
+        order_req = call_args[0][0]
+
+        from alpaca.trading.enums import OrderClass
+        from alpaca.trading.requests import LimitOrderRequest
+        assert order_req.order_class == OrderClass.MLEG
+        assert len(order_req.legs) == 2
+        assert isinstance(order_req, LimitOrderRequest)
+        assert order_req.limit_price == 1.50
+
+        assert tx.broker_order_id == "mleg-order-001"
+        assert tx.status == "accepted"
+
+    def test_place_multileg_order_invalid_side(self):
+        """Invalid leg side raises ValueError."""
+        adapter = _make_alpaca_adapter()
+
+        legs = [{"symbol": "AAPL260620C00230000", "side": "bad_side", "ratio_qty": 1}]
+        try:
+            adapter.place_multileg_order(legs, order_type="limit")
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "bad_side" in str(e)
