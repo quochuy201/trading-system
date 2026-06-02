@@ -79,10 +79,11 @@ def place_multileg_order(
     legs: list[dict],
     order_type: str,
     limit_price: float | None = None,
-    duration: str = "day",
+    time_in_force: str = "day",  # "day" | "gtc"
 ) -> TradeTransaction:
     """Place a multi-leg option order (spreads). Each leg: {symbol, side, ratio_qty}.
-    side values: buy_to_open, buy_to_close, sell_to_open, sell_to_close."""
+    side values: buy_to_open, buy_to_close, sell_to_open, sell_to_close.
+    time_in_force maps to Alpaca TimeInForce enum: "day" → DAY, "gtc" → GTC."""
     ...
 ```
 
@@ -114,16 +115,22 @@ Returns the same shape as chain entries but for specific contracts (useful for m
 
 ### `AlpacaBrokerAdapter.get_option_historical_iv`
 
-Strategy: Fetch daily snapshots for ATM options over the lookback period.
+The `get_option_chain` endpoint is real-time only (no historical queries). `get_option_bars` returns OHLCV but **not** IV. So we use two complementary strategies:
 
-Implementation:
+**Organic fill (live usage):** On every `get_options_chain` or `calc_iv_rank` call, extract aggregate ATM IV (average of nearest ATM call+put IV from the live snapshot) and cache it in SQLite with date key. Over time, the cache fills with one data point per trading day.
+
+**Cold-start bootstrap (first query for a symbol with <60 cached days):**
+Options expire, so no single contract spans 252 days. We chain multiple contracts:
 1. Get current stock price to determine ATM strike.
-2. Use `get_option_bars` with daily timeframe for a near-ATM option over `lookback_days`.
-3. Alternatively: use `OptionHistoricalDataClient.get_option_chain` with a historical date range — the chain endpoint returns IV per snapshot date.
+2. Use `TradingClient.get_option_contracts` to find the longest-DTE ATM call available (typically 3–4 months out).
+3. Fetch daily bars for that contract via `get_option_bars`.
+4. Fetch corresponding stock daily bars for the same period.
+5. Derive IV for each day via `implied_vol_from_price` (Black-Scholes inversion from option close + stock close + known strike/DTE/rate).
+6. Store with source="derived".
 
-**Practical approach:** The `get_option_chain` endpoint returns snapshots with IV per contract. On each call, we extract aggregate ATM IV (average of nearest ATM call+put IV) and cache it in SQLite with date key. Over time, the cache fills organically.
+This covers ~60–120 days from a single contract — enough to meet the 60-day minimum on first call. The remaining history fills organically over subsequent trading days. Full 252-day coverage is reached after ~6 months of live usage.
 
-For cold-start bootstrap: query `get_option_chain` for historical dates is not supported (it's a real-time endpoint). Instead, we use `get_option_bars` (OHLCV only, no IV) to get option price history, then **derive IV via Black-Scholes inversion** from the option close price + underlying close price + known strike/DTE/rate. This gives approximate historical IV suitable for ranking.
+**Cost:** ~3 API calls per symbol on first query (contracts lookup + option bars + stock bars). Subsequent calls are cache hits.
 
 For symbols with <60 days of cached/derived data, the MCP tool returns an error indicating insufficient history.
 
@@ -142,7 +149,9 @@ CREATE TABLE IF NOT EXISTS iv_history (
 
 Uses `TradingClient.get_all_positions()` filtered by `asset_class == "us_option"`.
 
-Returns option-specific fields: symbol, quantity, side, entry_price, current_price, unrealized_pnl, plus parsed contract details (underlying, strike, expiration, type).
+Returns position fields (symbol, quantity, side, entry_price, current_price, unrealized_pnl) plus parsed contract details (underlying, strike, expiration, type).
+
+**Greeks enrichment:** `get_all_positions()` does NOT return greeks or IV. After filtering option positions, make a secondary call to `get_option_snapshot` for all open option symbols to fetch live greeks + IV, then merge into the position dicts. This is one additional API call regardless of position count (snapshot accepts a list of symbols).
 
 ### `AlpacaBrokerAdapter.place_multileg_order`
 
@@ -157,7 +166,6 @@ OrderRequest(
         OptionLegRequest(
             symbol=leg["symbol"],
             ratio_qty=leg["ratio_qty"],
-            side=OrderSide(leg["side"]),  # or PositionIntent mapping
             position_intent=PositionIntent(leg["side"]),
         )
         for leg in legs
@@ -165,7 +173,7 @@ OrderRequest(
 )
 ```
 
-Note: `OptionLegRequest` uses `position_intent` (buy_to_open, sell_to_open, etc.) rather than simple `side`. The MCP tool accepts the `position_intent` values directly as the `side` field for clarity.
+`OptionLegRequest` uses `position_intent` only — do NOT set `side` (the SDK infers buy/sell direction from the position intent). The MCP tool accepts intent values directly as the `side` field: `buy_to_open`, `buy_to_close`, `sell_to_open`, `sell_to_close`.
 
 ---
 
@@ -238,14 +246,14 @@ Returns annualized IV as decimal. Returns `NaN` if convergence fails (option pri
 ### `calc_iv_rank(symbol: str)`
 
 - **When to use:** Research agent Phase 1 vol routing (IVR > 75 → sell premium, IVR < 25 → buy premium).
-- **Behavior:** Fetches current IV from option snapshot + historical IV from cache. Calls `analysis.options.calc_iv_rank`.
+- **Behavior:** Fetches **aggregate ATM IV** (average of nearest ATM call+put IV from a fresh chain snapshot) as the "current IV" value. Pulls historical IV from SQLite cache. Calls `analysis.options.calc_iv_rank`. Also caches today's ATM IV if not already stored.
 - **Returns:** `{"symbol": "AAPL", "iv_rank": 82.3, "current_iv": 0.38, "iv_high_52w": 0.45, "iv_low_52w": 0.22, "data_points": 180}`
 - **Errors:** `{"error": "Insufficient IV history for {symbol} (need ≥60 days, have {n})"}`
 
 ### `calc_hv(symbol: str, window: int = 20)`
 
 - **When to use:** Research agent comparing IV to HV (SOP soft gate `SOFT_IVHV_CONFIRM`: IV/HV > 1.2 confirms rich vol).
-- **Behavior:** Fetches 252 daily closes from broker, calls `analysis.options.calc_hv`.
+- **Behavior:** Fetches 252 daily closes via the existing `broker.get_historical_data` method (no new adapter method needed), extracts close prices, calls `analysis.options.calc_hv`.
 - **Returns:** `{"symbol": "AAPL", "hv20": 0.28, "window": 20, "period_days": 252}`
 - **Errors:** `{"error": "Insufficient price history for {symbol}"}`
 
@@ -354,16 +362,18 @@ Returns annualized IV as decimal. Returns `NaN` if convergence fails (option pri
 
 The `iv_history` SQLite table is populated opportunistically:
 
-1. **On every `calc_iv_rank(symbol)` call:** After fetching the current ATM IV from snapshot, store today's data point (source="snapshot") if not already present.
+1. **On every `calc_iv_rank(symbol)` call:** After fetching the current aggregate ATM IV from a fresh chain snapshot, store today's data point (source="snapshot") if not already present.
 2. **On every `get_options_chain(symbol)` call:** Extract aggregate ATM IV (avg of nearest ATM call + put IV), cache it (source="snapshot").
 3. **Cold-start bootstrap:** First time a symbol is queried, if cache has <60 days:
-   - Find the nearest ATM option contract (using current price + `get_option_contracts`).
-   - Fetch 252 daily bars for that contract via `get_option_bars`.
-   - Fetch corresponding stock daily bars.
-   - Derive IV for each day via `implied_vol_from_price` (Black-Scholes inversion).
-   - Store with source="derived". One-time cost per symbol (~2 API calls).
+   - Get current stock price, determine ATM strike.
+   - Use `TradingClient.get_option_contracts` to find the longest-DTE ATM call available (typically 60–120 DTE).
+   - Fetch daily bars for that contract via `get_option_bars` (OHLCV only).
+   - Fetch corresponding stock daily bars via `get_historical_data`.
+   - Derive IV for each day via `implied_vol_from_price` (Black-Scholes inversion from option close + stock close + known strike/DTE/rate).
+   - Store with source="derived". One-time cost: ~3 API calls per symbol.
+   - This yields ~60–120 days of history (the contract's lifespan). Meets the 60-day minimum.
 
-This means the cache self-fills over normal usage. Backtests (Phase 4) will pre-load the cache as part of data setup.
+The cache self-fills over normal usage — each trading day adds one real data point. Full 252-day coverage builds organically. Backtests (Phase 4) will pre-load the cache as part of data setup.
 
 ---
 
@@ -390,6 +400,10 @@ Utility function in `analysis/options.py`:
 def parse_occ_symbol(symbol: str) -> dict:
     """Parse OCC option symbol into components.
     AAPL250620C00230000 → {underlying: AAPL, expiration: 2025-06-20, type: call, strike: 230.0}
+
+    OCC format: {ROOT}{YYMMDD}{C|P}{strike*1000 zero-padded to 8 digits}
+    The suffix is always 15 chars (6 date + 1 type + 8 strike). Root = everything before that.
+    Root symbols are 1–5 chars (variable length), so parse right-to-left from the fixed suffix.
     """
 ```
 
@@ -404,6 +418,7 @@ All tools follow the existing pattern:
 - Return `{"error": "description"}` as JSON.
 - Mutating tools (`place_multileg_order`) still log to ledger even on failure (with status="failed").
 - Read-only tools use `with_retry` for transient network errors on broker calls.
+- All tools call `_track_tool("tool_name")` at the top of the function body (for backtest harness validation in Phase 4).
 
 ---
 
