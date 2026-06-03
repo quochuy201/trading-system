@@ -2,6 +2,7 @@
 and Alpaca options adapter methods (mocked SDK).
 """
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -627,3 +628,241 @@ class TestAlpacaOptionsAdapter:
             assert False, "Should have raised ValueError"
         except ValueError as e:
             assert "bad_side" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# TestMcpToolIntegration — test MCP tools in server.py with mocked broker
+# ---------------------------------------------------------------------------
+
+
+class TestMcpToolIntegration:
+    """Test MCP tools with mocked broker — verify JSON shapes and behavior."""
+
+    def _setup(self):
+        """Patch server globals with mock broker and in-memory repo."""
+        import server
+        mock_broker = MagicMock()
+        server._broker = mock_broker
+        server._kill_switch_state = {"active": False, "triggered_at": None, "reason": None}
+        server._harness = None
+        from persistence.repository import Repository
+        repo = Repository(":memory:")
+        server._repo = repo
+        return mock_broker, repo
+
+    # --- place_multileg_order ---
+
+    def test_place_multileg_order_kill_switch_blocks(self):
+        """Kill switch active → returns error JSON without calling broker."""
+        import server
+        mock_broker, repo = self._setup()
+        server._kill_switch_state = {"active": True, "triggered_at": "2026-06-02T10:00:00", "reason": "daily loss limit breached"}
+
+        legs_json = '[{"symbol":"AAPL260620C00230000","side":"buy_to_open","ratio_qty":1}]'
+        result = server.place_multileg_order(legs_json, "limit", 1.50)
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "Kill switch is active" in data["error"]
+        mock_broker.place_multileg_order.assert_not_called()
+
+    def test_place_multileg_order_success(self):
+        """Successful multi-leg order returns correct JSON shape."""
+        import server
+        from models import TradePlan, TradeTransaction
+        mock_broker, repo = self._setup()
+
+        # Save a matching plan so the FK constraint is satisfied
+        plan = TradePlan(plan_id="plan-opts-001", symbol="AAPL", strategy="vertical_spread")
+        repo.save_trade_plan(plan)
+
+        tx = TradeTransaction(
+            transaction_id="tx-mleg-001",
+            plan_id="",
+            symbol="AAPL",
+            side="buy",
+            order_type="limit",
+            quantity=1,
+            price=1.50,
+            broker_order_id="broker-mleg-xyz",
+            status="submitted",
+        )
+        mock_broker.place_multileg_order.return_value = tx
+        # _log_to_ledger calls get_account via get_broker(); mock it
+        mock_broker.get_account.return_value = {"equity": 100000, "cash": 90000, "buying_power": 180000}
+
+        legs = [
+            {"symbol": "AAPL260620C00230000", "side": "buy_to_open", "ratio_qty": 1},
+            {"symbol": "AAPL260620C00240000", "side": "sell_to_open", "ratio_qty": 1},
+        ]
+        legs_json = json.dumps(legs)
+        result = server.place_multileg_order(legs_json, "limit", 1.50, "plan-opts-001")
+
+        data = json.loads(result)
+        assert data["transaction_id"] == "tx-mleg-001"
+        assert data["plan_id"] == "plan-opts-001"
+        assert data["order_class"] == "mleg"
+        assert data["status"] == "submitted"
+        assert data["broker_order_id"] == "broker-mleg-xyz"
+        assert isinstance(data["legs"], list)
+        assert len(data["legs"]) == 2
+
+    def test_place_multileg_order_invalid_json(self):
+        """Invalid legs JSON string → returns error with 'Invalid legs JSON'."""
+        import server
+        mock_broker, repo = self._setup()
+
+        result = server.place_multileg_order("not-valid-json{{{", "limit", 1.50)
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "Invalid legs JSON" in data["error"]
+        mock_broker.place_multileg_order.assert_not_called()
+
+    # --- get_options_positions ---
+
+    def test_get_options_positions_empty(self):
+        """Broker returns no option positions → tool returns '[]'."""
+        import server
+        mock_broker, repo = self._setup()
+        mock_broker.get_options_positions.return_value = []
+
+        result = server.get_options_positions()
+
+        data = json.loads(result)
+        assert data == []
+
+    # --- calc_iv_rank ---
+
+    def test_calc_iv_rank_insufficient_history(self):
+        """When bootstrap returns no IV history the tool returns an insufficient-data error."""
+        import server
+        mock_broker, repo = self._setup()
+
+        # Provide a minimal chain: one ATM call at delta ~0.50
+        chain = [{
+            "symbol": "AAPL260620C00230000",
+            "underlying": "AAPL",
+            "strike": 230.0,
+            "type": "C",
+            "expiration": "260620",
+            "dte": 18,
+            "bid": 2.50,
+            "ask": 2.60,
+            "mid": 2.55,
+            "volume": 100,
+            "open_interest": 0,
+            "iv": 0.30,
+            "greeks": {"delta": 0.50, "gamma": 0.03, "theta": -0.05, "vega": 0.12, "rho": 0.01},
+        }]
+        mock_broker.get_option_chain.return_value = chain
+        # Bootstrap returns empty IV history
+        mock_broker.get_option_historical_iv.return_value = []
+        mock_broker.get_account.return_value = {"equity": 100000, "cash": 90000, "buying_power": 180000}
+
+        result = server.calc_iv_rank("AAPL")
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "Insufficient IV history" in data["error"]
+
+    def test_calc_iv_rank_success(self):
+        """With 70 IV data points in repo, calc_iv_rank returns a valid rank JSON."""
+        import server
+        mock_broker, repo = self._setup()
+
+        # Pre-populate repo with 70 IV data points for AAPL
+        from datetime import date, timedelta
+        base = date(2025, 1, 1)
+        for i in range(70):
+            day = (base + timedelta(days=i)).isoformat()
+            iv_val = 0.20 + (i / 1000)  # slight upward drift, range ~0.20–0.27
+            repo.save_iv_data("AAPL", day, iv_val, "test")
+
+        # Current chain: ATM call with IV = 0.25
+        chain = [{
+            "symbol": "AAPL260620C00230000",
+            "underlying": "AAPL",
+            "strike": 230.0,
+            "type": "C",
+            "expiration": "260620",
+            "dte": 18,
+            "bid": 2.50,
+            "ask": 2.60,
+            "mid": 2.55,
+            "volume": 100,
+            "open_interest": 0,
+            "iv": 0.25,
+            "greeks": {"delta": 0.50, "gamma": 0.03, "theta": -0.05, "vega": 0.12, "rho": 0.01},
+        }]
+        mock_broker.get_option_chain.return_value = chain
+        mock_broker.get_account.return_value = {"equity": 100000, "cash": 90000, "buying_power": 180000}
+
+        result = server.calc_iv_rank("AAPL")
+
+        data = json.loads(result)
+        assert "error" not in data, f"Unexpected error: {data}"
+        assert data["symbol"] == "AAPL"
+        assert "iv_rank" in data
+        assert 0.0 <= data["iv_rank"] <= 100.0
+        assert "current_iv" in data
+        assert "iv_high_52w" in data
+        assert "iv_low_52w" in data
+        assert "data_points" in data
+        assert data["data_points"] >= 60
+
+    # --- calc_hv ---
+
+    def test_calc_hv_success(self):
+        """calc_hv with 252 bars returns valid hv JSON."""
+        import server
+        mock_broker, repo = self._setup()
+
+        # Build 252 bars with steadily increasing close (zero-return HV test uses random)
+        import random
+        random.seed(99)
+        closes = [100.0]
+        for _ in range(251):
+            closes.append(closes[-1] * (1 + random.gauss(0, 0.01)))
+        bars = [{"close": c} for c in closes]
+        mock_broker.get_historical_data.return_value = bars
+
+        result = server.calc_hv("AAPL", 20)
+
+        data = json.loads(result)
+        assert "error" not in data, f"Unexpected error: {data}"
+        assert data["symbol"] == "AAPL"
+        assert "hv20" in data
+        assert data["hv20"] > 0.0
+        assert data["window"] == 20
+        assert data["period_days"] == 252
+
+    # --- get_options_chain IV cache ---
+
+    def test_get_options_chain_caches_iv(self):
+        """Calling get_options_chain should opportunistically cache ATM IV in repo."""
+        import server
+        mock_broker, repo = self._setup()
+
+        chain = [{
+            "symbol": "AAPL260620C00230000",
+            "underlying": "AAPL",
+            "strike": 230.0,
+            "type": "C",
+            "expiration": "260620",
+            "dte": 18,
+            "bid": 2.50,
+            "ask": 2.60,
+            "mid": 2.55,
+            "volume": 100,
+            "open_interest": 0,
+            "iv": 0.28,
+            "greeks": {"delta": 0.50, "gamma": 0.03, "theta": -0.05, "vega": 0.12, "rho": 0.01},
+        }]
+        mock_broker.get_option_chain.return_value = chain
+
+        server.get_options_chain("AAPL")
+
+        # Verify that IV was cached in repo
+        count = repo.count_iv_history("AAPL")
+        assert count > 0, "Expected at least one IV data point cached after get_options_chain"
