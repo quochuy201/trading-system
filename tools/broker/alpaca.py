@@ -26,6 +26,7 @@ from alpaca.data.requests import (
     OptionBarsRequest,
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.data.enums import DataFeed, OptionsFeed
 
 from analysis.options import parse_occ_symbol, implied_vol_from_price
 from broker.adapter import BrokerAdapter
@@ -144,14 +145,25 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         }
 
     def get_market_data(self, symbol: str) -> dict:
-        req = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+        req = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
         quotes = self.data_client.get_stock_latest_quote(req)
         quote = quotes[symbol]
+        bid = float(quote.bid_price)
+        ask = float(quote.ask_price)
+        # Outside market hours IEX may return 0 for one side — use the other as mid
+        if bid > 0 and ask > 0:
+            mid = (bid + ask) / 2
+        elif bid > 0:
+            mid = bid
+        elif ask > 0:
+            mid = ask
+        else:
+            mid = 0.0
         return {
             "symbol": symbol,
-            "bid": float(quote.bid_price),
-            "ask": float(quote.ask_price),
-            "mid": (float(quote.bid_price) + float(quote.ask_price)) / 2,
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
             "bid_size": int(quote.bid_size),
             "ask_size": int(quote.ask_size),
             "timestamp": quote.timestamp.isoformat(),
@@ -162,7 +174,8 @@ class AlpacaBrokerAdapter(BrokerAdapter):
     ) -> list[dict]:
         tf = _TIMEFRAME_MAP.get(timeframe, TimeFrame(1, TimeFrameUnit.Day))
         req = StockBarsRequest(
-            symbol_or_symbols=symbol, start=start, end=end, timeframe=tf
+            symbol_or_symbols=symbol, start=start, end=end, timeframe=tf,
+            feed=DataFeed.IEX,
         )
         bars = self.data_client.get_stock_bars(req)
         return [
@@ -228,7 +241,10 @@ class AlpacaBrokerAdapter(BrokerAdapter):
             elif ot in ("P", "PUT"):
                 contract_type = ContractType.PUT
 
-        req_kwargs = {"underlying_symbol": underlying}
+        req_kwargs = {
+            "underlying_symbol": underlying,
+            "feed": OptionsFeed.INDICATIVE,  # Required for greeks+IV on paper accounts
+        }
         if contract_type is not None:
             req_kwargs["type"] = contract_type
         if expiration_date_gte:
@@ -313,7 +329,9 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         if not option_symbols:
             return []
 
-        req = OptionSnapshotRequest(symbol_or_symbols=option_symbols)
+        req = OptionSnapshotRequest(
+            symbol_or_symbols=option_symbols, feed=OptionsFeed.INDICATIVE
+        )
         snap_data = self.option_data_client.get_option_snapshot(req)
 
         today = datetime.now().date()
@@ -388,20 +406,35 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         today = datetime.now().date()
         start_date = today - timedelta(days=lookback_days)
 
-        # Find a suitable ATM contract with longest DTE available
-        # Use a 90-day forward window to find a long-dated contract
+        # Get current stock price to filter to near-ATM contracts only
+        try:
+            quote = self.get_market_data(underlying)
+            stock_price = quote.get("mid", 0) or quote.get("bid", 0)
+        except Exception:
+            stock_price = 0
+        if stock_price <= 0:
+            return []
+
+        # Find a suitable ATM contract with longest DTE available.
+        # Filter by strike to ATM ± 10% to keep the result set small (the API
+        # returns at most 1000 per page; AAPL has thousands of contracts).
         exp_gte = today.strftime("%Y-%m-%d")
-        exp_lte = (today + timedelta(days=90)).strftime("%Y-%m-%d")
+        exp_lte = (today + timedelta(days=180)).strftime("%Y-%m-%d")
 
         contracts_req = GetOptionContractsRequest(
             underlying_symbols=[underlying],
             expiration_date_gte=exp_gte,
             expiration_date_lte=exp_lte,
             status="active",
+            type=ContractType.CALL,
+            strike_price_gte=str(round(stock_price * 0.9, 2)),
+            strike_price_lte=str(round(stock_price * 1.1, 2)),
+            limit=1000,
         )
         try:
             contracts_resp = self.trading_client.get_option_contracts(contracts_req)
-            contracts = list(contracts_resp)
+            # Response is OptionContractsResponse with .option_contracts field
+            contracts = contracts_resp.option_contracts or []
         except Exception:
             return []
 
@@ -430,7 +463,8 @@ class AlpacaBrokerAdapter(BrokerAdapter):
                 timeframe=TimeFrame(1, TimeFrameUnit.Day),
             )
             bars_resp = self.option_data_client.get_option_bars(bar_req)
-            bars = bars_resp.get(option_symbol, [])
+            # BarSet supports __getitem__; use .data dict for safety
+            bars = bars_resp.data.get(option_symbol, []) if hasattr(bars_resp, "data") else []
         except Exception:
             return []
 
@@ -444,9 +478,10 @@ class AlpacaBrokerAdapter(BrokerAdapter):
                 start=bar_start,
                 end=bar_end,
                 timeframe=TimeFrame(1, TimeFrameUnit.Day),
+                feed=DataFeed.IEX,
             )
             stock_resp = self.data_client.get_stock_bars(stock_req)
-            stock_bars = stock_resp.get(underlying, [])
+            stock_bars = stock_resp.data.get(underlying, []) if hasattr(stock_resp, "data") else []
             stock_price_by_date = {
                 bar.timestamp.date().isoformat(): float(bar.close)
                 for bar in stock_bars
