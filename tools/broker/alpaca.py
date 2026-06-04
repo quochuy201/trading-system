@@ -415,11 +415,12 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         if stock_price <= 0:
             return []
 
-        # Find a suitable ATM contract with longest DTE available.
-        # Filter by strike to ATM ± 10% to keep the result set small (the API
-        # returns at most 1000 per page; AAPL has thousands of contracts).
-        exp_gte = today.strftime("%Y-%m-%d")
-        exp_lte = (today + timedelta(days=180)).strftime("%Y-%m-%d")
+        # Find a suitable ATM contract within the strategy's DTE window.
+        # SOP uses 30-120 DTE across all engines. Going further is wasteful and
+        # gives newer (= less history) contracts. Filter to ATM ± 10% to keep
+        # the result set small (API caps at 1000 per page).
+        exp_gte = (today + timedelta(days=30)).strftime("%Y-%m-%d")
+        exp_lte = (today + timedelta(days=120)).strftime("%Y-%m-%d")
 
         contracts_req = GetOptionContractsRequest(
             underlying_symbols=[underlying],
