@@ -1439,16 +1439,18 @@ def calc_hv(symbol: str, window: int = 20) -> str:
 
 @mcp.tool()
 def get_put_skew(symbol: str, expiration: str, target_delta: float = 0.25) -> str:
-    """Calculate put/call IV skew at a target delta for a given expiration.
+    """Calculate put skew in IV percentage points at a target delta.
 
-    When to use: Assess demand for downside protection. Skew > 1.0 means puts
-    are priced higher than calls (normal). Elevated skew (>1.3) signals fear;
-    compressed skew (<1.0) signals complacency.
+    When to use: Assess demand for downside protection. Returns the SOP's
+    definition put_skew = (IV_OTM_put − IV_equidistant_OTM_call) × 100, in IV
+    percentage points. Positive skew (puts richer than calls) is the normal
+    state; the SOP bonus trigger is put_skew > 5, and put_skew < 0 is a
+    soft-gate warning for bull put spreads.
 
     Sample input: get_put_skew("AAPL", "2026-06-20", 0.25)
 
     Expected output:
-    {"symbol": "AAPL", "expiration": "2026-06-20", "put_skew": 1.25,
+    {"symbol": "AAPL", "expiration": "2026-06-20", "put_skew": 7.0,
      "put_iv": 0.35, "call_iv": 0.28, "target_delta": 0.25}
 
     If error:

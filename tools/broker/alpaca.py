@@ -259,6 +259,17 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         req = OptionChainRequest(**req_kwargs)
         chain_data = self.option_data_client.get_option_chain(req)
 
+        # The chain snapshot does not carry open interest. Fetch it from the
+        # trading-side contracts endpoint (which does) and build a symbol→OI map.
+        oi_by_symbol = self._fetch_open_interest(
+            underlying,
+            expiration_date_gte=expiration_date_gte,
+            expiration_date_lte=expiration_date_lte,
+            strike_price_gte=strike_price_gte,
+            strike_price_lte=strike_price_lte,
+            contract_type=contract_type,
+        )
+
         today = datetime.now().date()
         results = []
         for symbol, snapshot in chain_data.items():
@@ -306,12 +317,51 @@ class AlpacaBrokerAdapter(BrokerAdapter):
                 "ask": ask,
                 "mid": mid,
                 "volume": volume,
-                "open_interest": 0,  # not provided in chain snapshot
+                "open_interest": oi_by_symbol.get(symbol, 0),
                 "iv": iv,
                 "greeks": greeks,
             })
 
         return results
+
+    def _fetch_open_interest(
+        self,
+        underlying: str,
+        expiration_date_gte: str | None = None,
+        expiration_date_lte: str | None = None,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+        contract_type=None,
+    ) -> dict[str, int]:
+        """Build a {option_symbol: open_interest} map from the contracts endpoint.
+
+        The option chain snapshot does not include open interest, but the
+        trading-side contracts endpoint does. Returns an empty dict on failure
+        (callers default OI to 0).
+        """
+        kwargs = {"underlying_symbols": [underlying], "limit": 1000}
+        if contract_type is not None:
+            kwargs["type"] = contract_type
+        if expiration_date_gte:
+            kwargs["expiration_date_gte"] = expiration_date_gte
+        if expiration_date_lte:
+            kwargs["expiration_date_lte"] = expiration_date_lte
+        if strike_price_gte is not None:
+            kwargs["strike_price_gte"] = str(strike_price_gte)
+        if strike_price_lte is not None:
+            kwargs["strike_price_lte"] = str(strike_price_lte)
+        try:
+            resp = self.trading_client.get_option_contracts(
+                GetOptionContractsRequest(**kwargs)
+            )
+            contracts = resp.option_contracts or []
+            return {
+                c.symbol: int(c.open_interest)
+                for c in contracts
+                if c.open_interest is not None
+            }
+        except Exception:
+            return {}
 
     def get_option_snapshot(self, option_symbols: list[str]) -> list[dict]:
         """Fetch real-time snapshot (quote + greeks + IV) for specific option contracts.

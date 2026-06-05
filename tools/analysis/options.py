@@ -141,7 +141,15 @@ def calc_hv(closes: list, window: int = 20) -> float:
 
 
 def calc_put_skew(chain: list, target_delta: float = 0.25) -> float:
-    """Calculate put skew: put IV / call IV at the nearest target delta.
+    """Calculate put skew in IV percentage points at the nearest target delta.
+
+    Matches the SOP definition (options-vol-edge/v1.0.0 §Phase 1):
+        put_skew = IV_OTM_put − IV_equidistant_OTM_call
+
+    expressed in IV percentage points (e.g. put IV 0.35 vs call IV 0.28 → 7.0).
+    Positive skew means puts carry richer IV than equidistant calls (the normal
+    state); the SOP's bonus trigger is put_skew > 5 and its soft-gate warning is
+    put_skew < 0.
 
     Searches for the put and call contracts whose absolute delta is closest to
     target_delta. A tolerance of ±0.10 is applied; if the nearest match for
@@ -153,14 +161,14 @@ def calc_put_skew(chain: list, target_delta: float = 0.25) -> float:
         target_delta:  Target delta to find (default 0.25 for 25-delta).
 
     Returns:
-        put_iv / call_iv float, or math.nan if matching contracts can't be found
-        or if call_iv is zero.
+        (put_iv − call_iv) × 100, in IV percentage points, or math.nan if
+        matching contracts can't be found.
 
     Example:
         >>> chain = [{"type": "put", "delta": 0.25, "iv": 0.35},
         ...          {"type": "call", "delta": 0.25, "iv": 0.20}]
         >>> calc_put_skew(chain, target_delta=0.25)
-        1.75
+        15.0
     """
     tolerance = 0.10
 
@@ -178,11 +186,7 @@ def calc_put_skew(chain: list, target_delta: float = 0.25) -> float:
     if abs(best_call["delta"] - target_delta) > tolerance:
         return math.nan
 
-    call_iv = best_call["iv"]
-    if call_iv == 0.0:
-        return math.nan
-
-    return best_put["iv"] / call_iv
+    return (best_put["iv"] - best_call["iv"]) * 100.0
 
 
 # ---------------------------------------------------------------------------

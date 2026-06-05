@@ -207,8 +207,9 @@ class TestCalcPutSkew:
             _make_contract("put", 0.25, 0.35),
             _make_contract("call", 0.25, 0.20),
         ]
+        # Points-difference per SOP: (0.35 - 0.20) * 100 = 15.0
         result = calc_put_skew(chain, target_delta=0.25)
-        assert abs(result - 0.35 / 0.20) < 0.001
+        assert abs(result - 15.0) < 0.001
 
     def test_nearest_delta_match(self):
         chain = [
@@ -217,9 +218,18 @@ class TestCalcPutSkew:
             _make_contract("call", 0.22, 0.20),  # close to 0.25
             _make_contract("call", 0.10, 0.18),  # further
         ]
-        # Should pick put@0.27 and call@0.22 (nearest to 0.25)
+        # Should pick put@0.27 and call@0.22 → (0.30 - 0.20) * 100 = 10.0
         result = calc_put_skew(chain, target_delta=0.25)
-        assert abs(result - 0.30 / 0.20) < 0.001
+        assert abs(result - 10.0) < 0.001
+
+    def test_negative_skew_when_calls_richer(self):
+        # Calls priced higher than puts → negative skew (SOP soft-gate warning)
+        chain = [
+            _make_contract("put", 0.25, 0.20),
+            _make_contract("call", 0.25, 0.27),
+        ]
+        result = calc_put_skew(chain, target_delta=0.25)
+        assert abs(result - (-7.0)) < 0.001
 
     def test_nan_when_no_put(self):
         chain = [_make_contract("call", 0.25, 0.20)]
@@ -253,14 +263,14 @@ class TestCalcPutSkew:
         result = calc_put_skew(chain, target_delta=0.25)
         assert not math.isnan(result)
 
-    def test_zero_call_iv_returns_nan(self):
-        # Avoid division by zero — return NaN
+    def test_zero_call_iv_is_full_put_iv(self):
+        # Points-difference has no division; call_iv=0 → skew is full put IV in pts
         chain = [
             _make_contract("put", 0.25, 0.30),
             _make_contract("call", 0.25, 0.0),
         ]
         result = calc_put_skew(chain, target_delta=0.25)
-        assert math.isnan(result)
+        assert abs(result - 30.0) < 0.001
 
 
 # ---------------------------------------------------------------------------
