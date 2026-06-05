@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **READ FIRST, EVERY SESSION:** [`PROJECT_STATUS.md`](PROJECT_STATUS.md) — the living index of what's built, what's in progress (with locked design decisions), and known bugs/gaps. It is the portable, machine-independent project memory. Read it before starting work so you don't rebuild or re-decide what already exists. Update it as part of finishing each unit of work.
+
 ## Commands
 
 ```bash
