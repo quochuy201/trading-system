@@ -46,8 +46,18 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 - **No order-fill simulation.** SimulationBroker = historical-data server + paper trade-logger. Log entry/exit at the **ask price** that existed at the **next bar after the decision** (reuse v3's `_fill_price_bar` next-bar guard). P&L computed at close from logged prices. Bid/ask spread modeling deliberately omitted — measuring strategy edge, not fill quality.
 - **Reuse v3 guards verbatim**: clock-bounded queries (add `query_option_data` with same `timestamp <= end` bound), next-bar fill.
 - **Exit checks**: deterministic mechanical rules (50% profit / 2× stop / DTE floor) declared in the SOP, run by one shared `ExitChecker` used by BOTH live Monitor and backtest — so backtest exits == live exits.
+- **ExitChecker = open registry of named rule-evaluators**, NOT hardcoded if/else. Each rule type is `(position, params) → bool`. Future option strategies (iron condors v1.2.0 = two-sided exits; single-leg longs = pct_of_debit/delta_stop not pct_of_credit; calendars = IV/front-leg-expiry exits) add a new evaluator + reference it in their SOP exit block. Checker core / engine / live path stay untouched. Rule-type names are the stable contract between SOPs and the checker.
+- **Backtest universe restricted to deeply liquid names** (SPY/QQQ/AAPL/MSFT/NVDA…) so the OI liquidity gate stays active/unchanged but always passes — avoids needing historical OI (which Alpaca doesn't serve), keeps live code path intact.
 
 **Still to design:** SimulationBroker options methods (chain/positions/greeks from history), ExitChecker rule format, migration path from v3 harness, output metrics (win rate, expectancy, IVR-vs-control comparison to validate the strategy's central premise).
+
+**Spec v1 (`docs/specs/2026-06-05-strategy-agnostic-backtest-design.md`) FAILED peer review (2026-06-05) — 3 BLOCKERs, do NOT implement as-is:**
+1. **No greek functions exist** — `analysis/options.py` has `black_scholes_price` but NO delta/gamma/theta/vega/rho. Chain synthesis + put_skew gate need them. Must build `black_scholes_greeks()` first.
+2. **`iv_history` is a single scalar ATM IV per symbol/day** — cannot synthesize a skewed multi-strike chain from it. A flat IV surface forces `put_skew ≡ 0`, breaking the vol-edge strategy's own premise gate. MUST decide: parameterize a skew/term model, OR store a real IV surface, OR scope skew-dependent strategies out of backtest. **This is the central unresolved data question.**
+3. **"Log at ask" is incoherent** — BSM gives one fair value; with no spread model there is no ask. Use BSM mid, or define an explicit symmetric spread function.
+- Also: `_fill_price_bar` entry-timing guard is DEAD CODE (declared, never set) — next-bar fill is aspirational, not existing. Gap-up/down skip (CLAUDE.md §4) unaddressed.
+- Also: IVR-vs-control premise test conflicts with "no strategy logic in Python" — control arm needs a separate SOP version, with LLM-judgment confound acknowledged.
+- Also: regression baseline figure wrong (spec said Feb +$542; actual recorded +$2,415, and that baseline used daily-bar monitoring since changed). Re-run a frozen baseline on current code instead.
 
 ---
 
