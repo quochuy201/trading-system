@@ -51,13 +51,16 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 
 **Still to design:** SimulationBroker options methods (chain/positions/greeks from history), ExitChecker rule format, migration path from v3 harness, output metrics (win rate, expectancy, IVR-vs-control comparison to validate the strategy's central premise).
 
-**Spec v1 (`docs/specs/2026-06-05-strategy-agnostic-backtest-design.md`) FAILED peer review (2026-06-05) — 3 BLOCKERs, do NOT implement as-is:**
-1. **No greek functions exist** — `analysis/options.py` has `black_scholes_price` but NO delta/gamma/theta/vega/rho. Chain synthesis + put_skew gate need them. Must build `black_scholes_greeks()` first.
-2. **`iv_history` is a single scalar ATM IV per symbol/day** — cannot synthesize a skewed multi-strike chain from it. A flat IV surface forces `put_skew ≡ 0`, breaking the vol-edge strategy's own premise gate. MUST decide: parameterize a skew/term model, OR store a real IV surface, OR scope skew-dependent strategies out of backtest. **This is the central unresolved data question.**
-3. **"Log at ask" is incoherent** — BSM gives one fair value; with no spread model there is no ask. Use BSM mid, or define an explicit symmetric spread function.
-- Also: `_fill_price_bar` entry-timing guard is DEAD CODE (declared, never set) — next-bar fill is aspirational, not existing. Gap-up/down skip (CLAUDE.md §4) unaddressed.
-- Also: IVR-vs-control premise test conflicts with "no strategy logic in Python" — control arm needs a separate SOP version, with LLM-judgment confound acknowledged.
-- Also: regression baseline figure wrong (spec said Feb +$542; actual recorded +$2,415, and that baseline used daily-bar monitoring since changed). Re-run a frozen baseline on current code instead.
+**Spec `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` — REVISED after peer review; all findings resolved. Ready for a 2nd review pass / implementation plan.**
+
+Resolutions (chose **Option A: historical IV surface**, verified feasible — Alpaca serves per-strike historical option bars; BSM-inverting each strike's close reconstructs real skew, e.g. QQQ showed IV 0.327@m0.78 vs 0.282@m0.85):
+1. Greeks: spec now lists `black_scholes_greeks()` as NEW prerequisite work (step 1), not existing.
+2. IV surface: new `option_surface` table (per strike/expiry/day) + builder job replaces scalar `iv_history` for backtest pricing. Real skew, not flat.
+3. Pricing: BSM **mid** (bid=ask=mid); "ask" removed. Net-spread-width gate explicitly not validated in backtest (needs live OPRA) — noted, not silent.
+4. Next-bar fill guard: spec now flags `_fill_price_bar` as dead code → must be implemented + gap-skip added (step 4).
+5. IVR-vs-control: demoted to "directional signal"; control arm = separate `v1.0.0-control.md` SOP (no Python strategy logic); LLM-judgment confound + small-sample caveats stated.
+6. Regression baseline: freeze a fresh re-run (step 0) instead of trusting the wrong remembered +$542.
+7. ExitChecker: evaluator signature carries mutable exit_state (stateful trailing); unknown rule type hard-fails.
 
 ---
 
