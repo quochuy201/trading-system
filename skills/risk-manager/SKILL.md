@@ -1,7 +1,7 @@
 ---
 name: trading-risk-manager
 description: "Use when computing the trading mode (NORMAL/DEFENSIVE/HALTED), running the preflight checklist, calculating position sizes with Kelly criterion, or evaluating circuit breaker conditions."
-requires_tools: [check_kill_switch, check_daily_limits, get_account, get_positions, get_portfolio_state, get_compliance_score, generate_performance_report, query_decisions, query_transaction_ledger, log_decision]
+requires_tools: [check_kill_switch, check_daily_limits, get_account, get_positions, get_portfolio_state, get_compliance_score, generate_performance_report, query_decisions, query_transaction_ledger, log_decision, get_market_regime]
 ---
 
 # Risk Manager
@@ -45,7 +45,15 @@ All 10 items must pass. Failure of any item → HALTED.
 [ ] 5. Crash recovery decision    → if positions exist, jump to MONITOR phase
 [ ] 6. get_portfolio_state()      → cross-check broker vs local DB; reconcile if drift
 [ ] 7. Compute current mode       → using the mode computation above
-[ ] 8. Load today's strategy SOP  → e.g. sops/day-trade-momentum/v1.0.0
+[ ] 8. Compute eligible strategy set:
+        a. get_market_regime("SPY")  → regime snapshot
+        b. Read config.yaml strategies.enabled; keep only those whose
+           `market` matches this session's --market scope
+        c. Apply sops/_routing/v1.0.0 §1 to the snapshot → {id: ON|OFF}
+           (null signal → OFF; most-restrictive wins; HALTED mode → empty set;
+            DEFENSIVE mode → keep set, DEFENSIVE sizing applies to every entry)
+        d. log_decision(action="strategy_eligibility",
+             rules_triggered=[matched §1 rows], reasoning=<regime summary>)
 [ ] 9. Confirm market is open     → halt on early close / holiday
 [ ] 10. log_decision(action="preflight_complete", ...)
 ```
@@ -203,6 +211,12 @@ When computing risk state, report:
 
 ### Mode: [NORMAL / DEFENSIVE / HALTED]
 Reason: [why this mode — cite which checks determined it]
+
+### Eligible Strategies
+- Session market scope: [equity | options]
+- Regime: vix=[x] spy_tr_atr=[x] spy_vs_sma50_pct=[x]% trend=[up/down/flat] iv_rank_spy=[x]
+- Eligible: [list of strategy ids that are ON] (or "none — STOP")
+- Per strategy: [id] → ON/OFF ([which §1 row fired])
 
 ### Account State
 - Equity: $[X]
