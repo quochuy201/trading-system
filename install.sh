@@ -37,9 +37,14 @@ install_hermes() {
     run cp "$REPO_DIR/mcp.json" "$PROFILE_DIR/mcp.json"
     run cp "$REPO_DIR/distribution.yaml" "$PROFILE_DIR/distribution.yaml"
     run cp "$REPO_DIR/.env.EXAMPLE" "$PROFILE_DIR/.env.EXAMPLE"
-    run cp -r "$REPO_DIR/skills" "$PROFILE_DIR/skills"
-    run cp -r "$REPO_DIR/sops" "$PROFILE_DIR/sops"
-    run cp -r "$REPO_DIR/cron" "$PROFILE_DIR/cron"
+    # Copy directory *contents* (trailing /.) so our skills/sops/cron overwrite
+    # in place when the profile already exists. A plain `cp -r src dst` nests as
+    # dst/src when dst pre-exists (e.g. a live Curator-managed profile), leaving
+    # the files Hermes actually loads stale. Merge-copy preserves other skills.
+    run mkdir -p "$PROFILE_DIR/skills" "$PROFILE_DIR/sops" "$PROFILE_DIR/cron"
+    run cp -R "$REPO_DIR/skills/." "$PROFILE_DIR/skills/"
+    run cp -R "$REPO_DIR/sops/." "$PROFILE_DIR/sops/"
+    run cp -R "$REPO_DIR/cron/." "$PROFILE_DIR/cron/"
 
     log "Done. Next steps:"
     log "  1. cp $PROFILE_DIR/.env.EXAMPLE $PROFILE_DIR/.env && edit .env"
