@@ -54,13 +54,18 @@ def compute_market_regime(
     }
 
     bars = repo.query_price_data(symbol, start, end, timeframe)
-    if len(bars) < 21:
-        snapshot["warning"] = f"insufficient data: {len(bars)} bars (need >= 21)"
+    # Need >= 22 bars: 20 prior true ranges + today's TR. With 21 bars the
+    # prior-20 ATR window would be short one element and silently understate
+    # ATR; fail-safe to null instead (the SOP treats null as restrictive).
+    if len(bars) < 22:
+        snapshot["warning"] = f"insufficient data: {len(bars)} bars (need >= 22)"
         return snapshot
 
     closes = [float(b["close"]) for b in bars]
 
-    # spy_tr_atr: today's true range / mean true range of prior 20 bars
+    # spy_tr_atr: today's true range / mean true range of the prior 20 bars.
+    # trs has len(bars)-1 elements (>= 21 here), so trs[-21:-1] is exactly the
+    # 20 bars before today, and trs[-1] is today.
     trs = [_true_range(bars[i], closes[i - 1]) for i in range(1, len(bars))]
     atr20 = sum(trs[-21:-1]) / 20.0           # 20 bars before today
     tr_today = trs[-1]

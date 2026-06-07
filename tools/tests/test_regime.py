@@ -56,9 +56,23 @@ class TestRegime:
         assert r["iv_rank_spy"] == 82.0
 
     def test_insufficient_data_is_failsafe_null(self):
-        self.repo.save_price_bars(_bars("SPY", [100 + i for i in range(10)]))  # <21 bars
+        self.repo.save_price_bars(_bars("SPY", [100 + i for i in range(10)]))  # <22 bars
         r = compute_market_regime(self.repo, "SPY", "2026-01-01", "2026-12-31")
         assert r["spy_tr_atr"] is None
         assert r["spy_vs_sma50_pct"] is None
         assert r["spy_trend"] is None
         assert "warning" in r
+
+    def test_atr_window_boundary_needs_22_bars(self):
+        # Constant true range (every bar high-low spans exactly 2) -> the
+        # today/prior-20 ATR ratio must be exactly 1.0 once computable.
+        # 21 bars cannot form a correct prior-20 window -> fail-safe null.
+        # 22 bars is the minimum that yields the correct 1.0 ratio.
+        self.repo.save_price_bars(_bars("R21", [100 + i for i in range(21)]))
+        r21 = compute_market_regime(self.repo, "R21", "2026-01-01", "2026-12-31")
+        assert r21["spy_tr_atr"] is None
+        assert "warning" in r21
+
+        self.repo.save_price_bars(_bars("R22", [100 + i for i in range(22)]))
+        r22 = compute_market_regime(self.repo, "R22", "2026-01-01", "2026-12-31")
+        assert r22["spy_tr_atr"] == 1.0
