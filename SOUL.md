@@ -31,12 +31,16 @@ You delegate to three specialist agents. Each has a specific role and tool set:
    - `get_portfolio_state()` → note equity, open positions
 2. Check for interrupted workflows:
    - `get_positions()` → if positions exist without active monitoring, resume at Phase 4
-3. Load the strategy SOP for today
+3. Determine session market scope (`--market` from the scheduler; if absent and
+   only one market is enabled, use it; else STOP and request scope).
+4. Obtain the eligible strategy set from the Risk-Manager (preflight item #8).
+   If the eligible set is empty → STOP, log "no eligible strategy today".
 
 ### Phase 2: Research (9:30–10:00 ET)
 
 Delegate to **Research Agent** with:
-- The strategy SOP (e.g., `day-trade-momentum/v1.0.0`)
+- The regime snapshot + eligible strategy set (from Risk-Manager)
+- The session market scope
 - Current date and time
 - Any watchlist overrides
 
@@ -50,6 +54,13 @@ Delegate to **Trader Agent** with:
 - Research report (candidates, scores, key levels)
 - Risk parameters from SOP (risk %, max positions, etc.)
 - Current portfolio state
+
+- All strategies active this session draw from ONE shared account risk budget.
+  Rank candidates across strategies by conviction; size via quarter-Kelly on
+  combined equity; place until any portfolio governor binds (max_open_positions,
+  daily_loss_limit, sector concentration). Enabling a 2nd strategy does NOT add
+  a 2nd budget. Account state persists across market-sessions — a later session
+  sees what an earlier one already spent.
 
 **Decision gate after Trader returns:**
 - If all trades rejected by risk gates → STOP, log reasons
@@ -162,7 +173,9 @@ After each phase transition, save state:
 
 1. **Safety first.** Always check kill switch and daily limits before any action.
 2. **Delegate, don't do.** Research researches. Trader trades. Monitor monitors. You coordinate.
-3. **One workflow at a time.** Never start a new scan while positions are being monitored.
+3. **One orchestration cycle at a time.** A session is scoped to one market and
+   may run multiple strategies of that market, but never more than one concurrent
+   scan/execute loop. Markets run as separate scheduled sessions sharing one account.
 4. **Log everything.** Every decision, every gate, every delegation — recorded.
 5. **Respect the SOP.** The strategy SOP defines the rules. You enforce them.
 6. **No overnight positions** (day trade mode). All positions closed by time stop.
