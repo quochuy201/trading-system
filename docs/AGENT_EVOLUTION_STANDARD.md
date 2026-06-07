@@ -169,6 +169,46 @@ For traceability against the paper's framework `P_H = Φ(R, M, C, S, O, G)`:
 
 ---
 
+## Deployment on Hermes (cross-machine note)
+
+This package installs onto the **Nous Research "Hermes Agent"** harness (`./install.sh hermes`,
+`distribution.yaml`). Verified against internal sources (2026-05/06), Hermes has a **built-in
+self-improvement loop** that interacts directly with this standard — read this before deploying.
+
+**What Hermes does on its own:**
+- **Automatic skill generation:** when Hermes successfully completes a hard task, it writes a new
+  `SKILL.md` capturing the procedure. This is real, by-default behavior — its headline feature.
+- **Curator (background):** archives generated skills, **deduplicates, removes hallucinated/redundant
+  skills, and promotes only validated skills** to the active set. This is Hermes's own Tier-2/Tier-3
+  gate — architecturally the same shape as this standard's verification requirement.
+- **Memory layer:** SQLite-WAL session store, vector/episodic search, a "memory nudge counter" that
+  proactively prompts the agent to record observations every N turns.
+
+**Why this matters for a trading agent — the required adaptation:**
+
+1. **Hermes's auto-skill-promotion writes to the *skills* store, which our standard says is
+   human-ratified-only.** Hermes's "improve yourself freely" default is correct for a personal
+   assistant; it is **NOT** acceptable for an autonomous agent trading real capital. On Hermes we
+   MUST constrain or disable autonomous skill promotion for any risk-bearing behavior, and route
+   proposed skills through `reports/sop-changes/` for human ratification. Memory/observation
+   accumulation (Tier 1) may run freely; behavior changes (thresholds, skills, guardrails) may not.
+
+2. **The Curator does NOT remove the tail-event limit.** Hermes can auto-generate skills for
+   common, repeatable tasks (where it has many success examples). It cannot manufacture crash/tail
+   knowledge from 0–2 crashes/year. Tail rules still come from market-wide history or structural
+   indicators, with provenance tags — see the "hard limit" section above.
+
+3. **Every harness's memory has boundary failures** (internal "State of Memory in Agent Harness"
+   survey, 2026-06: Claude Code, Codex, Cursor, Copilot, AND Hermes all exhibit "stale-but-confident"
+   issues). Do not assume Hermes's memory is trustworthy by default — apply the runtime-trust rule
+   (confidence / recency / last_verified; retrieved = hypothesis until re-verified live).
+
+**Net:** keep Hermes's memory + retrieval; put its autonomous skill-promotion behind this package's
+human ratification gate. The frozen-model / externalized-learning principle is unchanged — Hermes
+just provides more of the external machinery, which must still obey the four-store separation.
+
+---
+
 ## Change policy for this document
 
 This is a guardrail artifact. It is human-controlled. Changes follow the same path as SOP changes:

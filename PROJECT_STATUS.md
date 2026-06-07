@@ -90,5 +90,6 @@ Future strategy versions: v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1
 ## Key references
 - `CLAUDE.md` — build/test commands, architecture, backtest rules (NON-NEGOTIABLE).
 - `OPERATING_MANUAL.md` — risk constitution.
+- `docs/AGENT_EVOLUTION_STANDARD.md` — how the agent learns/remembers safely (frozen-model = externalized learning; four-store separation; Tier 1/2/3 trust; runtime-trust memory). **Includes a "Deployment on Hermes" section**: Hermes (Nous Research) auto-generates SKILL.md + has a Curator; its autonomous skill-promotion MUST be gated through human ratification for risk-bearing behavior. Read before wiring any memory/learning loop or deploying to Hermes.
 - `docs/specs/` — design + implementation-plan docs per feature.
 - `sops/options-vol-edge/HANDOFF.md` + `ROADMAP.md` — options program detail.
