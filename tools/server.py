@@ -224,6 +224,63 @@ def get_market_data(symbol: str) -> str:
 
 
 @mcp.tool()
+def get_market_regime(index_symbol: str = "SPY", vix_symbol: str = "") -> str:
+    """Return RAW market-regime signals for the strategy-routing eligibility gate.
+
+    When to use: Risk-Manager preflight, to apply the sops/_routing/ §1 eligibility
+    table. Returns measurements only — it does NOT decide which strategy runs.
+
+    Sample input: get_market_regime("SPY")
+                  get_market_regime("SPY", "VIXY")
+
+    Expected output:
+    {"vix": 18.4, "spy_tr_atr": 0.92, "spy_vs_sma50_pct": 2.3, "spy_trend": "up",
+     "iv_rank_spy": 41.0, "as_of": "2026-06-06T13:30:00+00:00"}
+
+    Any signal that cannot be measured is null; the routing SOP treats null as
+    fail-safe restrictive (the dependent strategy is OFF).
+    """
+    _track_tool("get_market_regime")
+    from analysis.regime import compute_market_regime
+    from datetime import timedelta
+
+    broker = get_broker()
+    repo = get_repo()
+
+    # Clock bound: use sim time in backtest, else now (no-look-ahead).
+    if hasattr(broker, "current_time") and broker.current_time:
+        end_dt = broker.current_time
+    else:
+        end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=120)  # enough for SMA50 + 20-day ATR
+
+    # Ensure index bars are cached for the window.
+    from data.cache import load_price_cache
+    try:
+        load_price_cache(broker, repo, [index_symbol],
+                         start_dt.date().isoformat(), end_dt.date().isoformat())
+    except Exception:
+        pass  # fall through; pure fn returns fail-safe nulls if data is short
+
+    # Best-effort VIX quote (null on any failure).
+    vix = None
+    if vix_symbol:
+        try:
+            q = with_retry(broker.get_market_data, _retry_config)(vix_symbol)
+            vix = float(q.get("mid")) if q.get("mid") is not None else None
+        except Exception:
+            vix = None
+
+    # iv_rank_spy deferred to a follow-up; pass None for now.
+    snapshot = compute_market_regime(
+        repo, index_symbol,
+        start=start_dt.isoformat(), end=end_dt.isoformat(),
+        vix=vix, iv_rank_spy=None,
+    )
+    return json.dumps(snapshot)
+
+
+@mcp.tool()
 def get_historical_data(symbol: str, start: str, end: str, timeframe: str = "1Day") -> str:
     """Get historical OHLCV bars directly from the broker (not cached).
 
