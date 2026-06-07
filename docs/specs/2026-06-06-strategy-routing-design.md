@@ -1,6 +1,6 @@
 # Strategy Routing — Design Spec
 
-**Status:** Draft v1 — awaiting human review
+**Status:** Draft v2 — review decisions folded in (§10); ready for implementation plan
 **Date:** 2026-06-06
 **Author:** huylez (with Claude)
 **Topic:** How the agent decides *which* strategy to apply, automatically, when multiple strategies are enabled across multiple markets.
@@ -22,7 +22,7 @@ Today the system runs **one strategy at a time**, chosen **manually**: `SOUL.md`
 
 ### Non-goals (YAGNI)
 - No machine-learned routing. Rules are human-authored (the playbook may later *propose* changes via the review gate — out of scope here).
-- No truly parallel/concurrent workflows. "Concurrent strategies" means *evaluated within one serialized orchestration cycle sharing one risk budget*, not multiple independent loops.
+- No truly parallel/concurrent workflows. **One market per session.** Markets run as *separate scheduled sessions* (e.g. an equity run and an options run), each scoped to one market. Within a session, multiple *strategies of that market* may be active (e.g. equity intraday + swing). Cross-market risk is shared via **persisted account state** read at each session's preflight, not by juggling markets in one loop (see §4).
 - No new markets implemented here. Crypto/prediction-markets remain placeholders.
 - Not re-deciding the directory restructure (separate spec). This spec assumes the 2-level `sops/<market>/<strategy>/` layout but does not depend on it landing first.
 
@@ -59,16 +59,20 @@ Declares which strategies exist and are enabled for this account. Single source 
 ```yaml
 strategies:
   enabled:
+    - id: equity/intraday-momentum
+      market: equity
+      sop: v1.0.0
     - id: equity/swing
+      market: equity
       sop: v1.0.0
     - id: options/vol-edge
+      market: options
       sop: v1.0.0
-  disabled:                      # known but turned off (not even eligible)
-    - id: equity/intraday-momentum
-      sop: v1.0.0
+  disabled: []                   # known but turned off (can never become eligible)
 ```
 
 - `id` resolves to `sops/<id>/<sop>.md` (rules) and `sops/<id>/dd.md` (due diligence reference).
+- **Session market scope:** the scheduled run passes a `--market <name>` scope (the scheduler/cron job decides which market this session trades). The session considers only `enabled` strategies whose `market` matches the session scope. This is how "schedule equity + options separately" works: two cron jobs, two scopes. If no scope is passed, default to the single `market` present, else require one.
 - Disabling a strategy here is the master kill — it can never become eligible.
 - No resolver *logic* in code; the agent reads this list (consistent with how it already reads `scanner.universe`).
 
@@ -80,13 +84,11 @@ The teachable artifact. Two tables.
 | Regime condition (from `get_market_regime`) | equity/swing | equity/intraday | options/vol-edge |
 |---|---|---|---|
 | `vix > 30` OR `spy_tr_atr > 2.0` (stress/crash) | OFF | OFF | OFF |
-| `spy_tr_atr` in (1.5, 2.0] (elevated) | OFF | DEFENSIVE | DEFENSIVE |
 | `iv_rank_spy > 70` AND `|spy_vs_sma50_pct| < 2` (high-vol, range-bound) | OFF | OFF | ON |
 | `spy_vs_sma50_pct > 0` AND `spy_trend = up` AND `iv_rank_spy < 50` (clean uptrend) | ON | ON | OFF |
-| `catalyst_density = high` (many fresh gappers) | ON | ON | OFF |
 | default (no row matches) | OFF | OFF | OFF |
 
-Cell values: `ON` (full), `DEFENSIVE` (eligible but half-size / A+ only — inherits risk-manager DEFENSIVE semantics), `OFF` (ineligible). **Most-restrictive-wins** when multiple rows match (same conflict rule risk-manager already uses). *(The three-state vs. binary ON/OFF choice is open — see §10.2; if binary wins for v1, the `DEFENSIVE` cells collapse to `OFF` and global mode handles sizing.)*
+Cell values are **binary `ON` / `OFF`** (eligibility only). Per-trade *sizing* is not the gate's job — it stays with the global mode: risk-manager Rule 2 already forces **DEFENSIVE** (half-size) when `spy_tr_atr > 1.5` and **HALTED** when `> 2.0`, so the gate need only answer "allowed or not." **Most-restrictive-wins** when multiple rows match (same conflict rule risk-manager already uses). *(The deferred `catalyst_density` row that would enable intraday on many fresh gappers is omitted from v1 — see §10.3.)*
 
 **§2 Setup routing** — candidate signature → strategy. Evaluated by research, only against eligible strategies.
 
@@ -111,11 +113,10 @@ Output shape (all values clock-bounded to `current_time` for backtest no-look-ah
   "spy_vs_sma50_pct": 2.3,     // % above/below SMA50
   "spy_trend": "up",           // up | down | flat (HH/HL structure)
   "iv_rank_spy": 41.0,         // existing calc_iv_rank on SPY
-  "catalyst_density": "low",   // low|med|high — count of universe names with fresh catalyst+gap
   "as_of": "2026-06-06T13:30:00Z"
 }
 ```
-Built by composing tools that already exist (`get_market_data`, `calc_technical_indicators`, `calc_iv_rank`). On any missing input → field returns `null`; the SOP treats `null` in a condition as **fail-safe restrictive** (the dependent strategy → OFF).
+Built by composing tools that already exist (`get_market_data`, `calc_technical_indicators`, `calc_iv_rank`). On any missing input → field returns `null`; the SOP treats `null` in a condition as **fail-safe restrictive** (the dependent strategy → OFF). *(`catalyst_density` deferred to a later version — see §10.3.)*
 
 ### 3.4 Risk-Manager edits — `skills/risk-manager/SKILL.md`
 - Preflight item #8 changes from "Load today's strategy SOP" → **"Compute eligible strategy set"**:
@@ -123,8 +124,9 @@ Built by composing tools that already exist (`get_market_data`, `calc_technical_
   2. Read `config.yaml strategies.enabled`
   3. Apply routing SOP §1 → produce `{strategy_id: ON|DEFENSIVE|OFF}`
   4. `log_decision(action="strategy_eligibility", rules_triggered=[matched rows], reasoning=...)`
+- Only `enabled` strategies **matching the session's `--market` scope** are considered (§3.1).
 - Output adds an **Eligible Strategies** block (set + the regime snapshot + which §1 row fired per strategy).
-- The eligibility gate is **subordinate to mode**: if global mode is HALTED, eligible set is empty regardless of §1. DEFENSIVE mode caps every eligible strategy at DEFENSIVE.
+- The eligibility gate is **subordinate to mode**: if global mode is HALTED, eligible set is empty regardless of §1. DEFENSIVE mode keeps the eligible set but the existing DEFENSIVE sizing (half-size, A+ only) applies to every entry — the gate stays binary; mode does the throttling.
 
 ### 3.5 Research edits — `skills/research/SKILL.md`
 - Receives the **regime snapshot + eligible set** from the orchestrator (does *not* re-read regime — single source of truth; removes the current risk of research's Layer-1 and risk-manager's regime read diverging).
@@ -143,7 +145,7 @@ Built by composing tools that already exist (`get_market_data`, `calc_technical_
 
 ## 4. Critical Invariant — One Shared Risk Budget
 
-**Concurrency must not multiply risk.** All portfolio-level governors apply *across* the union of active strategies, not per-strategy:
+**Neither multiple strategies in a session nor multiple market-sessions on the same account may multiply risk.** Because markets run as *separate scheduled sessions* (§1) sharing *one Alpaca account*, the budget is shared two ways: (a) **within a session** across that market's active strategies, and (b) **across sessions** via persisted account state — every session's preflight reads live `get_account` / `get_positions` / `get_portfolio_state` / daily P&L, so the options session sees what the equity session already spent. There is no per-session or per-strategy budget; there is one account budget that each session reads fresh. All portfolio-level governors apply *across* the union of everything open, not per-strategy:
 
 | Governor (source) | Applies across all active strategies |
 |---|---|
@@ -157,10 +159,10 @@ Consequence: enabling a second strategy does **not** add a second budget. It com
 
 ---
 
-## 5. Data Flow (one cycle)
+## 5. Data Flow (one cycle = one market-scoped session)
 
 ```
-SOUL cycle start
+SOUL cycle start  (session scoped to ONE market via --market)
   │
   ├─ Risk-Manager preflight (items 1–7: kill switch, limits, account, positions, mode)
   │     └─ item 8: get_market_regime() → apply routing SOP §1 → ELIGIBLE set + snapshot
@@ -234,10 +236,10 @@ Each phase is independently revertible (disable in registry).
 
 ---
 
-## 10. Open Questions (confirm before implementation plan)
+## 10. Resolved Decisions (from review 2026-06-06)
 
-1. **Regime ownership:** OK that risk-manager is the *single* regime reader and research consumes its snapshot (removing research's independent Layer-1 read)? (Recommended — prevents divergence.)
-2. **`DEFENSIVE` as an eligibility cell value** — keep the three-state ON/DEFENSIVE/OFF, or simplify to binary ON/OFF for v1 and let global mode handle sizing? (Lean: binary for v1, YAGNI; global DEFENSIVE already exists.)
-3. **`catalyst_density` signal** — worth computing for v1, or defer (it overlaps research's own catalyst scan)? (Lean: defer; start with VIX + spy_tr_atr + trend + iv_rank.)
-4. **Routing SOP location** — `sops/_routing/v1.0.0.md` vs a section in `OPERATING_MANUAL.md`. (Lean: standalone versioned SOP — it'll evolve independently of the constitution.)
+1. **Regime ownership — RESOLVED: risk-manager is the single regime reader;** research consumes its snapshot. Confirmed alongside the session model: one market per session, markets scheduled as separate sessions (§1, §3.1).
+2. **Eligibility cell states — RESOLVED: binary `ON`/`OFF`.** Global mode (risk-manager DEFENSIVE/HALTED) does all sizing/throttling; the gate only answers eligibility (§3.2).
+3. **`catalyst_density` — RESOLVED: deferred.** v1 regime = `vix`, `spy_tr_atr`, `spy_vs_sma50_pct`, `spy_trend`, `iv_rank_spy`. Revisit when an intraday eligibility row needs it (§3.3).
+4. **Routing SOP location — RESOLVED: standalone `sops/_routing/v1.0.0.md`,** chosen to minimize always-on context: §1 loads on-demand in the risk-manager role, §2 in the research role — neither is baked into `OPERATING_MANUAL.md` (which loads every session). Keep the tables lean.
 ```
