@@ -109,3 +109,16 @@ notifications:
   on_exit: true
   daily_summary: true
   alerts: true
+
+# Strategy registry — which strategies exist and are enabled for this account.
+# The agent reads this list (it does not drive Python logic). The session's
+# --market scope (set by the scheduler) narrows 'enabled' to that market.
+strategies:
+  enabled:
+    - id: options-vol-edge      # current path; becomes options/vol-edge after restructure
+      market: options
+      sop: v1.0.0
+  disabled:
+    - id: day-trade-momentum    # current path; becomes equity/intraday-momentum after restructure
+      market: equity
+      sop: v1.0.0
