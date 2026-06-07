@@ -83,6 +83,20 @@ See `reference/prediction-markets-dd.md` — event probability, resolution crite
 
 ---
 
+## Strategy Routing (apply BEFORE the 5-Layer Stack)
+
+The orchestrator passes you (a) the regime snapshot and (b) the eligible
+strategy set from the Risk-Manager. Do NOT re-read regime — use the snapshot
+given (single source of truth).
+
+For each candidate from the scan:
+1. Classify it against sops/_routing/v1.0.0 §2 (setup signature → strategy).
+2. If the matched strategy is NOT in the eligible set → DROP, log
+   action="skip", reasoning="ineligible: <regime reason>".
+3. If no §2 signature matches → DROP, log "unroutable".
+4. Otherwise load that strategy's DD reference (sops/<id>/dd.md) and score
+   with THAT strategy's rubric.
+
 ## The 5-Layer Due Diligence Stack
 
 Every candidate must pass through these layers IN ORDER. If a layer fails, the candidate is rejected — no exceptions.
@@ -212,7 +226,9 @@ For each candidate that passed the screen:
 [Regime assessment: BULL/NEUTRAL/BEAR/CRISIS]
 [1-2 sentences on conditions, VIX, sector rotation]
 
-## Candidates
+## Candidates (grouped by routed strategy)
+
+### Strategy: [id]
 
 ### 1. [SYMBOL] — Score: [X]/100 — [strong_buy/buy/neutral/avoid]
 
