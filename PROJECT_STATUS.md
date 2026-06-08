@@ -4,7 +4,27 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-05 · Branch: `main` · Tests: 208 passing
+Last updated: 2026-06-07 · Branch: `refactor/sops-market-strategy-tree` → pushed to `feature/strategy-routing` (PR #1) · Tests: 198 passing, 9 pre-existing harness failures (see Known gaps)
+
+---
+
+## ⏩ Session handoff — 2026-06-07 (continue from another machine)
+
+**To pick up:** `git fetch origin && git checkout feature/strategy-routing` (this branch has ALL the work below — routing + restructure + install fixes). PR #1: https://github.com/quochuy201/trading-system/pull/1
+
+**Shipped this session:**
+1. **Strategy routing (P0–P2)** — auto strategy selection. Risk-manager eligibility gate (regime → ON/OFF) + research setup-routing (candidate → eligible strategy) + shared account budget. New `get_market_regime` MCP tool (raw signals only) + `tools/analysis/regime.py` (+ tests). Routing SOP `sops/_routing/v1.0.0.md`. Spec: `docs/specs/2026-06-06-strategy-routing-design.md`; plan: `docs/plans/2026-06-06-strategy-routing.md`.
+2. **Directory restructure** — `sops/` is now a market→strategy tree: `sops/equity/intraday-momentum/`, `sops/options/vol-edge/`, `sops/_routing/`. Config registry ids reconciled to match (`options/vol-edge`, `equity/intraday-momentum`). All live path refs updated.
+3. **install.sh fixes** — (a) merge-copy so skills/sops/cron don't nest under an existing Curator profile; (b) now copies `OPERATING_MANUAL.md` into the profile (was missing — agent ran without its constitution). **Verified on the Hermes profile**: nested sops install intact, every skill path-ref resolves, config ids resolve, no stale paths.
+
+**Routing is WIRED but GATED OFF — 3 blockers before it can actually trade (in priority order):**
+1. **`iv_rank_spy` unsourced** → `get_market_regime` returns it `null`, so every §1 "ON" row fails-safe → **eligible set is always empty** → routing STOPs every run. Fix: compute SPY IV-rank via existing `calc_iv_rank` + `iv_history`, inject in the `get_market_regime` tool. (Restructure already closed the id-seam blocker.)
+2. **Research DD pointer dangling** — `skills/research/SKILL.md` routing block says load `sops/<id>/dd.md`, but DD lives at `skills/research/reference/*-dd.md`. Either co-locate `dd.md` per strategy, or fix the instruction to point at `reference/`.
+3. **No end-to-end validation** — run the golden cases (`docs/plans/2026-06-06-routing-golden-cases.md`) on paper; then Phase-4 gate-vs-control backtest to tighten the PLACEHOLDER thresholds.
+
+**Other open items:** swing SOP still doesn't exist (`sops/equity/swing/` reserved); Phase-4 backtest engine still just a spec; `iv_rank_spy` + `catalyst_density` deferred.
+
+**Local-only (NOT pushed):** a `git stash` named `hermes-wip-archive-jun1` holds weeks-old Hermes scratch (cron experiments, Feb-2026 backtest scripts, doc stubs) — recoverable via `git stash list`; drop when sure. This stash does NOT travel to the other laptop.
 
 ---
 
@@ -66,6 +86,7 @@ Resolutions (chose **Option A: historical IV surface**, verified feasible — Al
 
 ## Known bugs & gaps
 
+- **9 stale tests in `tools/tests/test_harness.py` FAIL** — they exercise the pre-v3 backtest API (`advance_bar`, `record_decision`, `harness.record_tool_call`, `start(timeframe=...)`) which the v3 rewrite (`db878ef`) replaced (`advance_to_next_day`/`load_day_bars`/`step_bar`, `monitor_timeframe=`). Not a live-code bug; tests were never migrated. Suite is therefore 198 pass / 9 fail. Fix: migrate the tests to the v3 API, or they'll be superseded when the Phase-4 engine replaces the harness.
 - **`place_multileg_order` qty hardcoded to 1** (`tools/broker/alpaca.py:689`) — ignores agent-computed contract count; always trades 1 spread. Safe for testing, must fix before production sizing.
 - **`HARD_SPREAD_WIDTH` gate unreliable on Alpaca INDICATIVE paper feed** — synthetic quotes produce noisy/too-wide net spreads. Needs real OPRA data to validate spread-width gates accurately.
 - **Backtest does not yet share full live code path** — `backtest_enter`/`backtest_exit` are separate MCP tools from `place_order`/`place_multileg_order`. The new engine design fixes this (route through the same tools via SimulationBroker).
