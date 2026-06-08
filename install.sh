@@ -33,6 +33,9 @@ install_hermes() {
 
     run mkdir -p "$PROFILE_DIR"
     run cp "$REPO_DIR/SOUL.md" "$PROFILE_DIR/SOUL.md"
+    # OPERATING_MANUAL.md is the constitution SOUL.md says to READ FIRST — the
+    # agent is non-functional without it. Must be installed alongside SOUL.md.
+    run cp "$REPO_DIR/OPERATING_MANUAL.md" "$PROFILE_DIR/OPERATING_MANUAL.md"
     run cp "$REPO_DIR/config.yaml" "$PROFILE_DIR/config.yaml"
     run cp "$REPO_DIR/mcp.json" "$PROFILE_DIR/mcp.json"
     run cp "$REPO_DIR/distribution.yaml" "$PROFILE_DIR/distribution.yaml"
