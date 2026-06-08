@@ -44,7 +44,7 @@ PREFLIGHT CHECKLIST
 [ ] 5. Crash recovery decision      → if positions exist, jump to MONITOR phase, skip new entries
 [ ] 6. get_portfolio_state()        → cross-check broker vs local DB; reconcile if drift
 [ ] 7. Compute current mode (§1)
-[ ] 8. Load today's strategy SOP    → e.g. sops/day-trade-momentum/v1.0.0.md
+[ ] 8. Load today's strategy SOP    → e.g. sops/equity/intraday-momentum/v1.0.0.md
 [ ] 9. Confirm market is open       → use Alpaca clock; halt on early close / holiday
 [ ] 10. log_decision(action="preflight_complete", ...)
 ```

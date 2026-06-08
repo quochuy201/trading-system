@@ -1,10 +1,10 @@
 # Options Due Diligence — Reference
 
 > **DEPRECATED (2026-05-31).** Superseded by [`options-vol-edge-dd.md`](options-vol-edge-dd.md)
-> and [`sops/options-vol-edge/v1.0.0.md`](../../../sops/options-vol-edge/v1.0.0.md). The
+> and [`sops/options/vol-edge/v1.0.0.md`](../../../sops/options/vol-edge/v1.0.0.md). The
 > single-leg directional approach below is retained for reference only and is re-homed
 > (leashed, ≤ 3% total heat) as **Engine B's single-leg lane** in the vol-edge SOP. **Do not
-> use this file for live decisions** — route the `options-vol-edge` SOP to `options-vol-edge-dd.md`.
+> use this file for live decisions** — route the `options/vol-edge` SOP to `options-vol-edge-dd.md`.
 
 ## The Options-Specific Layers (on top of base 5-layer stack)
 

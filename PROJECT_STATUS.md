@@ -13,14 +13,14 @@ Last updated: 2026-06-05 · Branch: `main` · Tests: 208 passing
 ### Core trading system (Phase 0 — pre-options)
 - **OPERATING_MANUAL.md** — the constitution: modes (NORMAL/DEFENSIVE/HALTED), sizing math (Kelly + expectancy), staircase risk limits, circuit breakers, EOD reflection.
 - **Agents** (`SOUL.md` + `skills/*/SKILL.md`): Orchestrator, Research, Trader, Monitor, Risk Manager, EOD Review, Backtest.
-- **Equity day-trade strategy**: `sops/day-trade-momentum/` — catalyst-driven momentum, score-based sizing.
+- **Equity day-trade strategy**: `sops/equity/intraday-momentum/` — catalyst-driven momentum, score-based sizing.
 - **MCP tools** (`tools/server.py`): broker (place_order, positions, account), data (market data, historical, indicators), risk (kill switch, daily limits, portfolio risk, position size), persistence (trade plans, transactions, decisions ledger), scanner, social sentiment.
 - **Broker adapters** (`tools/broker/`): `adapter.py` (abstract) → `alpaca.py` (live/paper) + `simulation.py` (backtest). Global `_broker` swapped during backtest.
 - **Backtest v3 harness** (`tools/backtest/harness.py`): equity-only, daily-cycle bar replay, mechanical exits + LLM-on-events. **No-look-ahead guard** = clock-bounded data queries (`query_price_data(end=current_time)`); **entry-timing guard** = `_fill_price_bar` fills at next bar's open, not decision-bar close.
 
 ### Options Vol-Edge — Phases 1 & 2 COMPLETE
 - **Phase 1 (SOP + agent behavior, markdown)** — merged `9a44cc5`:
-  - `sops/options-vol-edge/v1.0.0.md` — Engine A (vol-edge credit/debit spreads) + Engine B (big-fish momentum debit spreads + leashed single-leg longs). Defined-risk only.
+  - `sops/options/vol-edge/v1.0.0.md` — Engine A (vol-edge credit/debit spreads) + Engine B (big-fish momentum debit spreads + leashed single-leg longs). Defined-risk only.
   - DD reference, trader/monitor skill updates, `ROADMAP.md`, `HANDOFF.md`.
 - **Phase 2 (MCP tooling)** — commits `8d5882a`..`3cd74e4`:
   - `tools/analysis/options.py` — pure fns: parse_occ_symbol, calc_iv_rank, calc_hv, calc_put_skew (IV **points**), calc_expected_move, black_scholes_price, implied_vol_from_price (BSM inversion).
@@ -92,4 +92,4 @@ Future strategy versions: v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1
 - `OPERATING_MANUAL.md` — risk constitution.
 - `docs/AGENT_EVOLUTION_STANDARD.md` — how the agent learns/remembers safely (frozen-model = externalized learning; four-store separation; Tier 1/2/3 trust; runtime-trust memory). **Includes a "Deployment on Hermes" section**: Hermes (Nous Research) auto-generates SKILL.md + has a Curator; its autonomous skill-promotion MUST be gated through human ratification for risk-bearing behavior. Read before wiring any memory/learning loop or deploying to Hermes.
 - `docs/specs/` — design + implementation-plan docs per feature.
-- `sops/options-vol-edge/HANDOFF.md` + `ROADMAP.md` — options program detail.
+- `sops/options/vol-edge/HANDOFF.md` + `ROADMAP.md` — options program detail.

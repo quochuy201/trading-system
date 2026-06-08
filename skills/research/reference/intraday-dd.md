@@ -18,4 +18,4 @@
 
 ## Reference
 
-See `sops/day-trade-momentum/v1.0.0.md` for the existing intraday strategy SOP which covers much of this. This reference file will extract the reusable DD patterns for any intraday strategy.
+See `sops/equity/intraday-momentum/v1.0.0.md` for the existing intraday strategy SOP which covers much of this. This reference file will extract the reusable DD patterns for any intraday strategy.

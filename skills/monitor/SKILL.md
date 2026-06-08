@@ -178,7 +178,7 @@ Call `log_decision` at these points:
 
 ## Options Exit Loop (Cross-Day — 15:30 ET Daily)
 
-This section governs monitoring of open **options positions** under the `options-vol-edge` SOP. It is a separate loop from the equity day-trade monitoring above and runs once per day at **15:30 ET**.
+This section governs monitoring of open **options positions** under the `options/vol-edge` SOP. It is a separate loop from the equity day-trade monitoring above and runs once per day at **15:30 ET**.
 
 ### Overnight Hold — No 15:45 Flatten
 

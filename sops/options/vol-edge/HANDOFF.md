@@ -12,10 +12,10 @@ is fully authored, reviewed, and merged. The agent now has a complete, unambiguo
 trading the options book; it cannot **execute** until Phase 2 builds the tooling.
 
 ### Phase 1 deliverables (all on `main`)
-- `sops/options-vol-edge/v1.0.0.md` — the SOP (Phases 1–7: scan, structure/strike, scoring, sizing, entry gates, exit framework, journal/versioning).
-- `sops/options-vol-edge/ROADMAP.md` — version ladder (v1.0.0→v1.3.0) + 4-phase program.
+- `sops/options/vol-edge/v1.0.0.md` — the SOP (Phases 1–7: scan, structure/strike, scoring, sizing, entry gates, exit framework, journal/versioning).
+- `sops/options/vol-edge/ROADMAP.md` — version ladder (v1.0.0→v1.3.0) + 4-phase program.
 - `skills/research/reference/options-vol-edge-dd.md` — Research DD reference (scan + scoring rubrics).
-- `skills/research/SKILL.md` — routes `options-vol-edge` SOP → the new DD reference.
+- `skills/research/SKILL.md` — routes `options/vol-edge` SOP → the new DD reference.
 - `skills/trader/SKILL.md` — options execution (structure selection, conviction sizing, multi-leg placement).
 - `skills/monitor/SKILL.md` — cross-day (15:30 ET) options exit loop.
 - `skills/research/reference/options-dd.md` — marked DEPRECATED (superseded).

@@ -238,7 +238,7 @@ After execution, report:
 ## Options Execution — Vol-Edge SOP
 
 This section applies when the Research agent delivers a scored options candidate under
-`sops/options-vol-edge/v1.0.0.md`. The equity execution flow above does NOT apply to options
+`sops/options/vol-edge/v1.0.0.md`. The equity execution flow above does NOT apply to options
 positions. Work through the steps below in order.
 
 ### Step O-1: Confirm the candidate is ready
@@ -252,7 +252,7 @@ If any of these is absent, send back to Research. Do not guess.
 
 ### Step O-2: Select structure, strikes, and expiry
 
-Apply `sops/options-vol-edge/v1.0.0.md` Phase 2 rules. Key selection rules are:
+Apply `sops/options/vol-edge/v1.0.0.md` Phase 2 rules. Key selection rules are:
 
 **Structure from vol signal × regime (Engine A):**
 

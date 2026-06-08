@@ -63,8 +63,14 @@ cd tools && uv run server.py
 │   │       └── prediction-markets-dd.md
 │   ├── trader/SKILL.md      # Trader agent (plan + execute)
 │   └── monitor/SKILL.md     # Monitor agent (track + exit)
-├── sops/                    # Strategy SOPs (versioned)
-│   └── day-trade-momentum/
+├── sops/                    # Strategy SOPs (versioned, by market)
+│   ├── equity/
+│   │   └── intraday-momentum/
+│   │       └── v1.0.0.md
+│   ├── options/
+│   │   └── vol-edge/
+│   │       └── v1.0.0.md
+│   └── _routing/            # strategy eligibility + setup routing
 │       └── v1.0.0.md
 ├── cron/                    # Scheduled jobs
 │   ├── market-scan.json     # 9:45 AM ET — scan + trade

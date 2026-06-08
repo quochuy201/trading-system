@@ -282,7 +282,7 @@ Load the appropriate reference file based on what market you're researching:
 
 - `reference/equities-dd.md` — Stock/equity due diligence specifics
 - `reference/options-dd.md` — Options contract quality, IV, greeks, DTE (general options research)
-- `reference/options-vol-edge-dd.md` — **When the active SOP is `options-vol-edge`**: use this file instead of `options-dd.md`. Covers the two-engine scan (IVR routing, RS63 regime gate, liquidity/earnings gates), Engine A vs Engine B classification, both 0–100 scoring rubrics, and the output format.
+- `reference/options-vol-edge-dd.md` — **When the active SOP is `options/vol-edge`**: use this file instead of `options-dd.md`. Covers the two-engine scan (IVR routing, RS63 regime gate, liquidity/earnings gates), Engine A vs Engine B classification, both 0–100 scoring rubrics, and the output format.
 - `reference/crypto-dd.md` — Crypto-specific factors (on-chain, tokenomics)
 - `reference/prediction-markets-dd.md` — Event probability, resolution criteria
 
