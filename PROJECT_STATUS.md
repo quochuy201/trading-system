@@ -71,8 +71,10 @@ CONSTRUCTION; **all changes BACKTEST-DERIVED-IN-SAMPLE, out-of-sample required.*
    scripts/load_backtest_week.py --daily-start 2025-03-01 --daily-end 2026-02-28
    --hourly-start 2026-01-20 --hourly-end 2026-02-28` then agent loop Jan 26 –
    Feb 27, 2026 under v1.1.0 (no retuning allowed on this window).
-2. HUMAN DECISION: add Engine S (short mean-reversion, Bensdorp Sys-2/6)?
-   Long-only structurally cannot hit $500/wk in correction months.
+2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — user directive:
+   develop the long side first; when the regime is not ideal for longs, the
+   system SKIPS (sits in cash — routing §1 already enforces this). Revisit
+   Engine S after long-side validation.
 3. Universe expansion (criteria-based) to cure R fill starvation (~6 limit
    orders → 1 fill on 67 mega-caps).
 
