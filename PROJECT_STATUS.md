@@ -78,11 +78,21 @@ mode + fill-relative stops/targets.
 **Cumulative:** v1.0.0 in-sample 0-33% WR / negative · v1.1.0 OOS 80% WR /
 positive. n=5 — claim is "positive expectancy on unseen data," not "80% true".
 
+**UNIVERSE EXPANSION PREPPED (code complete, data load pending):**
+`scripts/load_universe.py` (criteria-based: Alpaca assets → fund filters →
+June-2025 liquidity gate $10-500/$50M ADV (pre-window, no look-ahead) → top
+400 by dollar vol → daily history + `tools/universe_backtest.json`). Scan
+tools (`scan_for_candidates`, `scan_swing_candidates`) auto-resolve the
+universe from that file when present — shared live+backtest path. Skills
+synced to swing v1.1.0 / routing v1.1.0. week_runner has 11 mechanics tests.
+Suite: 243 pass.
+
 **NEXT STEPS:**
-1. **Universe expansion** (the binding constraint is trade FREQUENCY:
-   ~0.6 trades/wk → ≈$144/wk vs $500/wk target). Criteria-based larger
-   universe (~300-400 liquid names), risk stays 1%/trade. Needs a bigger
-   data load (user's machine) + possibly batched scanning.
+1. **USER RUNS (sandbox can't reach Alpaca):** `cd tools && uv run python
+   scripts/load_universe.py` — then rerun OOS windows A (Aug 25-Sep 24) +
+   B (Sep 22-Oct 24) on the expanded universe, v1.1.0 UNCHANGED. Question
+   under test: does frequency scale toward $500/wk while OOS WR (80%, n=5)
+   and loss discipline hold?
 2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — develop long side
    first; hostile regime → sit in cash (routing §1 enforces).
 3. Later: Jan-Feb 2026 OOS window (needs hourly or daily refresh through Feb),
