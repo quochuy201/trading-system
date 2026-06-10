@@ -49,9 +49,10 @@ All 10 items must pass. Failure of any item → HALTED.
         a. get_market_regime("SPY")  → regime snapshot
         b. Read config.yaml strategies.enabled; keep only those whose
            `market` matches this session's --market scope
-        c. Apply sops/_routing/v1.0.0 §1 to the snapshot → {id: ON|OFF}
+        c. Apply sops/_routing/v1.1.0 §1 to the snapshot → {id: ON|OFF|R-ONLY|M-ONLY}
            (null signal → OFF; most-restrictive wins; HALTED mode → empty set;
-            DEFENSIVE mode → keep set, DEFENSIVE sizing applies to every entry)
+            DEFENSIVE mode → keep set, DEFENSIVE sizing applies to every entry;
+            engine-valued cells restrict equity/swing to that engine only)
         d. log_decision(action="strategy_eligibility",
              rules_triggered=[matched §1 rows], reasoning=<regime summary>)
 [ ] 9. Confirm market is open     → halt on early close / holiday

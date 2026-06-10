@@ -61,7 +61,7 @@ For each open position, compare current price against the trade plan:
 
 ### Engine-aware exit profiles (swing positions)
 
-Swing trade plans carry an `engine` field (`sops/equity/swing/v1.0.0.md` shared
+Swing trade plans carry an `engine` field (`sops/equity/swing/v1.1.0.md` shared
 rule 3). The exit profile DIFFERS by engine — applying the wrong one destroys
 the engine's edge:
 

@@ -25,7 +25,7 @@ The Research agent scans a broad universe and filters down. Start wide, filter a
 | Market cap | > $1B | Institutional interest, less manipulation |
 | Listed exchange | NYSE, NASDAQ, AMEX | Regulated, reliable data |
 
-### Swing Trade Scan — Two Engines (SOP: `sops/equity/swing/v1.0.0.md`)
+### Swing Trade Scan — Two Engines (SOP: `sops/equity/swing/v1.1.0.md`)
 
 Call `scan_swing_candidates()` — it applies the SOP's mechanical gates and
 returns both engine verdicts per symbol. **The scanner gates; you decide.**
@@ -45,8 +45,9 @@ Your jobs after the scan, per the SOP:
    - STRUCTURAL break: fraud/accounting, guidance cut, regulatory action, key
      customer loss, secular demand break → **VETO, log "R-G7-FAIL"**
 5. **Entry discipline** (non-negotiable): M = next-open market order, skip if
-   gap up >5% or down >3%. R = limit 3% below previous close, day-only; no
-   fill = no trade. Never chase a missed R fill.
+   gap up >5% or down >3%. R = limit **0.5×ATR10% below previous close**
+   (ATR-scaled, SOP v1.1.0), day-only; no fill = no trade. Never chase a
+   missed R fill.
 6. **Reentry**: a re-qualifying setup after a stop-out is a NEW valid trade
    (Bensdorp ch.6 §9) — max 2 entries per symbol per week.
 
@@ -93,7 +94,7 @@ strategy set from the Risk-Manager. Do NOT re-read regime — use the snapshot
 given (single source of truth).
 
 For each candidate from the scan:
-1. Classify it against sops/_routing/v1.0.0 §2 (setup signature → strategy).
+1. Classify it against sops/_routing/v1.1.0 §2 (setup signature → strategy/engine).
 2. If the matched strategy is NOT in the eligible set → DROP, log
    action="skip", reasoning="ineligible: <regime reason>".
 3. If no §2 signature matches → DROP, log "unroutable".

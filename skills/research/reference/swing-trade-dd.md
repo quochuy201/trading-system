@@ -1,6 +1,6 @@
 # Swing Trade Due Diligence — engine-aware rubric
 
-**Pairs with `sops/equity/swing/v1.0.0.md`** (two-engine: M momentum / R
+**Pairs with `sops/equity/swing/v1.1.0.md`** (two-engine: M momentum / R
 mean-reversion). The scanner (`scan_swing_candidates`) has already applied the
 mechanical gates before you see a candidate. This rubric scores what the
 scanner CANNOT measure plus trade geometry. Score each candidate 0–100 under

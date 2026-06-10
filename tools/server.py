@@ -2261,7 +2261,7 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
     if symbols.strip():
         symbol_list = [s.strip() for s in symbols.split(",")]
     else:
-        symbol_list = broker.get_tradeable_universe()
+        symbol_list = _universe_symbols(broker)
 
     if "SPY" not in symbol_list:
         symbol_list.append("SPY")
@@ -2293,6 +2293,25 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
         "passed": len(candidates),
     })
+
+
+def _universe_symbols(broker) -> list[str]:
+    """Resolve the scan universe: criteria-based file if present, else broker list.
+
+    tools/universe_backtest.json is produced by scripts/load_universe.py
+    (price/ADV gates, no hand-picked list) and is shared by live + backtest
+    so both scan the same names.
+    """
+    uni_file = Path(__file__).parent / "universe_backtest.json"
+    if uni_file.exists():
+        try:
+            data = json.loads(uni_file.read_text())
+            syms = data.get("symbols", [])
+            if syms:
+                return list(syms)
+        except Exception:
+            pass
+    return broker.get_tradeable_universe()
 
 
 @mcp.tool()
@@ -2330,7 +2349,7 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     if symbols.strip():
         symbol_list = [s.strip() for s in symbols.split(",")]
     else:
-        symbol_list = broker.get_tradeable_universe()
+        symbol_list = _universe_symbols(broker)
     if "SPY" not in symbol_list:
         symbol_list.append("SPY")
 
