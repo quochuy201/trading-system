@@ -1,7 +1,9 @@
 # tools/tests/test_regime.py
 """Tests for the pure market-regime signal function."""
+import json
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -76,3 +78,86 @@ class TestRegime:
         self.repo.save_price_bars(_bars("R22", [100 + i for i in range(22)]))
         r22 = compute_market_regime(self.repo, "R22", "2026-01-01", "2026-12-31")
         assert r22["spy_tr_atr"] == 1.0
+
+
+class TestGetMarketRegimeTool:
+    """Tool-level tests for the iv_rank_spy wiring in server.get_market_regime."""
+
+    def _setup(self):
+        import server
+        from broker.retry import RetryConfig
+        mock_broker = MagicMock()
+        mock_broker.current_time = None  # live path: clock = now
+        server._broker = mock_broker
+        server._kill_switch_state = {"active": False, "triggered_at": None, "reason": None}
+        server._harness = None
+        server._retry_config = RetryConfig(max_retries=0, base_delay=0)  # no sleeps in tests
+        repo = Repository(":memory:")
+        server._repo = repo
+        return mock_broker, repo
+
+    def _atm_chain(self, iv: float = 0.25) -> list[dict]:
+        return [{
+            "symbol": "SPY260620C00600000",
+            "underlying": "SPY",
+            "strike": 600.0,
+            "type": "C",
+            "expiration": "260620",
+            "dte": 18,
+            "bid": 2.50, "ask": 2.60, "mid": 2.55,
+            "volume": 100, "open_interest": 0,
+            "iv": iv,
+            "greeks": {"delta": 0.50, "gamma": 0.03, "theta": -0.05,
+                       "vega": 0.12, "rho": 0.01},
+        }]
+
+    def test_iv_rank_spy_sourced_when_history_available(self):
+        """With 70 cached IV points and a live chain, iv_rank_spy is populated."""
+        import server
+        mock_broker, repo = self._setup()
+
+        from datetime import date, timedelta
+        base = date(2026, 1, 1)
+        for i in range(70):
+            repo.save_iv_data("SPY", (base + timedelta(days=i)).isoformat(),
+                              0.15 + (i / 1000), "test")
+        mock_broker.get_option_chain.return_value = self._atm_chain(iv=0.25)
+
+        result = json.loads(server.get_market_regime("SPY"))
+
+        assert result["iv_rank_spy"] is not None
+        assert 0.0 <= result["iv_rank_spy"] <= 100.0
+
+    def test_iv_rank_spy_failsafe_null_when_chain_unavailable(self):
+        """Chain fetch failure (e.g. SimulationBroker stub) → iv_rank_spy null, no raise."""
+        import server
+        mock_broker, repo = self._setup()
+        mock_broker.get_option_chain.side_effect = NotImplementedError(
+            "options not supported in simulation")
+
+        result = json.loads(server.get_market_regime("SPY"))
+
+        assert result["iv_rank_spy"] is None
+
+    def test_iv_rank_spy_failsafe_null_on_insufficient_history(self):
+        """Chain OK but <60 IV points and bootstrap empty → iv_rank_spy null."""
+        import server
+        mock_broker, repo = self._setup()
+        mock_broker.get_option_chain.return_value = self._atm_chain(iv=0.25)
+        mock_broker.get_option_historical_iv.return_value = []
+
+        result = json.loads(server.get_market_regime("SPY"))
+
+        assert result["iv_rank_spy"] is None
+
+    def test_iv_rank_spy_skipped_in_backtest_mode(self):
+        """Sim clock set → IV path skipped entirely (no chain call, no retries)."""
+        import server
+        from datetime import datetime
+        mock_broker, repo = self._setup()
+        mock_broker.current_time = datetime(2026, 3, 2, 14, 30)
+
+        result = json.loads(server.get_market_regime("SPY"))
+
+        assert result["iv_rank_spy"] is None
+        mock_broker.get_option_chain.assert_not_called()

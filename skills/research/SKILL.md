@@ -94,8 +94,14 @@ For each candidate from the scan:
 2. If the matched strategy is NOT in the eligible set → DROP, log
    action="skip", reasoning="ineligible: <regime reason>".
 3. If no §2 signature matches → DROP, log "unroutable".
-4. Otherwise load that strategy's DD reference (sops/<id>/dd.md) and score
-   with THAT strategy's rubric.
+4. Otherwise load that strategy's DD reference from `reference/` (mapping
+   below) and score with THAT strategy's rubric.
+
+| Strategy id | DD reference |
+|---|---|
+| `equity/intraday-momentum` | `reference/equities-dd.md` (intraday specifics: `reference/intraday-dd.md`, placeholder) |
+| `equity/swing` | `reference/swing-trade-dd.md` |
+| `options/vol-edge` | `reference/options-vol-edge-dd.md` |
 
 ## The 5-Layer Due Diligence Stack
 

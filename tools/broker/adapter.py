@@ -89,7 +89,9 @@ class BrokerAdapter(ABC):
         order_type: str,
         limit_price: float | None = None,
         time_in_force: str = "day",
+        qty: int = 1,
     ) -> "TradeTransaction":
         """Place a multi-leg option order (spreads). Each leg: {symbol, side, ratio_qty}.
-        side values: buy_to_open, buy_to_close, sell_to_open, sell_to_close."""
+        side values: buy_to_open, buy_to_close, sell_to_open, sell_to_close.
+        qty = number of spread contracts (multiplies each leg's ratio_qty)."""
         ...

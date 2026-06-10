@@ -4,7 +4,20 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-07 · Branch: `refactor/sops-market-strategy-tree` → pushed to `feature/strategy-routing` (PR #1) · Tests: 198 passing, 9 pre-existing harness failures (see Known gaps)
+Last updated: 2026-06-09 · Branch: `main` (local, ahead of origin/main; PR #1 = `feature/strategy-routing`) · Tests: 221 passing, 0 failures
+
+---
+
+## ⏩ Session handoff — 2026-06-09 (routing blockers 1+2 cleared, bug fixes)
+
+**Shipped this session (commit `34cd106` on local `main` — push before switching machines):**
+1. **Routing blocker 1 FIXED — `iv_rank_spy` sourced.** Extracted shared `_compute_iv_rank()` in `tools/server.py` (used by both the `calc_iv_rank` tool and `get_market_regime`). `get_market_regime` now injects SPY IV-rank; any failure → null (fail-safe). **Skipped entirely in backtest mode** — SimulationBroker options stubs raise NotImplementedError and `with_retry` (10 attempts, exp backoff) would have stalled replay ~10 min per call. Phase-4 engine will serve it from the historical IV surface. Tests: `tests/test_regime.py::TestGetMarketRegimeTool` (4 cases incl. backtest-skip).
+2. **Routing blocker 2 FIXED — research DD pointer.** `skills/research/SKILL.md` routing step now has an explicit strategy-id → `reference/*-dd.md` mapping table (was a dangling `sops/<id>/dd.md` pointer). Chose pointer-fix over co-locating dd.md per strategy (no install-path churn).
+3. **`place_multileg_order` qty unhardcoded.** New `qty` param (default 1) plumbed through MCP tool → adapter ABC → alpaca.py (`tools/broker/alpaca.py`); validates qty ≥ 1 at both layers; ledger quantity = qty × Σratio_qty. Trader skill Step O-5 now says to pass the Step O-4 `contracts` count as `qty`. 7 new tests.
+4. **9 stale harness tests migrated.** `tests/test_harness.py` rewritten against the v3 API (start/advance_to_next_day/load_day_bars/step_bar) — 14 tests covering every mechanical exit rule (stop next-bar-open, target-exact-price, trailing arm+break, time stop), event detection, and a 2-day end-to-end run. Suite: **221 pass / 0 fail.**
+
+**Remaining before routing can trade (was 3 blockers, now 1):**
+- **End-to-end validation** — run the golden cases (`docs/plans/2026-06-06-routing-golden-cases.md`) on paper; then Phase-4 gate-vs-control backtest to tighten the PLACEHOLDER thresholds.
 
 ---
 
@@ -18,8 +31,8 @@ Last updated: 2026-06-07 · Branch: `refactor/sops-market-strategy-tree` → pus
 3. **install.sh fixes** — (a) merge-copy so skills/sops/cron don't nest under an existing Curator profile; (b) now copies `OPERATING_MANUAL.md` into the profile (was missing — agent ran without its constitution). **Verified on the Hermes profile**: nested sops install intact, every skill path-ref resolves, config ids resolve, no stale paths.
 
 **Routing is WIRED but GATED OFF — 3 blockers before it can actually trade (in priority order):**
-1. **`iv_rank_spy` unsourced** → `get_market_regime` returns it `null`, so every §1 "ON" row fails-safe → **eligible set is always empty** → routing STOPs every run. Fix: compute SPY IV-rank via existing `calc_iv_rank` + `iv_history`, inject in the `get_market_regime` tool. (Restructure already closed the id-seam blocker.)
-2. **Research DD pointer dangling** — `skills/research/SKILL.md` routing block says load `sops/<id>/dd.md`, but DD lives at `skills/research/reference/*-dd.md`. Either co-locate `dd.md` per strategy, or fix the instruction to point at `reference/`.
+1. ~~**`iv_rank_spy` unsourced**~~ → **FIXED 2026-06-09** (see handoff above).
+2. ~~**Research DD pointer dangling**~~ → **FIXED 2026-06-09** (mapping table in research SKILL.md).
 3. **No end-to-end validation** — run the golden cases (`docs/plans/2026-06-06-routing-golden-cases.md`) on paper; then Phase-4 gate-vs-control backtest to tighten the PLACEHOLDER thresholds.
 
 **Other open items:** swing SOP still doesn't exist (`sops/equity/swing/` reserved); Phase-4 backtest engine still just a spec; `iv_rank_spy` + `catalyst_density` deferred.
@@ -86,8 +99,8 @@ Resolutions (chose **Option A: historical IV surface**, verified feasible — Al
 
 ## Known bugs & gaps
 
-- **9 stale tests in `tools/tests/test_harness.py` FAIL** — they exercise the pre-v3 backtest API (`advance_bar`, `record_decision`, `harness.record_tool_call`, `start(timeframe=...)`) which the v3 rewrite (`db878ef`) replaced (`advance_to_next_day`/`load_day_bars`/`step_bar`, `monitor_timeframe=`). Not a live-code bug; tests were never migrated. Suite is therefore 198 pass / 9 fail. Fix: migrate the tests to the v3 API, or they'll be superseded when the Phase-4 engine replaces the harness.
-- **`place_multileg_order` qty hardcoded to 1** (`tools/broker/alpaca.py:689`) — ignores agent-computed contract count; always trades 1 spread. Safe for testing, must fix before production sizing.
+- ~~9 stale tests in test_harness.py~~ — **FIXED 2026-06-09**: rewritten against the v3 API; suite 221 pass / 0 fail.
+- ~~`place_multileg_order` qty hardcoded to 1~~ — **FIXED 2026-06-09**: `qty` param plumbed tool→adapter→alpaca; validated ≥ 1. NOTE: live order with qty > 1 not yet exercised on paper (only qty=1 spread has been placed for real).
 - **`HARD_SPREAD_WIDTH` gate unreliable on Alpaca INDICATIVE paper feed** — synthetic quotes produce noisy/too-wide net spreads. Needs real OPRA data to validate spread-width gates accurately.
 - **Backtest does not yet share full live code path** — `backtest_enter`/`backtest_exit` are separate MCP tools from `place_order`/`place_multileg_order`. The new engine design fixes this (route through the same tools via SimulationBroker).
 - **Options simulation methods are stubs** — `simulation.py` options methods raise NotImplementedError pending the backtest engine.

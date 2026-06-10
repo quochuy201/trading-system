@@ -354,6 +354,8 @@ Full sizing-framework rationale in SOP Phase 4 and `OPERATING_MANUAL.md §3`.
 
 **Multi-leg spreads (bull put, bear call, debit vertical, momentum debit spread):**
 
+- Pass the `contracts` count from Step O-4 as the order's `qty` (number of spreads).
+  Never leave it defaulted — a sizing decision that isn't in the order didn't happen.
 - Place as a **single limit order at the net mid price — NEVER use market orders on spreads.**
   The bid-ask gap makes market fills unacceptable.
 - **Credit spreads:** start $0.05–$0.10 better than mid (collect slightly more than mid).

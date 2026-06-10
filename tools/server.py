@@ -271,11 +271,25 @@ def get_market_regime(index_symbol: str = "SPY", vix_symbol: str = "") -> str:
         except Exception:
             vix = None
 
-    # iv_rank_spy deferred to a follow-up; pass None for now.
+    # SPY IV-rank via the shared calc_iv_rank path (best-effort; null on any
+    # failure — the routing SOP treats null as fail-safe restrictive).
+    # Skipped entirely in backtest: SimulationBroker options methods are
+    # NotImplementedError stubs, and retrying them would stall the replay.
+    # The Phase-4 engine will serve this from the historical IV surface.
+    iv_rank_spy = None
+    in_backtest = bool(getattr(broker, "current_time", None))
+    if not in_backtest:
+        try:
+            iv_res = _compute_iv_rank(index_symbol, broker, repo)
+            if "error" not in iv_res:
+                iv_rank_spy = iv_res.get("iv_rank")
+        except Exception:
+            iv_rank_spy = None
+
     snapshot = compute_market_regime(
         repo, index_symbol,
         start=start_dt.isoformat(), end=end_dt.isoformat(),
-        vix=vix, iv_rank_spy=None,
+        vix=vix, iv_rank_spy=iv_rank_spy,
     )
     return json.dumps(snapshot)
 
@@ -1398,21 +1412,31 @@ def calc_iv_rank(symbol: str) -> str:
     {"error": "Insufficient IV history for AAPL (need 60+ data points, have 12)"}
     """
     _track_tool("calc_iv_rank")
-    from analysis.options import calc_iv_rank as _calc_iv_rank
-
     broker = get_broker()
     repo = get_repo()
+    return json.dumps(_compute_iv_rank(symbol, broker, repo))
+
+
+def _compute_iv_rank(symbol: str, broker, repo) -> dict:
+    """Shared IV-rank computation used by the calc_iv_rank tool and
+    get_market_regime (iv_rank_spy signal).
+
+    Returns the full result dict on success, or {"error": "..."} on any
+    failure (callers needing fail-safe null check for the "error" key).
+    """
+    from analysis.options import calc_iv_rank as _calc_iv_rank
+
     today = datetime.now().strftime("%Y-%m-%d")
 
     # Get current ATM IV from chain
     try:
         chain = with_retry(broker.get_option_chain, _retry_config)(underlying=symbol)
     except Exception as e:
-        return json.dumps({"error": f"Failed to fetch chain for {symbol}: {str(e)}"})
+        return {"error": f"Failed to fetch chain for {symbol}: {str(e)}"}
 
     current_iv = _get_atm_iv(chain)
     if current_iv is None:
-        return json.dumps({"error": f"Could not determine ATM IV for {symbol} from chain"})
+        return {"error": f"Could not determine ATM IV for {symbol} from chain"}
 
     # Cache today's IV
     repo.save_iv_data(symbol, today, current_iv, "snapshot")
@@ -1426,22 +1450,22 @@ def calc_iv_rank(symbol: str) -> str:
     iv_history = repo.query_iv_history(symbol, min_days=60)
     if not iv_history:
         current_count = repo.count_iv_history(symbol)
-        return json.dumps({
+        return {
             "error": f"Insufficient IV history for {symbol} (need 60+ data points, have {current_count})"
-        })
+        }
 
     rank = _calc_iv_rank(current_iv, iv_history)
     iv_high = max(iv_history)
     iv_low = min(iv_history)
 
-    return json.dumps({
+    return {
         "symbol": symbol,
         "iv_rank": round(rank, 1),
         "current_iv": round(current_iv, 4),
         "iv_high_52w": round(iv_high, 4),
         "iv_low_52w": round(iv_low, 4),
         "data_points": len(iv_history),
-    })
+    }
 
 
 @mcp.tool()
@@ -1622,22 +1646,25 @@ def place_multileg_order(
     order_type: str,
     limit_price: float | None = None,
     plan_id: str = "",
+    qty: int = 1,
 ) -> str:
     """Place a multi-leg option order (vertical spreads, iron condors, etc.). Blocked when kill switch is active.
 
     When to use: Trader agent executing option spread entries or exits. The legs
     parameter is a JSON string containing a list of leg dicts, each with
     symbol, side (buy_to_open/buy_to_close/sell_to_open/sell_to_close), and ratio_qty.
+    qty = number of spread contracts to trade (from your position-sizing math);
+    the broker multiplies each leg's ratio_qty by it.
 
     Sample input:
     place_multileg_order(
         '[{"symbol":"AAPL260620C00230000","side":"buy_to_open","ratio_qty":1},{"symbol":"AAPL260620C00240000","side":"sell_to_open","ratio_qty":1}]',
-        "limit", 1.50, "plan-opts-001"
+        "limit", 1.50, "plan-opts-001", 3
     )
 
     Expected output:
     {"transaction_id": "abc-123", "plan_id": "plan-opts-001", "order_class": "mleg",
-     "order_type": "limit", "limit_price": 1.50, "status": "submitted",
+     "order_type": "limit", "limit_price": 1.50, "qty": 3, "status": "submitted",
      "legs": [...], "broker_order_id": "xyz-789", "timestamp": "2026-06-02T10:30:00"}
 
     If kill switch active:
@@ -1658,12 +1685,20 @@ def place_multileg_order(
     if not parsed_legs or not isinstance(parsed_legs, list):
         return json.dumps({"error": "legs must be a non-empty JSON array of leg dicts"})
 
+    try:
+        qty = int(qty)
+    except (TypeError, ValueError):
+        return json.dumps({"error": f"qty must be an integer >= 1, got {qty!r}"})
+    if qty < 1:
+        return json.dumps({"error": f"qty must be an integer >= 1, got {qty}"})
+
     broker = get_broker()
     try:
         tx = with_retry(broker.place_multileg_order, _retry_config)(
             legs=parsed_legs,
             order_type=order_type,
             limit_price=limit_price,
+            qty=qty,
         )
     except Exception as e:
         return json.dumps({"error": f"Multi-leg order failed: {str(e)}"})
@@ -1695,6 +1730,7 @@ def place_multileg_order(
         "order_class": "mleg",
         "order_type": order_type,
         "limit_price": limit_price,
+        "qty": qty,
         "status": tx.status,
         "legs": parsed_legs,
         "broker_order_id": tx.broker_order_id,

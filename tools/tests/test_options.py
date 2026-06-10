@@ -639,6 +639,58 @@ class TestAlpacaOptionsAdapter:
         except ValueError as e:
             assert "bad_side" in str(e)
 
+    def test_place_multileg_order_qty_passthrough(self):
+        """qty is forwarded to the order request (not hardcoded to 1)."""
+        adapter = _make_alpaca_adapter()
+
+        mock_order = MagicMock()
+        mock_order.id = "mleg-order-002"
+        mock_order.qty = "3"
+        mock_order.filled_avg_price = "1.03"
+        mock_order.status = MagicMock(value="accepted")
+        adapter.trading_client.submit_order.return_value = mock_order
+
+        legs = [
+            {"symbol": "QQQ260620P00650000", "side": "sell_to_open", "ratio_qty": 1},
+            {"symbol": "QQQ260620P00640000", "side": "buy_to_open", "ratio_qty": 1},
+        ]
+        tx = adapter.place_multileg_order(legs, order_type="limit", limit_price=1.03, qty=3)
+
+        order_req = adapter.trading_client.submit_order.call_args[0][0]
+        assert int(order_req.qty) == 3
+        assert tx.quantity == 6  # 3 spreads x 2 legs (ratio 1 each)
+
+    def test_place_multileg_order_qty_default_is_one(self):
+        """Omitting qty keeps the old single-spread behavior."""
+        adapter = _make_alpaca_adapter()
+
+        mock_order = MagicMock()
+        mock_order.id = "mleg-order-003"
+        mock_order.qty = "1"
+        mock_order.filled_avg_price = None
+        mock_order.status = MagicMock(value="submitted")
+        adapter.trading_client.submit_order.return_value = mock_order
+
+        legs = [
+            {"symbol": "QQQ260620P00650000", "side": "sell_to_open", "ratio_qty": 1},
+            {"symbol": "QQQ260620P00640000", "side": "buy_to_open", "ratio_qty": 1},
+        ]
+        adapter.place_multileg_order(legs, order_type="limit", limit_price=1.03)
+
+        order_req = adapter.trading_client.submit_order.call_args[0][0]
+        assert int(order_req.qty) == 1
+
+    def test_place_multileg_order_qty_invalid_raises(self):
+        """qty < 1 raises ValueError before any broker call."""
+        adapter = _make_alpaca_adapter()
+        legs = [{"symbol": "QQQ260620P00650000", "side": "sell_to_open", "ratio_qty": 1}]
+        try:
+            adapter.place_multileg_order(legs, order_type="limit", limit_price=1.0, qty=0)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "qty" in str(e)
+        assert not adapter.trading_client.submit_order.called
+
 
 # ---------------------------------------------------------------------------
 # TestMcpToolIntegration — test MCP tools in server.py with mocked broker
@@ -716,6 +768,47 @@ class TestMcpToolIntegration:
         assert data["broker_order_id"] == "broker-mleg-xyz"
         assert isinstance(data["legs"], list)
         assert len(data["legs"]) == 2
+        # qty defaults to 1 and is forwarded to the broker
+        assert data["qty"] == 1
+        assert mock_broker.place_multileg_order.call_args.kwargs["qty"] == 1
+
+    def test_place_multileg_order_qty_forwarded(self):
+        """Agent-computed qty reaches the broker adapter."""
+        import server
+        from models import TradeTransaction
+        mock_broker, repo = self._setup()
+
+        tx = TradeTransaction(
+            transaction_id="tx-mleg-002", plan_id="", symbol="QQQ", side="sell",
+            order_type="limit", quantity=6, price=1.03,
+            broker_order_id="broker-mleg-abc", status="submitted",
+        )
+        mock_broker.place_multileg_order.return_value = tx
+        mock_broker.get_account.return_value = {"equity": 100000, "cash": 90000, "buying_power": 180000}
+
+        legs_json = json.dumps([
+            {"symbol": "QQQ260620P00650000", "side": "sell_to_open", "ratio_qty": 1},
+            {"symbol": "QQQ260620P00640000", "side": "buy_to_open", "ratio_qty": 1},
+        ])
+        result = server.place_multileg_order(legs_json, "limit", 1.03, "", 3)
+
+        data = json.loads(result)
+        assert "error" not in data, f"Unexpected error: {data}"
+        assert data["qty"] == 3
+        assert mock_broker.place_multileg_order.call_args.kwargs["qty"] == 3
+
+    def test_place_multileg_order_qty_invalid_rejected(self):
+        """qty < 1 → error JSON, broker never called."""
+        import server
+        mock_broker, repo = self._setup()
+
+        legs_json = '[{"symbol":"QQQ260620P00650000","side":"sell_to_open","ratio_qty":1}]'
+        result = server.place_multileg_order(legs_json, "limit", 1.03, "", 0)
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "qty" in data["error"]
+        mock_broker.place_multileg_order.assert_not_called()
 
     def test_place_multileg_order_invalid_json(self):
         """Invalid legs JSON string → returns error with 'Invalid legs JSON'."""

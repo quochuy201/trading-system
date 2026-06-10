@@ -635,11 +635,13 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         order_type: str,
         limit_price: float | None = None,
         time_in_force: str = "day",
+        qty: int = 1,
     ) -> TradeTransaction:
         """Place a multi-leg option order (spreads).
 
         Each leg dict must include: symbol, side (buy_to_open/buy_to_close/
-        sell_to_open/sell_to_close), ratio_qty.
+        sell_to_open/sell_to_close), ratio_qty. `qty` is the number of spread
+        contracts to trade — the broker multiplies each leg's ratio_qty by it.
 
         Sample input:
             place_multileg_order(
@@ -655,6 +657,10 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         Expected output:
             TradeTransaction with broker_order_id, status="submitted"
         """
+        qty = int(qty)
+        if qty < 1:
+            raise ValueError(f"qty must be >= 1, got {qty}")
+
         _tif_map = {
             "day": TimeInForce.DAY,
             "gtc": TimeInForce.GTC,
@@ -686,7 +692,7 @@ class AlpacaBrokerAdapter(BrokerAdapter):
             "order_class": OrderClass.MLEG,
             "time_in_force": tif,
             "legs": option_legs,
-            "qty": 1,  # required for mleg; number of spread contracts to trade
+            "qty": qty,  # number of spread contracts to trade
             "side": OrderSide.BUY,  # required by base validator; direction is in position_intent
         }
 
@@ -704,7 +710,7 @@ class AlpacaBrokerAdapter(BrokerAdapter):
             symbol=legs[0]["symbol"] if legs else "MULTILEG",
             side=legs[0]["side"] if legs else "buy",
             order_type=order_type,
-            quantity=sum(int(leg["ratio_qty"]) for leg in legs),
+            quantity=qty * sum(int(leg["ratio_qty"]) for leg in legs),
             price=float(order.filled_avg_price) if order.filled_avg_price else 0.0,
             broker_order_id=str(order.id),
             status=str(order.status.value) if order.status else "submitted",
