@@ -61,6 +61,18 @@ def hour_bars(symbol, date):
     return [r for r in rows if 14 <= int(r[0][11:13]) <= 20]
 
 
+def day_session_bars(symbol, date, mode):
+    """Bars used to simulate one session: hourly list, or the single daily bar."""
+    if mode == "hourly":
+        return hour_bars(symbol, date)
+    rows = _conn().execute(
+        "select timestamp, open, high, low, close, volume from price_data "
+        "where symbol=? and timeframe='1Day' and timestamp like ?",
+        (symbol, f"{date}T%"),
+    ).fetchall()
+    return rows
+
+
 def prev_daily_close(symbol, date):
     bars = daily_bars(symbol, date)
     return float(bars[-1][4]) if bars else None
@@ -78,11 +90,11 @@ def save_state(s):
 # ---------------------------------------------------------------- commands
 def cmd_init(args):
     save_state({
-        "capital": args.capital, "cash": args.capital,
+        "capital": args.capital, "cash": args.capital, "bar_mode": args.bar_mode,
         "open": [], "closed": [], "pending_plans": [], "pending_exits": [],
         "log": [],
     })
-    print(json.dumps({"initialized": True, "capital": args.capital}))
+    print(json.dumps({"initialized": True, "capital": args.capital, "bar_mode": args.bar_mode}))
 
 
 def cmd_scan(args):
@@ -121,6 +133,7 @@ def cmd_plan(args):
         "date": args.date, "symbol": args.symbol, "engine": args.engine,
         "entry_type": args.entry_type, "limit_price": args.limit_price,
         "stop_price": args.stop_price, "atr10": args.atr10,
+        "stop_atr_mult": args.stop_atr_mult, "target_fill_pct": args.target_fill_pct,
         "target_price": args.target_price,           # intrabar target (M optional)
         "target_close_pct": args.target_close_pct,   # R: close >= fill*(1+pct) -> exit next open
         "time_stop_sessions": args.time_stop_sessions,
@@ -168,7 +181,7 @@ def cmd_run_day(args):
         pos = next((p for p in s["open"] if p["id"] == ex["id"]), None)
         if not pos:
             continue
-        bars = hour_bars(pos["symbol"], date)
+        bars = day_session_bars(pos["symbol"], date, s.get("bar_mode", "hourly"))
         if not bars:
             unexecuted.append(ex)  # no data this date — KEEP the exit queued
             continue
@@ -179,7 +192,7 @@ def cmd_run_day(args):
     # ---- 2. fill pending entry plans
     still_pending = []
     for plan in s["pending_plans"]:
-        bars = hour_bars(plan["symbol"], date)
+        bars = day_session_bars(plan["symbol"], date, s.get("bar_mode", "hourly"))
         prev_c = prev_daily_close(plan["symbol"], date)
         px, ts, skip = _try_fill(plan, bars, prev_c)
         if skip:
@@ -187,7 +200,13 @@ def cmd_run_day(args):
             continue
         equity = _equity(s, date)
         risk_dollars = equity * plan["risk_pct"] / 100
-        rps = px - plan["stop_price"]
+        stop_px = plan["stop_price"]
+        if plan.get("stop_atr_mult"):
+            stop_px = px - plan["stop_atr_mult"] * plan["atr10"]
+        target_px = plan["target_price"]
+        if plan.get("target_fill_pct"):
+            target_px = px * (1 + plan["target_fill_pct"] / 100)
+        rps = px - stop_px
         if rps <= 0:
             report["skipped"].append({"symbol": plan["symbol"], "reason": "stop>=fill"})
             continue
@@ -199,11 +218,11 @@ def cmd_run_day(args):
             "id": f"{plan['symbol']}-{date}", "symbol": plan["symbol"],
             "engine": plan["engine"], "shares": shares,
             "fill_price": round(px, 4), "fill_ts": ts, "fill_date": date,
-            "stop_price": plan["stop_price"], "atr10": plan["atr10"],
-            "target_price": plan["target_price"],
+            "stop_price": round(stop_px, 4), "atr10": plan["atr10"],
+            "target_price": round(target_px, 4) if target_px else None,
             "target_close_pct": plan["target_close_pct"],
             "time_stop_sessions": plan["time_stop_sessions"],
-            "trail": plan["trail"], "trailing_stop": plan["stop_price"],
+            "trail": plan["trail"], "trailing_stop": round(stop_px, 4),
             "highest_close": px, "prev_close": px, "sessions_held": 0,
             "risk_per_share": round(rps, 4), "reason": plan["reason"],
         }
@@ -214,7 +233,7 @@ def cmd_run_day(args):
     s["pending_plans"] = still_pending
 
     # ---- 3. hourly mechanical loop
-    day_bars = {p["symbol"]: hour_bars(p["symbol"], date) for p in s["open"]}
+    day_bars = {p["symbol"]: day_session_bars(p["symbol"], date, s.get("bar_mode", "hourly")) for p in s["open"]}
     max_n = max((len(b) for b in day_bars.values()), default=0)
     for i in range(max_n):
         for pos in list(s["open"]):
@@ -257,7 +276,7 @@ def cmd_run_day(args):
 
     # ---- 4. end of session: session counters, R close-target, time stops
     for pos in s["open"]:
-        bars = hour_bars(pos["symbol"], date)
+        bars = day_session_bars(pos["symbol"], date, s.get("bar_mode", "hourly"))
         if not bars:
             continue
         day_close = float(bars[-1][4])
@@ -345,14 +364,16 @@ def cmd_report(args):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("init"); p.add_argument("--capital", type=float, default=100000)
+    p = sub.add_parser("init"); p.add_argument("--capital", type=float, default=100000); p.add_argument("--bar-mode", default="hourly", choices=["hourly", "daily"])
     p = sub.add_parser("scan"); p.add_argument("date")
     p = sub.add_parser("plan")
     p.add_argument("--date", required=True); p.add_argument("--symbol", required=True)
     p.add_argument("--engine", required=True, choices=["M", "R"])
     p.add_argument("--entry-type", required=True, choices=["market_open", "limit"])
     p.add_argument("--limit-price", type=float)
-    p.add_argument("--stop-price", type=float, required=True)
+    p.add_argument("--stop-price", type=float)
+    p.add_argument("--stop-atr-mult", type=float)
+    p.add_argument("--target-fill-pct", type=float)
     p.add_argument("--atr10", type=float, required=True)
     p.add_argument("--target-price", type=float)
     p.add_argument("--target-close-pct", type=float)

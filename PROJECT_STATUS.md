@@ -66,17 +66,27 @@ gate (RSI3<50 or ≤SMA25+1ATR), R-G5 RSI3<15, ATR-scaled R limit (0.5×ATR10),
 intrabar +4% target. Gate replay blocks 6/6 round-1 losers — partly BY
 CONSTRUCTION; **all changes BACKTEST-DERIVED-IN-SAMPLE, out-of-sample required.**
 
+**BACKTEST RUN 3 COMPLETE — v1.1.0 OUT-OF-SAMPLE VALIDATED** (report:
+`reports/backtests/2025-aug-oct-oos-swing-v1.1.0.md`). Two unseen windows
+(Aug 25–Sep 24, Sep 22–Oct 24, daily-bar mode): **5 trades, 4 wins (80% WR),
++$1,296 (+0.49 avg R)**. Every v1.1.0 gate paid: extension throttle cost ~0
+and skipped the mid-Sep top; pullback gate produced the best entries (CAT
++1.8R); stress gate sat out the Oct 13-15 tariff whipsaw; ATR-scaled limit +
+intrabar target banked COIN +4% in one session. Runner now supports daily-bar
+mode + fill-relative stops/targets.
+
+**Cumulative:** v1.0.0 in-sample 0-33% WR / negative · v1.1.0 OOS 80% WR /
+positive. n=5 — claim is "positive expectancy on unseen data," not "80% true".
+
 **NEXT STEPS:**
-1. Out-of-sample run (user's machine): `cd tools && uv run python
-   scripts/load_backtest_week.py --daily-start 2025-03-01 --daily-end 2026-02-28
-   --hourly-start 2026-01-20 --hourly-end 2026-02-28` then agent loop Jan 26 –
-   Feb 27, 2026 under v1.1.0 (no retuning allowed on this window).
-2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — user directive:
-   develop the long side first; when the regime is not ideal for longs, the
-   system SKIPS (sits in cash — routing §1 already enforces this). Revisit
-   Engine S after long-side validation.
-3. Universe expansion (criteria-based) to cure R fill starvation (~6 limit
-   orders → 1 fill on 67 mega-caps).
+1. **Universe expansion** (the binding constraint is trade FREQUENCY:
+   ~0.6 trades/wk → ≈$144/wk vs $500/wk target). Criteria-based larger
+   universe (~300-400 liquid names), risk stays 1%/trade. Needs a bigger
+   data load (user's machine) + possibly batched scanning.
+2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — develop long side
+   first; hostile regime → sit in cash (routing §1 enforces).
+3. Later: Jan-Feb 2026 OOS window (needs hourly or daily refresh through Feb),
+   Kelly-based sizing review once trade count > 30.
 
 ---
 
