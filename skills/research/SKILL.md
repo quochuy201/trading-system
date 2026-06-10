@@ -1,7 +1,7 @@
 ---
 name: trading-research
 description: "Use when the orchestrator needs ranked trading candidates from a broad market scan with scored due diligence across equities, options, crypto, or prediction markets."
-requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, get_social_sentiment, calc_technical_indicators, score_catalyst, load_price_cache, query_price_cache, get_account]
+requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, get_social_sentiment, calc_technical_indicators, score_catalyst, load_price_cache, query_price_cache, get_account, scan_for_candidates, scan_swing_candidates]
 ---
 
 # Research Agent
@@ -25,45 +25,48 @@ The Research agent scans a broad universe and filters down. Start wide, filter a
 | Market cap | > $1B | Institutional interest, less manipulation |
 | Listed exchange | NYSE, NASDAQ, AMEX | Regulated, reliable data |
 
-### Swing Trade Scan (2-5 day momentum + 1-4 week trend)
+### Swing Trade Scan — Two Engines (SOP: `sops/equity/swing/v1.0.0.md`)
 
-**Short swing (2-5 days):** Look for breakouts from tight consolidation with volume expansion.
+Call `scan_swing_candidates()` — it applies the SOP's mechanical gates and
+returns both engine verdicts per symbol. **The scanner gates; you decide.**
+Your jobs after the scan, per the SOP:
 
-| Signal | Criteria | Weight |
-|--------|----------|--------|
-| Consolidation breakout | Price breaks above 5-20 day range on > 2x avg volume | High |
-| Relative strength | Outperforming SPY over trailing 10 days | High |
-| Catalyst present | Earnings, upgrade, product news within 48h | High |
-| Volume expansion | Today's volume > 1.5x 20-day average | Medium |
-| Above rising SMA20 | Price > SMA20 AND SMA20 slope positive | Medium |
-| RSI momentum | RSI 50-70 (bullish but not overbought) | Low |
-
-**Longer trend (1-4 weeks):** Look for pullbacks within established uptrends.
-
-| Signal | Criteria | Weight |
-|--------|----------|--------|
-| Uptrend intact | Higher highs + higher lows on daily | High |
-| Pullback to support | Price within 2% of SMA20 or SMA50 | High |
-| Sector strength | Sector ETF outperforming SPY trailing 20 days | Medium |
-| Volume dry-up on pullback | Pullback volume < 50% of breakout volume | Medium |
-| Institutional accumulation | Up days on high volume, down days on low volume | Medium |
-| ATR contraction | Current ATR < 20-day avg ATR (volatility squeeze) | Low |
+1. **Regime check** — only pursue engines the eligible set allows (routing §1:
+   M needs uptrend; R also runs in mild corrections — that's its purpose).
+2. **Ranking** (when candidates > open slots):
+   - Engine M: highest `roc50` first (join the strongest crowd — Bensdorp Sys-1)
+   - Engine R: biggest `drop_3d` first (most stretched rebounds hardest — Sys-3)
+3. **Earnings gate** (M-G8/R-G6): confirmed earnings inside the hold window →
+   skip; unknown → half conviction.
+4. **Thesis-break veto for Engine R (R-G7)** — this is YOUR edge over blind
+   automation. Read the news for WHY it dropped:
+   - TRADEABLE drop: index/sector selloff, sympathy move, profit-taking,
+     analyst noise, broad risk-off → proceed
+   - STRUCTURAL break: fraud/accounting, guidance cut, regulatory action, key
+     customer loss, secular demand break → **VETO, log "R-G7-FAIL"**
+5. **Entry discipline** (non-negotiable): M = next-open market order, skip if
+   gap up >5% or down >3%. R = limit 3% below previous close, day-only; no
+   fill = no trade. Never chase a missed R fill.
+6. **Reentry**: a re-qualifying setup after a stop-out is a NEW valid trade
+   (Bensdorp ch.6 §9) — max 2 entries per symbol per week.
 
 ### What Makes a Profitable Swing Candidate
 
-A high-quality candidate has ALL of these:
-1. **Clear trend** — you can see the direction without squinting
-2. **Fresh catalyst** — something changed in the last 48h that justifies the move
-3. **Volume confirmation** — smart money is participating, not just retail noise
-4. **Defined risk** — there's a structural level where the thesis is invalidated
-5. **Asymmetric R:R** — target is 2x+ the distance to stop, ideally 3:1 for swings
+Engine M (expect ~45-50% WR, winners 2-3x losers): clear uptrend you can see
+without squinting, relative strength, room to run (not extended), defined
+2.5×ATR10 risk.
 
-**Red flags that kill profitability:**
-- Extended move (> 3 ATRs from SMA20) — you're chasing
-- Declining volume on the advance — distribution, not accumulation
-- Earnings within holding period (unless that IS the catalyst) — binary risk
-- Low float (< 20M shares) — unpredictable squeezes and dumps
-- Already been "talked about" on social media for 2+ days — late to the party
+Engine R (expect ~55-65% WR, small fast winners): sharp 3-day stretch in a
+stock whose LONG-TERM uptrend is intact (>SMA150), drop caused by emotion not
+fundamentals, wide 2.5×ATR10 stop so the bottom has room to form, exit fast
+(+4% or 4 sessions).
+
+**Red flags that kill profitability (either engine):**
+- Extended move (> 2.5 ATRs above SMA25) — you're chasing (M-G7)
+- Earnings inside the hold window — binary risk (M-G8/R-G6)
+- Structural-break selloff bought as a "dip" — the knife that doesn't bounce (R-G7)
+- Social buzz aged 2+ days with price already up — late to the party (see Hype Detection)
+- R:R < 2:1 for Engine M (R is target/time-bounded instead)
 
 ### Intraday Scan (placeholder)
 
@@ -140,11 +143,33 @@ This layer requires REAL reasoning, not keyword matching. Use every tool availab
 - NOT CHANGE (noise): "maintains Buy," "reiterates Outperform," "here's how much you'd have made," historical articles
 - Is it FRESH? (today or yesterday = actionable. 3+ days old = priced in)
 
-**Step 2: Check social buzz** — call `get_social_sentiment(symbol)`
-- Reddit (r/wallstreetbets, r/stocks, r/investing): mention count + sentiment
-- StockTwits: bullish/bearish ratio + message volume
-- Is this stock being TALKED ABOUT right now? High buzz = in play, traders are watching
-- convergence_signal: "strong" (both bullish), "moderate" (one active), "weak" (no buzz)
+**Step 2: Hype Detection** — call `get_social_sentiment(symbol)`
+
+The point is to separate REAL hype (early, building, confirmed by tape) from
+LATE hype (you're someone's exit liquidity). Classify into one of four states:
+
+| State | Signature | Action |
+|---|---|---|
+| EARLY HYPE | Buzz fresh (<24h), mentions rising, price moved <2%, RVOL just turning up | Strongest signal — catalyst forming before the crowd fully arrives. Boost conviction. |
+| CONFIRMED HYPE | Buzz <48h + price +2-5% + RVOL > 2 + news converges | Tradeable if entry discipline holds (don't chase the gap rules). |
+| LATE HYPE | Buzz 2+ days old, price already ran >5%, top posts are gain screenshots | SKIP — distribution phase. The screenshot posters need buyers. |
+| NO HYPE / FADING | Low mentions, falling message volume | Neutral — judge on technicals + news alone. |
+
+Evidence to read from the tool output: post timestamps (how OLD is the buzz?),
+mention velocity (rising or fading?), content type (thesis posts = early; gain
+screenshots & rocket emojis = late), bullish% extremes (>90% bullish on
+StockTwits AFTER a run = crowded exit risk, not confirmation).
+
+Engine-specific use:
+- **Intraday/momentum (M)**: EARLY or CONFIRMED hype adds conviction; LATE hype is a veto.
+- **Mean-reversion dips (R)**: invert it — extreme RETAIL PANIC (heavy bearish
+  buzz on a >SMA150 stock with no structural news) is contrarian-positive;
+  heavy BULLISH "buy the dip" chatter on day 1 of a drop often means more
+  sellers remain. Weight this below the R-G7 news veto.
+
+**Backtest fallback:** social APIs have no history. In backtest, this step
+scores NEUTRAL (no boost, no veto) and is logged as "social: unavailable".
+Never simulate or guess past sentiment.
 
 **Step 3: Look for convergence**
 - Analyst upgrade + social buzz + volume spike = STRONG catalyst (multiple sources agree)

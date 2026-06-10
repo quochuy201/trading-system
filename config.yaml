@@ -118,7 +118,10 @@ strategies:
     - id: options/vol-edge
       market: options
       sop: v1.0.0
+    - id: equity/swing
+      market: equity
+      sop: v1.0.0   # two-engine (M momentum / R mean-reversion); backtest validation pending
   disabled:
     - id: equity/intraday-momentum
       market: equity
-      sop: v1.0.0
+      sop: v1.1.0   # gatekeeper hardened; still disabled pending validation

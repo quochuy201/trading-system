@@ -59,6 +59,25 @@ For each open position, compare current price against the trade plan:
 
 **Dead money rule:** If a position hasn't shown any momentum toward target within 5 trading days (never reached +0.5R from entry), the thesis isn't working. Exit early instead of waiting for the full stop to be hit. This turns -1.0R losses into -0.3R to -0.5R losses. Backtesting showed 62% of losers were "dead money" that slowly drifted to stop without ever gaining meaningfully.
 
+### Engine-aware exit profiles (swing positions)
+
+Swing trade plans carry an `engine` field (`sops/equity/swing/v1.0.0.md` shared
+rule 3). The exit profile DIFFERS by engine — applying the wrong one destroys
+the engine's edge:
+
+| | Engine M (momentum) | Engine R (mean-reversion) |
+|---|---|---|
+| Stop | 2.5×ATR10 below fill, close-based | 2.5×ATR10 below fill, close-based |
+| Profit target | NONE — let it run | Close ≥ +4% from fill → exit next open |
+| Trailing | ≥ +1R: breakeven; ≥ +1.5R: trail 2×ATR10 | **NEVER trail** — too short-lived |
+| Time stop | 20 sessions | 4 sessions → exit next open |
+| Dead money | Standard 5-day/+0.5R rule | Not applicable (time stop is tighter) |
+
+The R rules are mechanical and absolute: when the +4% close or the 4-session
+clock hits, exit at the next open — do NOT re-evaluate the thesis, do NOT hold
+for "a bit more". The R engine's profitability comes from taking many small
+exits fast (Bensdorp Sys-3: short duration IS the edge).
+
 ### Step 4: Execute Exits
 
 For each exit triggered:

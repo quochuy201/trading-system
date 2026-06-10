@@ -9,6 +9,12 @@ Filter 3: Trend + Levels via MAs (clear structure?)
 Filter 4: Momentum indicators for timing (RSI, MACD, Bollinger)
 
 Candidates that pass all 4 filters go to the AI agent for Due Diligence.
+
+`scan_universe_swing` implements the MECHANICAL gates of
+sops/equity/swing/v1.0.0.md (two-engine: momentum continuation M +
+mean-reversion dip R). Thresholds here MUST mirror that SOP version —
+the scanner measures and gates; the AI agent does DD, the thesis-break
+veto (R-G7), earnings checks, and the final enter/skip decision.
 """
 
 import pandas as pd
@@ -133,4 +139,132 @@ def _evaluate_stock(sym: str, df: pd.DataFrame, spy_ret_10d: float, check_rs: bo
         "bb_pos": round(bb_pos, 2),
         "sma20": round(sma20, 2),
         "sma50": round(sma50, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Swing scanner — sops/equity/swing/v1.0.0.md mechanical gates
+# ---------------------------------------------------------------------------
+
+# Gate thresholds — MUST mirror sops/equity/swing/v1.0.0.md. Do not tune here
+# without a new SOP version.
+SWING_V1 = {
+    "min_dollar_vol20": 50_000_000,   # M-G2 / R-G2
+    "price_min": 10.0,                # M-G2 / R-G2
+    "price_max": 500.0,               # M-G2 (M only)
+    "m_atr_pct_min": 1.5,             # M-G3
+    "m_atr_pct_max": 6.0,             # M-G3
+    "m_rs10_min": 2.0,                # M-G5 (vs SPY, pct points)
+    "m_roc50_min": 10.0,              # M-G6
+    "m_chase_atr_mult": 2.5,          # M-G7: close ≤ SMA25 + 2.5*ATR10
+    "r_atr_pct_min": 2.5,             # R-G3
+    "r_drop3_min": 6.0,               # R-G5 (pct)
+    "r_rsi3_max": 30.0,               # R-G5
+}
+
+
+def scan_universe_swing(stock_data: dict[str, pd.DataFrame],
+                        spy_data: pd.DataFrame | None = None) -> list[dict]:
+    """Evaluate the swing SOP's mechanical gates for every symbol.
+
+    Returns one dict per symbol that passes EITHER engine's gates, with
+    `engine_m_pass` / `engine_r_pass` flags, the measured metrics, and per-gate
+    failure lists so the agent can log `rules_triggered` honestly.
+
+    Needs >= 160 daily bars for SMA150/ROC50; shorter histories are skipped.
+    Ranking (per SOP): engine M by roc50 desc, engine R by drop_3d desc —
+    the agent ranks; this function just measures.
+    """
+    spy_ret_10d = 0.0
+    if spy_data is not None and len(spy_data) >= 10:
+        spy_ret_10d = (spy_data["close"].iloc[-1] / spy_data["close"].iloc[-10] - 1) * 100
+
+    out = []
+    for sym, df in stock_data.items():
+        if sym == "SPY" or len(df) < 160:
+            continue
+        m = _swing_metrics(sym, df, spy_ret_10d)
+        if m["engine_m_pass"] or m["engine_r_pass"]:
+            out.append(m)
+    return out
+
+
+def _swing_metrics(sym: str, df: pd.DataFrame, spy_ret_10d: float) -> dict:
+    c = SWING_V1
+    close = df["close"].astype(float)
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    volume = df["volume"].astype(float)
+    price = float(close.iloc[-1])
+
+    dollar_vol20 = float((close.iloc[-20:] * volume.iloc[-20:]).mean())
+
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr10 = float(tr.iloc[-10:].mean())
+    atr10_pct = (atr10 / price) * 100 if price > 0 else 0.0
+
+    sma25 = float(close.iloc[-25:].mean())
+    sma50 = float(close.iloc[-50:].mean())
+    sma150 = float(close.iloc[-150:].mean())
+    roc50 = (price / float(close.iloc[-51]) - 1) * 100
+    rs_10d = (price / float(close.iloc[-10]) - 1) * 100 - spy_ret_10d
+    drop_3d = (1 - price / float(close.iloc[-4])) * 100  # positive = dropped
+    rsi3 = float(ta.momentum.RSIIndicator(close, window=3).rsi().iloc[-1])
+    rsi14 = float(ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1])
+
+    high_10d = float(high.iloc[-10:].max())
+    pct_from_high = (price - high_10d) / high_10d * 100
+    mom_5d = (price / float(close.iloc[-6]) - 1) * 100 if len(close) >= 6 else 0.0
+
+    # --- Engine M gates (M-G2..M-G7; regime/earnings/portfolio are agent-side) ---
+    m_fails = []
+    if not (c["price_min"] <= price <= c["price_max"] and dollar_vol20 >= c["min_dollar_vol20"]):
+        m_fails.append("M-G2")
+    if not (c["m_atr_pct_min"] <= atr10_pct <= c["m_atr_pct_max"]):
+        m_fails.append("M-G3")
+    if not (sma25 > sma50 and price > sma25):
+        m_fails.append("M-G4")
+    if not (rs_10d >= c["m_rs10_min"]):
+        m_fails.append("M-G5")
+    if not (roc50 >= c["m_roc50_min"]):
+        m_fails.append("M-G6")
+    chasing = (pct_from_high > -2 and mom_5d > 5) or (price > sma25 + c["m_chase_atr_mult"] * atr10)
+    if chasing:
+        m_fails.append("M-G7")
+
+    # --- Engine R gates (R-G2..R-G5) ---
+    r_fails = []
+    if not (price >= c["price_min"] and dollar_vol20 >= c["min_dollar_vol20"]):
+        r_fails.append("R-G2")
+    if not (atr10_pct >= c["r_atr_pct_min"]):
+        r_fails.append("R-G3")
+    if not (price > sma150):
+        r_fails.append("R-G4")
+    if not (drop_3d >= c["r_drop3_min"] and rsi3 < c["r_rsi3_max"]):
+        r_fails.append("R-G5")
+
+    return {
+        "symbol": sym,
+        "price": round(price, 2),
+        "dollar_vol20": round(dollar_vol20),
+        "atr10": round(atr10, 2),
+        "atr10_pct": round(atr10_pct, 2),
+        "sma25": round(sma25, 2),
+        "sma50": round(sma50, 2),
+        "sma150": round(sma150, 2),
+        "roc50": round(roc50, 2),
+        "rs_10d": round(rs_10d, 2),
+        "drop_3d": round(drop_3d, 2),
+        "rsi3": round(rsi3, 1),
+        "rsi14": round(rsi14, 1),
+        "pct_from_10d_high": round(pct_from_high, 2),
+        "mom_5d": round(mom_5d, 2),
+        "engine_m_pass": not m_fails,
+        "engine_m_fails": m_fails,
+        "engine_r_pass": not r_fails,
+        "engine_r_fails": r_fails,
     }

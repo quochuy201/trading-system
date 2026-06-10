@@ -1,146 +1,63 @@
-# Swing Trade Due Diligence
+# Swing Trade Due Diligence — engine-aware rubric
 
-Reference guide for swing trade candidate evaluation. Covers both short swings (2-5 days, momentum/breakout) and longer trend plays (1-4 weeks, pullback/continuation).
+**Pairs with `sops/equity/swing/v1.0.0.md`** (two-engine: M momentum / R
+mean-reversion). The scanner (`scan_swing_candidates`) has already applied the
+mechanical gates before you see a candidate. This rubric scores what the
+scanner CANNOT measure plus trade geometry. Score each candidate 0–100 under
+its routed engine. Bensdorp's frame: a system is 12 ingredients; the scanner
+covered universe/filter/setup — you cover ranking context, catalyst, risk
+geometry, and the decision.
 
----
-
-## Holding Period Decision
-
-| Setup Type | Hold Period | Exit Logic |
-|-----------|-------------|------------|
-| Breakout momentum | 2-5 days | Trail stop after 1R profit; exit if momentum fades (volume drops 50%) |
-| Gap-and-go continuation | 2-3 days | Take 50% at 2R, trail rest; hard exit if gap fills |
-| Pullback to support | 5-15 days | Hold as long as support holds; exit on close below SMA20 |
-| Sector rotation play | 1-4 weeks | Hold while sector outperforms; exit on relative strength breakdown |
-| Earnings gap hold | 3-10 days | Hold while gap doesn't fill; exit on first close below gap low |
+**Thresholds: ≥ 70 ENTER full conviction · 60–69 ENTER half size · < 60 SKIP.**
 
 ---
 
-## Catalyst Decay Model
+## Engine M rubric (momentum continuation)
 
-Catalysts lose power over time. This affects entry timing and position conviction:
+| Block | Max | What earns points |
+|---|---|---|
+| Setup quality | 30 | Clean trend structure (10): higher highs/lows visible, no overlapping chop. Gate margins (10): roc50 and rs_10d comfortably above minimums, not borderline. Volume character (10): advance on expanding volume, pullbacks on contracting volume. |
+| Catalyst & narrative | 25 | Fresh driver behind the strength (15): earnings raise, product cycle, sector leadership — apply the Catalyst Decay Model below. Hype state (10): EARLY/CONFIRMED = 6–10; NO HYPE = 5; LATE HYPE = 0 **and overall veto if price ran >5% on aged buzz**. |
+| Market/sector context | 20 | Regime row solidly ON, not borderline (10). Sector ETF outperforming SPY over 10 days (10). |
+| Risk geometry | 25 | R:R to next resistance ≥ 2:1 with 2.5×ATR10 stop (15; below 2:1 = 0 and SKIP). Stop below a real structural level, not floating in air (10). |
 
-| Days Since Catalyst | Catalyst Strength | Action |
-|--------------------|-------------------|--------|
-| Day 0 (today) | FULL | Enter on confirmation (15-min candle direction) |
-| Day 1 | HIGH | Enter on pullback to support only |
-| Day 2 | MEDIUM | Reduced conviction — half size only |
-| Day 3+ | STALE | Do NOT enter — catalyst is priced in |
+Engine M kill list (any → SKIP regardless of score): gap rules violated at
+entry · earnings within 5 sessions (confirmed) · LATE HYPE state · R:R < 2:1.
 
-**Exception:** Multi-day sector rotations (e.g., rate cuts benefiting banks over 1-2 weeks) — these are not single-event catalysts and can persist.
+### Catalyst Decay Model (Engine M)
 
----
+| Days Since Catalyst | Strength | Action |
+|---|---|---|
+| Day 0 | FULL | Full catalyst points |
+| Day 1 | HIGH | Most points; prefer pullback entry |
+| Day 2 | MEDIUM | Half points — half size ceiling |
+| Day 3+ | STALE | 0 points — strength must stand on technicals alone |
 
-## Trend Confirmation Checklist
+**Exception:** multi-week sector rotations (rate cycles, AI capex waves) decay
+slowly — treat the SECTOR move as the catalyst and check the sector ETF's RS
+instead.
 
-Before entering any swing trade, ALL of these must be true:
+## Engine R rubric (mean-reversion dip)
 
-### For Long Swings
+| Block | Max | What earns points |
+|---|---|---|
+| Drop diagnosis (R-G7) | 35 | THE block that matters. Why did it drop? Index/sector-wide selloff or sympathy (30–35) · stock-specific but transient: analyst cut, headline overreaction, sympathy with a competitor's bad print (20–29) · unclear cause (10–19) · structural break: fraud, guidance cut, regulatory, key-customer loss, secular demand break (0 → **VETO, log R-G7-FAIL**). |
+| Stretch quality | 25 | drop_3d well above the 6% minimum (10). RSI3 in single digits (8). Long-term trend comfortably intact — price above SMA150 by margin, SMA150 still rising (7). |
+| Crowd state | 15 | Retail PANIC (bearish buzz, no structural news) = contrarian positive (10–15). Quiet tape = 8. Heavy day-1 "buy the dip" cheerleading = 0–5 (the sellers aren't done). |
+| Risk geometry | 25 | 2.5×ATR10 stop clears the recent panic low (10). +4% target < 1.5× average daily range — realistically reachable inside 4 sessions (10). Heat: adding this keeps portfolio ≤ 6% (5). |
 
-- [ ] Price > SMA20 (short-term trend bullish)
-- [ ] SMA20 > SMA50 (intermediate trend aligned)
-- [ ] Price making higher lows on the daily chart
-- [ ] Volume on up-days > volume on down-days (last 10 bars)
-- [ ] RSI > 40 and < 75 (momentum present but not exhausted)
-- [ ] Relative strength vs SPY positive (trailing 10 or 20 days)
-
-### For Short Swings
-
-- [ ] Price < SMA20 (short-term trend bearish)
-- [ ] SMA20 < SMA50 (intermediate trend aligned)
-- [ ] Price making lower highs on the daily chart
-- [ ] Volume expanding on down-days
-- [ ] RSI < 60 and > 25 (weakness present but not oversold bounce risk)
-- [ ] Relative weakness vs SPY (underperforming)
-
----
-
-## Entry Timing
-
-### Breakout Entry (momentum swings)
-
-1. Wait for breakout candle to close above resistance on > 2x volume
-2. Enter on next candle's pullback to breakout level (buy the retest)
-3. If no pullback within 2 bars, enter at market only if still < 1 ATR above breakout
-4. If price extends > 1.5 ATR above breakout without you — MISSED IT. Move on.
-
-### Pullback Entry (trend swings)
-
-1. Identify the trend (higher highs/lows, above rising SMAs)
-2. Wait for pullback to SMA20 or prior breakout level
-3. Confirm pullback is on declining volume (not a reversal)
-4. Enter when price prints a higher low or bullish engulfing at support
-5. Stop goes below the pullback low (structural invalidation)
+Engine R kill list: R-G7 structural break · earnings before expected exit
+(confirmed) · limit-entry already gapped past (never market-chase an R entry).
 
 ---
 
-## Position Sizing for Swings
+## Scoring discipline
 
-Swings use the same sizing math as day trades (OPERATING_MANUAL §3) but with adjustments:
-
-| Factor | Day Trade | Swing Trade |
-|--------|-----------|-------------|
-| Risk per trade | 1% of equity | 0.5-1% of equity (wider stops) |
-| Stop distance | 0.5-1.5 ATR | 1-2 ATR (needs room to breathe) |
-| Position concentration | Max 20% in one name | Max 15% (overnight risk) |
-| Max open positions | 5 | 3-5 (diversified exposure) |
-
----
-
-## Swing-Specific Exit Rules
-
-### Profit Taking
-
-| Profit Level | Action |
-|-------------|--------|
-| +1R | Move stop to breakeven |
-| +1.5R | Take 25-33% off, trail remainder |
-| +2R | Take another 25-33% off |
-| +3R | Close remaining or trail very tight (0.5 ATR) |
-
-### Stop-Loss Rules
-
-- Initial stop: below structural support or 1.5x ATR below entry
-- **Never widen a stop** — if the trade needs a wider stop, the entry was wrong
-- If price gaps below stop overnight: exit at open, do not hold hoping for recovery
-
-### Time-Based Exits
-
-| Setup | Max Hold | Exit if... |
-|-------|----------|-----------|
-| Breakout momentum | 5 days | No new high in 3 days (momentum dead) |
-| Pullback trend | 15 days | Closes below SMA50 |
-| Earnings gap | 10 days | Gap fills (thesis invalidated) |
-
----
-
-## Overnight Risk Management
-
-Swings hold overnight — unique risks vs day trades:
-
-1. **Gap risk**: Earnings, news, macro can gap against you. Accept this or don't swing trade.
-2. **Mitigation**: Size smaller (0.5-0.75% risk vs 1% for day trades). Use wider stops.
-3. **Avoid holding through**: Known binary events (earnings, FDA, FOMC) unless that's the thesis.
-4. **Position limit**: Max 3-5 concurrent swing positions to limit correlated gap risk.
-5. **Sector diversification**: Never have > 2 swings in the same sector.
-
----
-
-## Scoring Rubric (Swing-Specific)
-
-| Factor | Points | Criteria |
-|--------|--------|----------|
-| Trend alignment | 0-25 | 25 = above rising SMAs, sector strong. 0 = fighting trend. |
-| Catalyst quality | 0-25 | 25 = fresh Day-0 institutional catalyst. 0 = no catalyst / stale. |
-| Volume confirmation | 0-20 | 20 = breakout on 3x volume. 0 = no volume interest. |
-| Risk/Reward | 0-20 | 20 = R:R > 3:1 with clear structure. 0 = R:R < 2:1. |
-| Relative strength | 0-10 | 10 = top decile vs SPY. 0 = underperforming. |
-
-**Total: /100**
-
-| Score | Recommendation | Action |
-|-------|---------------|--------|
-| 80-100 | Strong buy | Full size, enter aggressively |
-| 70-79 | Buy | Standard size |
-| 60-69 | Weak buy | Half size only, need additional confirmation |
-| < 60 | Skip | Does not meet minimum quality bar |
+1. Score conservatively — borderline evidence earns the bottom of each band.
+2. Cite a number or quote for every block; "looks strong" earns nothing.
+3. The two engines are judged differently ON PURPOSE: M tolerates a sub-50%
+   win rate because winners run; R needs its 55–65% hit rate because winners
+   are small. Never apply M's R:R demand to R's target/time-stop exit — and
+   never let an R trade "become a swing hold" after the time stop.
+4. Output per candidate: engine, score, block subtotals, the one-sentence
+   thesis, and the gate IDs that passed/failed (`rules_triggered`).

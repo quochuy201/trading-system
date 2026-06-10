@@ -2296,6 +2296,71 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
 
 
 @mcp.tool()
+def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
+    """Scan for swing candidates per sops/equity/swing/v1.0.0.md mechanical gates.
+
+    When to use: Research agent, when equity/swing is in the eligible set.
+    Evaluates BOTH engines per symbol: M (momentum continuation — Bensdorp Sys-1
+    adapted) and R (mean-reversion dip — Sys-3/5 hybrid). Same code path live
+    and backtest (clock-bounded queries).
+
+    Sample input: scan_swing_candidates("")              — full cached universe
+                  scan_swing_candidates("NVDA,TSLA")     — specific tickers
+
+    Expected output:
+    {"candidates": [{"symbol": "TSLA", "price": 412.5, "atr10_pct": 3.4,
+      "drop_3d": 7.2, "rsi3": 12.4, "roc50": 18.0, "rs_10d": -4.1,
+      "engine_m_pass": false, "engine_m_fails": ["M-G5","M-G7"],
+      "engine_r_pass": true, "engine_r_fails": []}, ...],
+     "scanned": 60, "passed": 4}
+
+    The scanner measures and gates (M-G2..G7, R-G2..G5). The AGENT still owns:
+    regime eligibility (routing SOP §1), earnings checks (M-G8/R-G6), the
+    thesis-break veto (R-G7), ranking (M: roc50 desc; R: drop_3d desc), and
+    the final enter/skip decision. Needs >= 160 daily bars per symbol —
+    use lookback_days >= 320 calendar days.
+    """
+    _track_tool("scan_swing_candidates")
+    import pandas as pd
+    from scanner.filters import scan_universe_swing
+
+    broker = get_broker()
+    repo = get_repo()
+
+    if symbols.strip():
+        symbol_list = [s.strip() for s in symbols.split(",")]
+    else:
+        symbol_list = broker.get_tradeable_universe()
+    if "SPY" not in symbol_list:
+        symbol_list.append("SPY")
+
+    from datetime import timedelta
+    if hasattr(broker, "current_time") and broker.current_time:
+        end = broker.current_time
+    else:
+        end = datetime.utcnow()
+    start = end - timedelta(days=lookback_days)
+
+    stock_data = {}
+    for sym in symbol_list:
+        bars = repo.query_price_data(sym, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%dT%H:%M:%S"), "1Day")
+        if len(bars) >= 160 or sym == "SPY":
+            df = pd.DataFrame(bars)
+            if len(df) > 0:
+                stock_data[sym] = df
+
+    spy_data = stock_data.get("SPY")
+    candidates = scan_universe_swing(stock_data, spy_data)
+
+    return json.dumps({
+        "candidates": candidates,
+        "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+        "passed": len(candidates),
+        "sop_version": "equity/swing v1.0.0",
+    })
+
+
+@mcp.tool()
 def end_backtest() -> str:
     """End the current backtest and restore the live/paper broker.
 

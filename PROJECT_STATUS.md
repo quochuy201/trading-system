@@ -4,7 +4,53 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-09 · Branch: `main` (local, ahead of origin/main; PR #1 = `feature/strategy-routing`) · Tests: 221 passing, 0 failures
+Last updated: 2026-06-09 (session 2) · Branch: `main` (local, ahead of origin/main) · Tests: 230 passing, 0 failures
+
+---
+
+## ⏩ Session handoff — 2026-06-09 session 2 (swing gatekeeper program, Bensdorp-derived)
+
+**Goal (user):** improve swing+intraday gatekeeping per Bensdorp *Automated Stock
+Trading Systems*; add social hype detection; validate research+monitor skills on a
+1-week backtest; iterate toward >70% WR and $500/week on $100k.
+**Reality check (logged):** the book's BEST mean-reversion systems run ~57-63% WR
+(Sys-3) and trend systems ~45%; a 1-week sample is ~5-15 trades → statistically
+indicative at best. Judge by expectancy per R; treat 70%/$500 as a stretch target,
+beware overfitting one week.
+
+**Shipped this session:**
+1. **`sops/equity/swing/v1.0.0.md`** — NEW two-engine swing SOP (12-ingredient frame):
+   Engine M = momentum continuation (book Sys-1 adapted, gates M-G1..G9), Engine R =
+   mean-reversion dip (Sys-3/5 hybrid, gates R-G1..G8, incl. AI thesis-break veto
+   R-G7). All thresholds `BOOK-DERIVED` pending calibration.
+2. **`sops/_routing/v1.1.0.md`** — engine-aware eligibility (R-ONLY/M-ONLY cells),
+   new mild-correction row (Engine R runs in pullbacks), iv_rank removed from
+   equity rows (price-only, backtest-computable).
+3. **Scanner**: `scan_universe_swing()` in `tools/scanner/filters.py` (SWING_V1
+   thresholds mirror the SOP; per-gate fail lists for honest rules_triggered
+   logging) + `scan_swing_candidates` MCP tool. 9 new tests.
+4. **Research skill**: two-engine swing scan section, ranking rules, reentry rule,
+   and a 4-state **Hype Detection** framework (EARLY/CONFIRMED/LATE/NO-HYPE) with
+   engine-specific use (R inverts: retail panic = contrarian-positive). Backtest
+   fallback: social scores NEUTRAL, logged "social: unavailable" — APIs have no history.
+5. **`swing-trade-dd.md`** rewritten: per-engine 0-100 rubrics (≥70 full / 60-69 half /
+   <60 skip), R-engine drop-diagnosis block (35 pts), kill lists, catalyst decay model.
+6. **`sops/equity/intraday-momentum/v1.1.0.md`** — Phase 0 gatekeeper (I-G1 market
+   alignment, I-G2 $50M dollar-vol, I-G3 spread), RVOL ranking, reentry rule, hype veto.
+7. **Monitor skill**: engine-aware exit profiles table (M: trail/20d; R: +4% target,
+   4-session time stop, NEVER trail).
+8. **Backtest prep**: week chosen = **Nov 17-21, 2025** (most volatile in cached SPY
+   range: 3.7% range, chop — stresses gates AND fires R-engine dips).
+   `tools/scripts/load_backtest_week.py` ready; found+handles corrupted SPY bar
+   (2026-02-02 low=69.005, decimal-shifted tick).
+
+**NEXT STEP (blocked on user's machine — sandbox can't reach Alpaca):**
+```
+cd tools && uv run python scripts/load_backtest_week.py
+```
+Then: agent-driven backtest per CLAUDE.md rules (v3 harness, agent applies
+skills/SOPs day by day, Python only mechanics), analyze WR/expectancy/P&L per
+engine, calibrate `BOOK-DERIVED` thresholds via a new SOP version.
 
 ---
 
