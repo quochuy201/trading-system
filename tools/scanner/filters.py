@@ -146,7 +146,7 @@ def _evaluate_stock(sym: str, df: pd.DataFrame, spy_ret_10d: float, check_rs: bo
 # Swing scanner — sops/equity/swing/v1.0.0.md mechanical gates
 # ---------------------------------------------------------------------------
 
-# Gate thresholds — MUST mirror sops/equity/swing/v1.1.0.md. Do not tune here
+# Gate thresholds — MUST mirror sops/equity/swing/v1.2.0.md. Do not tune here
 # without a new SOP version.
 SWING_V1 = {
     "min_dollar_vol20": 50_000_000,   # M-G2 / R-G2
@@ -161,7 +161,7 @@ SWING_V1 = {
     "m_pullback_atr_dist": 1.0,       # M-G7b: ... close ≤ SMA25 + 1*ATR10
     "r_atr_pct_min": 2.5,             # R-G3
     "r_drop3_min": 6.0,               # R-G5 (pct)
-    "r_rsi3_max": 15.0,               # R-G5 (v1.1.0: was 30)
+    "r_rsi3_max": 10.0,               # R-G5 (v1.2.0: was 15; v1.1.0: was 30)
 }
 
 

@@ -87,12 +87,25 @@ universe from that file when present — shared live+backtest path. Skills
 synced to swing v1.1.0 / routing v1.1.0. week_runner has 11 mechanics tests.
 Suite: 243 pass.
 
+**BACKTEST RUN 4 COMPLETE — 400-name universe, Aug 25 – Oct 24 (report:
+`reports/backtests/2025-aug-oct-univ400-swing-v1.1.0.md`):** 15 trades
+(3× frequency), 53.3% WR, +$1,027 (~$120/wk). M = P&L engine ($140/trade,
+2.1 W/L); R = thin edge ($21/trade). Two validated patterns → **SOP v1.2.0
+shipped** (scanner mirrored, monitor updated, 243 tests green):
+- R-G5 → RSI3 < 10 (across ALL 14 R trades in 3 samples: <10 = 6/8 wins
+  +$805; ≥10 = 1/6 wins -$1,076)
+- M trail armed at +1R, breakeven step dropped (replay: M +$841 → +$1,534)
+Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
+
 **NEXT STEPS:**
-1. **USER RUNS (sandbox can't reach Alpaca):** `cd tools && uv run python
-   scripts/load_universe.py` — then rerun OOS windows A (Aug 25-Sep 24) +
-   B (Sep 22-Oct 24) on the expanded universe, v1.1.0 UNCHANGED. Question
-   under test: does frequency scale toward $500/wk while OOS WR (80%, n=5)
-   and loss discipline hold?
+1. Forward-validate v1.2.0 on unseen window (Jan-Feb 2026; needs daily
+   refresh for the 400-name universe through Feb on user's machine:
+   `uv run python scripts/load_universe.py --daily-end 2026-02-28`).
+2. HUMAN DECISIONS pending: (a) position cap 5 → 8 (OPERATING_MANUAL change;
+   setups exceeded slots repeatedly), (b) R conviction recalibration if the
+   RSI3<10 cohort keeps winning forward.
+3. Process note: scan-BEFORE-run sequencing is mandatory (4 entries missed
+   early in run 4 from batched scan+run; fixed mid-run, logged in report).
 2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — develop long side
    first; hostile regime → sit in cash (routing §1 enforces).
 3. Later: Jan-Feb 2026 OOS window (needs hourly or daily refresh through Feb),
