@@ -44,13 +44,23 @@ beware overfitting one week.
    `tools/scripts/load_backtest_week.py` ready; found+handles corrupted SPY bar
    (2026-02-02 low=69.005, decimal-shifted tick).
 
-**NEXT STEP (blocked on user's machine — sandbox can't reach Alpaca):**
+**BACKTEST RUN 1 COMPLETE (Nov 17-21, 2025 week)** — full report:
+`reports/backtests/2025-11-17-week-swing-v1.0.0.md`. Summary: 3 R trades
+(M never eligible — no uptrend), 33% WR, -$389, worst loss -0.42R (time stop
+working). Machinery validated (gates/ranking/sizing/limits all per SOP); edge
+NOT yet validated (n=3). Counterfactuals: limit no-fills were free skips;
+close-based R target cost SHOP +$53 vs intrabar (H1); rsi3<15 washout filter
+supported directionally (H2). Runner: `tools/scripts/week_runner.py`
+(state: `tools/backtest_week_state.json`).
+
+**NEXT STEP (user's machine — extend to 4 weeks so Engine M gets eligible days):**
 ```
-cd tools && uv run python scripts/load_backtest_week.py
+cd tools && uv run python scripts/load_backtest_week.py \
+  --daily-start 2025-01-02 --daily-end 2025-12-05 \
+  --hourly-start 2025-10-27 --hourly-end 2025-12-03
 ```
-Then: agent-driven backtest per CLAUDE.md rules (v3 harness, agent applies
-skills/SOPs day by day, Python only mechanics), analyze WR/expectancy/P&L per
-engine, calibrate `BOOK-DERIVED` thresholds via a new SOP version.
+Then re-run the agent-driven loop across Oct 27–Nov 28, test H1/H2 across
+~12-20 trades, and only then bump SOP thresholds (new version file).
 
 ---
 

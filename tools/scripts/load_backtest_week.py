@@ -29,10 +29,19 @@ if _env_file.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-DAILY_START = "2025-01-02"
-DAILY_END = "2025-11-28"
-HOURLY_START = "2025-11-17"
-HOURLY_END = "2025-11-26"
+import argparse
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--daily-start", default="2025-01-02")
+_ap.add_argument("--daily-end", default="2025-11-28")
+_ap.add_argument("--hourly-start", default="2025-11-17")
+_ap.add_argument("--hourly-end", default="2025-11-26")
+_args = _ap.parse_args()
+
+DAILY_START = _args.daily_start
+DAILY_END = _args.daily_end
+HOURLY_START = _args.hourly_start
+HOURLY_END = _args.hourly_end
 
 
 def main() -> int:
