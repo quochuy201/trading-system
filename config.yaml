@@ -120,7 +120,7 @@ strategies:
       sop: v1.0.0
     - id: equity/swing
       market: equity
-      sop: v1.0.0   # two-engine (M momentum / R mean-reversion); backtest validation pending
+      sop: v1.1.0   # two-engine; round-1 calibrated IN-SAMPLE — out-of-sample validation required before live
   disabled:
     - id: equity/intraday-momentum
       market: equity

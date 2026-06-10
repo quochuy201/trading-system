@@ -53,14 +53,28 @@ close-based R target cost SHOP +$53 vs intrabar (H1); rsi3<15 washout filter
 supported directionally (H2). Runner: `tools/scripts/week_runner.py`
 (state: `tools/backtest_week_state.json`).
 
-**NEXT STEP (user's machine — extend to 4 weeks so Engine M gets eligible days):**
-```
-cd tools && uv run python scripts/load_backtest_week.py \
-  --daily-start 2025-01-02 --daily-end 2025-12-05 \
-  --hourly-start 2025-10-27 --hourly-end 2025-12-03
-```
-Then re-run the agent-driven loop across Oct 27–Nov 28, test H1/H2 across
-~12-20 trades, and only then bump SOP thresholds (new version file).
+**BACKTEST RUN 2 COMPLETE (Oct 27 – Nov 26, 2025, agent-driven)** — report:
+`reports/backtests/2025-10-27-4week-swing-v1.0.0.md`. 6 trades, 0 wins,
+-$3,141 (-3.1%) in a momentum-top→correction window; risk caps held (max loss
+1.02R). Diagnosis: M bought extension highs (entry-timing, not exits — 4×ATR
+replay still loses); R washout too shallow (RSI3<30); flat 3% limits starve on
+mega-caps; long-only can't earn in correction tape (book uses short MR).
+
+**Shipped `sops/equity/swing/v1.1.0.md`** (+ scanner SWING_V1 mirror, 232 tests
+green): M-G1b initiation throttle (no new M at spy_vs_sma50>+3), M-G7b pullback
+gate (RSI3<50 or ≤SMA25+1ATR), R-G5 RSI3<15, ATR-scaled R limit (0.5×ATR10),
+intrabar +4% target. Gate replay blocks 6/6 round-1 losers — partly BY
+CONSTRUCTION; **all changes BACKTEST-DERIVED-IN-SAMPLE, out-of-sample required.**
+
+**NEXT STEPS:**
+1. Out-of-sample run (user's machine): `cd tools && uv run python
+   scripts/load_backtest_week.py --daily-start 2025-03-01 --daily-end 2026-02-28
+   --hourly-start 2026-01-20 --hourly-end 2026-02-28` then agent loop Jan 26 –
+   Feb 27, 2026 under v1.1.0 (no retuning allowed on this window).
+2. HUMAN DECISION: add Engine S (short mean-reversion, Bensdorp Sys-2/6)?
+   Long-only structurally cannot hit $500/wk in correction months.
+3. Universe expansion (criteria-based) to cure R fill starvation (~6 limit
+   orders → 1 fill on 67 mega-caps).
 
 ---
 

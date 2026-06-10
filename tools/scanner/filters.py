@@ -146,7 +146,7 @@ def _evaluate_stock(sym: str, df: pd.DataFrame, spy_ret_10d: float, check_rs: bo
 # Swing scanner — sops/equity/swing/v1.0.0.md mechanical gates
 # ---------------------------------------------------------------------------
 
-# Gate thresholds — MUST mirror sops/equity/swing/v1.0.0.md. Do not tune here
+# Gate thresholds — MUST mirror sops/equity/swing/v1.1.0.md. Do not tune here
 # without a new SOP version.
 SWING_V1 = {
     "min_dollar_vol20": 50_000_000,   # M-G2 / R-G2
@@ -157,9 +157,11 @@ SWING_V1 = {
     "m_rs10_min": 2.0,                # M-G5 (vs SPY, pct points)
     "m_roc50_min": 10.0,              # M-G6
     "m_chase_atr_mult": 2.5,          # M-G7: close ≤ SMA25 + 2.5*ATR10
+    "m_pullback_rsi3_max": 50.0,      # M-G7b (v1.1.0): RSI3 < 50 OR ...
+    "m_pullback_atr_dist": 1.0,       # M-G7b: ... close ≤ SMA25 + 1*ATR10
     "r_atr_pct_min": 2.5,             # R-G3
     "r_drop3_min": 6.0,               # R-G5 (pct)
-    "r_rsi3_max": 30.0,               # R-G5
+    "r_rsi3_max": 15.0,               # R-G5 (v1.1.0: was 30)
 }
 
 
@@ -235,6 +237,10 @@ def _swing_metrics(sym: str, df: pd.DataFrame, spy_ret_10d: float) -> dict:
     chasing = (pct_from_high > -2 and mom_5d > 5) or (price > sma25 + c["m_chase_atr_mult"] * atr10)
     if chasing:
         m_fails.append("M-G7")
+    # M-G7b (v1.1.0): buy leaders on pullback, not at extension
+    pullback = (rsi3 < c["m_pullback_rsi3_max"]) or (price <= sma25 + c["m_pullback_atr_dist"] * atr10)
+    if not pullback:
+        m_fails.append("M-G7b")
 
     # --- Engine R gates (R-G2..R-G5) ---
     r_fails = []

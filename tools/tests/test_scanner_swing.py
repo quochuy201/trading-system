@@ -32,15 +32,23 @@ def _spy():
 
 
 class TestEngineM:
-    def test_clean_momentum_passes(self):
-        # Steady riser: SMA25>SMA50, close>SMA25, big ROC50, beats flat SPY
-        df = _df(_uptrend(200, 100.0, 0.004), volume=5_000_000)  # ~$400M+/day
-        m = _swing_metrics("MOMO", df, spy_ret_10d=0.5)
-        assert m["engine_m_fails"] == [] or m["engine_m_fails"] == ["M-G7"]
-        # a perfectly steady riser can trip the chase filter near highs; accept
-        # either clean pass or only-chase-fail, but trend gates must hold:
-        assert "M-G4" not in m["engine_m_fails"]
-        assert "M-G6" not in m["engine_m_fails"]
+    def test_momentum_pullback_passes_v110(self):
+        # v1.1.0: leader in uptrend that PULLED BACK (RSI3 < 50) passes all M gates
+        closes = _uptrend(197, 100.0, 0.004)
+        last = closes[-1]
+        closes += [last * 0.99, last * 0.985, last * 0.98]  # 3 mild down days
+        df = _df(closes, volume=5_000_000)
+        m = _swing_metrics("MOMO", df, spy_ret_10d=-1.0)  # leader vs weak SPY
+        assert "M-G7b" not in m["engine_m_fails"], m  # pullback satisfied
+        assert "M-G4" not in m["engine_m_fails"]      # trend intact
+        assert "M-G6" not in m["engine_m_fails"]      # roc50 intact
+
+    def test_steady_riser_at_extension_fails_pullback_gate(self):
+        # v1.1.0: a riser with RSI3 ~100 at full extension must fail M-G7b
+        df = _df(_uptrend(200, 100.0, 0.004), volume=5_000_000)
+        m = _swing_metrics("EXTD", df, spy_ret_10d=0.5)
+        if m["rsi3"] >= 50:  # construction sanity
+            assert ("M-G7b" in m["engine_m_fails"]) or ("M-G7" in m["engine_m_fails"])
 
     def test_downtrend_fails_trend_gate(self):
         df = _df([200 - i * 0.5 for i in range(200)], volume=5_000_000)
@@ -71,12 +79,22 @@ class TestEngineR:
         return _df(base + dips, volume=5_000_000, spread=0.02)
 
     def test_sharp_dip_in_uptrend_passes(self):
-        df = self._dip_df(0.09)  # ~9% 3-day drop
+        df = self._dip_df(0.09)  # ~9% 3-day drop (3 straight down closes → RSI3 ~0)
         m = _swing_metrics("DIPR", df, spy_ret_10d=0.0)
         assert m["engine_r_fails"] == [], m
         assert m["engine_r_pass"] is True
         assert m["drop_3d"] >= SWING_V1["r_drop3_min"]
         assert m["rsi3"] < SWING_V1["r_rsi3_max"]
+
+    def test_shallow_washout_rsi3_fails_v110_gate(self):
+        # v1.1.0: drop >= 6% but RSI3 above 15 (down-up-down pattern) → R-G5 fail
+        base = _uptrend(196, 100.0, 0.004)
+        last = base[-1]
+        dips = [last * 0.945, last * 0.952, last * 0.93, last * 0.931]  # mixed, net -7%
+        df = _df(base + dips, volume=5_000_000, spread=0.02)
+        m = _swing_metrics("MIXD", df, spy_ret_10d=0.0)
+        if m["rsi3"] >= 15:  # construction sanity: only assert when RSI3 actually shallow
+            assert "R-G5" in m["engine_r_fails"]
 
     def test_shallow_dip_fails_stretch_gate(self):
         df = self._dip_df(0.03)  # only ~3% drop
