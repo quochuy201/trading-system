@@ -63,7 +63,7 @@ This is how an agent that needs to "make a living" turns the income target into 
 E       = current account equity (from get_account)
 R_pct   = max_risk_per_trade_pct        (default 1.0%)
 DLL_pct = daily_loss_limit_pct          (default 3.0%)
-N_max   = max_open_positions            (default 5)
+N_max   = max_open_positions            (default 10)   # raised 5→10, human-ratified 2026-06-11
 T_inc   = income_target_per_day         (USD)         # NEW config.yaml field
 ```
 

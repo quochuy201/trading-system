@@ -58,10 +58,27 @@ was the mechanical rule working).
   only BABA grazed (-0.24 vs -0.23). 1.0×/1.25× tested & REJECTED (overfit:
   zero adverse paths in n=15; BLDR -1.36R at 1.0× shows failure mode).
   Monitor skill synced (R stop row). M stop unchanged 2.5×.
-- **LOOP STATE: STOP TUNING.** v1.4+v1.5+v1.6 are three stacked exit changes
-  calibrated on Aug-Dec 2025. Next step MUST be the frozen Jan-Feb 2026
-  forward validation (validates all three together); further replay tuning
-  on the same windows is overfitting by construction.
+- **Cycle 6 DONE — hyperparameter sweep, v1.6.0 CONFIRMED (user-mandated
+  tuning round).** Report:
+  `reports/backtests/2026-06-11-param-sweep-v1.6-confirmed.md`.
+  - **Position cap 5→10 SHIPPED** (user-ratified 2026-06-11; OPERATING_MANUAL
+    §3.1 + config.yaml; heat ceiling 6% unchanged).
+  - New `tools/scripts/param_sweep.py` (mechanical, shared scanner metrics,
+    params-as-data, train/holdout split) + metric cache + 5 tests (suite 261).
+  - 40 variants swept (train Aug-Nov 2025) → 5 survivors evaluated once on
+    holdout (Dec 2025-Feb 2026): **every tuned variant collapsed OOS; BASE =
+    v1.6.0 won both windows** ($894/wk train, $1,323/wk holdout, 68-76% WR,
+    maxDD ≤$5k, mechanical, cap 10, no DD layer). pb40 pullback gate = the
+    instructive overfit (+$328/wk train → -$886/wk holdout).
+  - **Quality vs quantity (user question): quality wins** — long-hold M ≈2×
+    any short-hold profile's $/wk; quantity only buys lower DD ($1.9k vs
+    $3.4k) at half the income; the existing M+R blend beat both pure
+    profiles. risk 0.5%×cap10 noted as a lower-variance frontier point.
+  - Confirmed mechanically: scale-out valuable (totR 29.6→16.4 without),
+    RSI3<10 R-gate optimal, M stop 2.5× stands, time-stop reads are noise.
+  - **Holdout is now consumed.** Next fresh evidence = paper trading or
+    newly arriving market data. Agent-layer DD must justify itself vs the
+    mechanical baseline (its job: veto structural breaks, not shrink size).
 
 ---
 

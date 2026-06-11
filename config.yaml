@@ -14,7 +14,7 @@ risk:
   max_risk_per_trade_pct: 1.0
   max_portfolio_concentration_pct: 20.0
   daily_loss_limit_pct: 3.0
-  max_open_positions: 5
+  max_open_positions: 10  # 5 -> 10, human-ratified 2026-06-11
 
 # Income target — used by OPERATING_MANUAL.md §3 to size for "trading for a living".
 # This is NOT a quota; it gates whether the agent runs in NORMAL or DEFENSIVE mode

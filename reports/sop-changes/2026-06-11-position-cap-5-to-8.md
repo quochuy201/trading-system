@@ -42,6 +42,8 @@ worth ≤ +0.26R.
 
 ## Decision
 
-- [ ] APPROVED (date/initials): ______
+- [x] **APPROVED 2026-06-11 (user), modified: cap set to 10** (supersedes the
+  proposed 8). Heat ceiling 6% unchanged. Shipped to OPERATING_MANUAL.md §3.1
+  and config.yaml the same day.
 - [ ] REJECTED — reason: ______
 - [ ] DEFERRED until: ______
