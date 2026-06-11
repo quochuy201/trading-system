@@ -1,0 +1,17 @@
+[
+  {"name": "B0-v1.2-baseline", "stop_atr": 2.5, "time_stop": 20, "arm_r": 1.0,
+   "arm_atr": null, "width_atr": 2.0, "breakeven_r": null,
+   "giveback_frac": null, "swing_low": false, "scaleout_r": null},
+  {"name": "C1-early-arm-1atr", "stop_atr": 2.5, "time_stop": 20, "arm_r": null,
+   "arm_atr": 1.0, "width_atr": 2.0, "breakeven_r": null,
+   "giveback_frac": null, "swing_low": false, "scaleout_r": null},
+  {"name": "C2-giveback50", "stop_atr": 2.5, "time_stop": 20, "arm_r": null,
+   "arm_atr": 1.0, "width_atr": 2.0, "breakeven_r": null,
+   "giveback_frac": 0.5, "swing_low": false, "scaleout_r": null},
+  {"name": "C3-swing-low", "stop_atr": 2.5, "time_stop": 20, "arm_r": null,
+   "arm_atr": 1.0, "width_atr": 2.0, "breakeven_r": null,
+   "giveback_frac": null, "swing_low": true, "scaleout_r": null},
+  {"name": "C4-scaleout-2r", "stop_atr": 2.5, "time_stop": 20, "arm_r": 1.0,
+   "arm_atr": null, "width_atr": 2.0, "breakeven_r": null,
+   "giveback_frac": null, "swing_low": false, "scaleout_r": 2.0}
+]

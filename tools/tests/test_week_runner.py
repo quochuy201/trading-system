@@ -91,6 +91,9 @@ class TestDayLoopMechanics:
                 "stop_atr_mult": 2.5, "atr10": 2.0, "target_fill_pct": 4.0,
                 "target_price": None, "target_close_pct": None,
                 "time_stop_sessions": 4, "trail": False, "risk_pct": 1.0,
+                "trail_arm_r": None, "trail_width_atr": None,
+                "trail_breakeven_r": None,
+                "scaleout_r": None, "scaleout_frac": None,
                 "notional_cap_pct": 10.0, "gap_up_max_pct": None,
                 "gap_down_max_pct": None, "reason": "test"}
         base.update(kw)
@@ -185,7 +188,10 @@ class TestPlanReasonGuard:
         a.stop_price = None; a.stop_atr_mult = 2.5; a.atr10 = 2.0
         a.target_fill_pct = None; a.target_price = None
         a.target_close_pct = None; a.time_stop_sessions = 20
-        a.trail = 1; a.risk_pct = 1.0; a.notional_cap_pct = 10.0
+        a.trail = 1; a.trail_arm_r = 1.0; a.trail_width_atr = 2.0
+        a.trail_breakeven_r = None
+        a.scaleout_r = None; a.scaleout_frac = None
+        a.risk_pct = 1.0; a.notional_cap_pct = 10.0
         a.gap_up_max_pct = 5.0; a.gap_down_max_pct = 3.0
         a.reason = reason
         return a
@@ -210,3 +216,95 @@ class TestPlanReasonGuard:
         assert out.get("planned") == "XYZ"
         s = json.loads(self.state.read_text())
         assert len(s["pending_plans"]) == 1
+
+    def test_trail_without_thresholds_rejected(self, capsys):
+        a = self._plan_args("valid DD reason here")
+        a.trail_arm_r = None  # SOP numbers missing -> reject
+        wr.cmd_plan(a)
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        s = json.loads(self.state.read_text())
+        assert s["pending_plans"] == []
+
+
+class TestPlanParameterizedTrail(TestDayLoopMechanics):
+    """Trail arm/width come from the plan (SOP v1.2.0 profile: arm @ +1R,
+    width 2xATR10, NO breakeven step). Regression for the v1.1.0 profile
+    that was hardcoded in the runner through run 5."""
+
+    def _trail_plan(self, **kw):
+        base = self._plan(entry_type="market_open", limit_price=None,
+                          target_fill_pct=None, trail=True,
+                          time_stop_sessions=20, atr10=2.0,
+                          stop_atr_mult=2.5)
+        base.update({"trail_arm_r": 1.0, "trail_width_atr": 2.0,
+                     "trail_breakeven_r": None})
+        base.update(kw)
+        return base
+
+    def test_trail_arms_at_1r_and_exits_on_break(self, capsys):
+        # fill ~100 (open 100 + slippage). ATR10=2 -> 1R = 5.
+        # day2 close 106 (gain 6 >= 1R) arms trail at 106-4=102.
+        # day3 close 101 < 102 -> exit next open (day4).
+        self._bar("XYZ", "2025-06-02", 100.0, 101.0, 99.0, 100.5)
+        self._bar("XYZ", "2025-06-03", 101.0, 106.5, 100.5, 106.0)
+        self._bar("XYZ", "2025-06-04", 105.0, 105.5, 100.8, 101.0)
+        self._bar("XYZ", "2025-06-05", 101.5, 102.0, 100.0, 100.5)
+        self._init_state([self._trail_plan()])
+        for d in ["2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05"]:
+            self._run(d)
+        s = json.loads(self.state.read_text())
+        assert len(s["closed"]) == 1
+        t = s["closed"][0]
+        assert t["reason"] == "trailing_stop"
+        assert t["ts"].startswith("2025-06-05")
+
+    def test_scaleout_banks_half_at_threshold_next_open(self, capsys):
+        # ATR10=2, stop 2.5xATR -> 1R=5. scaleout at +2R = close >= fill+10.
+        # day2 close 111 (gain ~10.5 >= 2R) -> queue; day3 open 110: sell half.
+        # Remainder rides; day3 close 109 keeps it open (trail at peak 111-4=107).
+        self._bar("XYZ", "2025-06-02", 100.0, 101.0, 99.0, 100.5)
+        self._bar("XYZ", "2025-06-03", 102.0, 111.5, 101.0, 111.0)
+        self._bar("XYZ", "2025-06-04", 110.0, 110.5, 108.5, 109.0)
+        self._init_state([self._trail_plan(scaleout_r=2.0, scaleout_frac=0.5)])
+        for d in ["2025-06-02", "2025-06-03", "2025-06-04"]:
+            self._run(d)
+        s = json.loads(self.state.read_text())
+        assert len(s["closed"]) == 1
+        part = s["closed"][0]
+        assert part["reason"] == "scaleout_next_open" and part["partial"]
+        assert part["ts"].startswith("2025-06-04")
+        assert len(s["open"]) == 1
+        total = s["open"][0]["shares"] + part["shares"]
+        assert total == 99  # 10% notional cap @ ~100.05 fill
+        assert abs(part["shares"] - total / 2) <= 1  # ~half banked
+        assert s["open"][0]["scaled_out"] is True  # fires once only
+
+    def test_run_day_is_idempotent(self, capsys):
+        self._bar("XYZ", "2025-06-02", 100.0, 101.0, 99.0, 100.5)
+        self._init_state([self._trail_plan()])
+        self._run("2025-06-02")
+        capsys.readouterr()
+        self._run("2025-06-02")  # duplicate (run-5 bug: 10-17 ran twice)
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        s = json.loads(self.state.read_text())
+        assert len(s["log"]) == 1
+        assert s["open"][0]["sessions_held"] == 1  # not double-counted
+
+    def test_no_breakeven_step_when_not_requested(self, capsys):
+        # v1.1.0 BE step would have exited at breakeven on the dip below
+        # fill after a +1R excursion; v1.2.0 profile must NOT.
+        # ATR10=2 -> 1R=5. day2 close 105.6 (gain ~5.5 >= 1R): trail arms
+        # at 105.6-4=101.6 (> fill) — close 101.0 day3 breaks it.
+        # With arm_r=10 (never arms) and no BE, position survives the dip.
+        self._bar("XYZ", "2025-06-02", 100.0, 101.0, 99.0, 100.5)
+        self._bar("XYZ", "2025-06-03", 101.0, 106.0, 100.5, 105.6)
+        self._bar("XYZ", "2025-06-04", 105.0, 105.5, 100.5, 101.0)
+        self._bar("XYZ", "2025-06-05", 101.0, 103.0, 100.5, 102.5)
+        self._init_state([self._trail_plan(trail_arm_r=10.0)])
+        for d in ["2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05"]:
+            self._run(d)
+        s = json.loads(self.state.read_text())
+        assert s["closed"] == []          # no BE/trail exit
+        assert len(s["open"]) == 1

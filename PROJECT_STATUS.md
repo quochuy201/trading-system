@@ -4,7 +4,35 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-11 (session 4) · Branch: `main` (local, ahead of origin/main) · Tests: 246 passing, 0 failures
+Last updated: 2026-06-11 (session 4) · Branch: `main` (local, ahead of origin/main) · Tests: 256 passing, 0 failures
+
+---
+
+## ⏩ Session handoff — 2026-06-11 session 4b (cycle 2: SOP v1.5.0, M scale-out)
+
+**Hypothesis M-CAPTURE-1** (from run-5 findings) tested via mechanical replay
+on all 11 unique M trades (report:
+`reports/backtests/2026-06-11-m-exit-replay-v1.5.0.md`):
+- **REJECTED:** early trail arm at +1×ATR10 (CAL +3.24R → +2.19R),
+  giveback-50 (→ +2.44R), swing-low structure stop (→ +2.19R) — all clip
+  slow grinders (recorded in SOP v1.5.0 so they aren't re-invented).
+- **SHIPPED `sops/equity/swing/v1.5.0.md`:** M scale-out 50% at close ≥
+  fill+2R, execute next open, once; remainder rides the v1.2.0 trail.
+  Zero cost on CAL; STX +0.81R → +1.39R (n=1 upside —
+  FORWARD-VALIDATION-PENDING). Monitor skill synced.
+- **Runner-fidelity fixes (week_runner.py):** (1) trail was still hardcoded
+  v1.1.0 (BE@1R, arm@1.5R) — runs 3-5 never executed the v1.2.0 trail;
+  trail arm/width/BE + scale-out are now PLAN parameters (SOP owns numbers).
+  (2) run-day now idempotent (run 5 ran 2025-10-17 twice → time stops fired
+  a session early). (3) plans with --trail but no thresholds rejected.
+  +10 tests; suite 256 green.
+- **New replay tooling:** `tools/scripts/replay_exits.py` (generic,
+  variant-params-as-data) + trade/variant JSONs.
+
+**NEXT (cycle 3): agent-driven OOS validation of v1.5.0 on Dec 2025**
+(untouched window; Jan-Feb 2026 stays frozen for the full forward
+validation). Plan params for M per SOP v1.5.0: `--trail 1 --trail-arm-r 1.0
+--trail-width-atr 2.0 --scaleout-r 2.0 --scaleout-frac 0.5`.
 
 ---
 

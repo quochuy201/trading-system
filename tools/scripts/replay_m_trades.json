@@ -1,0 +1,13 @@
+[
+  {"symbol": "CAT",   "fill_date": "2025-08-26", "fill_price": 431.2155, "sample": "CAL"},
+  {"symbol": "XYZ",   "fill_date": "2025-08-26", "fill_price": null,     "sample": "CAL"},
+  {"symbol": "BURL",  "fill_date": "2025-09-08", "fill_price": null,     "sample": "CAL"},
+  {"symbol": "RDDT",  "fill_date": "2025-09-09", "fill_price": null,     "sample": "CAL"},
+  {"symbol": "SHOP",  "fill_date": "2025-09-25", "fill_price": null,     "sample": "CAL"},
+  {"symbol": "TLN",   "fill_date": "2025-09-25", "fill_price": null,     "sample": "CAL"},
+  {"symbol": "GOOGL", "fill_date": "2025-09-26", "fill_price": 247.3436, "sample": "CAL"},
+  {"symbol": "TSLA",  "fill_date": "2025-09-26", "fill_price": 428.4991, "sample": "CAL"},
+  {"symbol": "PLTR",  "fill_date": "2025-09-29", "fill_price": 179.7898, "sample": "CAL"},
+  {"symbol": "STX",   "fill_date": "2025-10-28", "fill_price": 229.2946, "sample": "CHECK"},
+  {"symbol": "SOFI",  "fill_date": "2025-10-29", "fill_price": 31.5107,  "sample": "CHECK"}
+]

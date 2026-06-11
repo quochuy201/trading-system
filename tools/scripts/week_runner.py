@@ -134,6 +134,16 @@ def cmd_plan(args):
         print(json.dumps({"error": "plan rejected: --reason is required "
                           "(log the DD thesis per SOP; no un-vetted entries)"}))
         return
+    if args.trail and (args.trail_arm_r is None or args.trail_width_atr is None):
+        # Trail thresholds are STRATEGY parameters — they come from the SOP
+        # via the plan, never hardcoded here (CLAUDE.md backtest rule 1).
+        print(json.dumps({"error": "plan rejected: --trail requires "
+                          "--trail-arm-r and --trail-width-atr (from the SOP)"}))
+        return
+    if (args.scaleout_r is None) != (args.scaleout_frac is None):
+        print(json.dumps({"error": "plan rejected: --scaleout-r and "
+                          "--scaleout-frac must be given together"}))
+        return
     s = load_state()
     plan = {
         "date": args.date, "symbol": args.symbol, "engine": args.engine,
@@ -143,7 +153,12 @@ def cmd_plan(args):
         "target_price": args.target_price,           # intrabar target (M optional)
         "target_close_pct": args.target_close_pct,   # R: close >= fill*(1+pct) -> exit next open
         "time_stop_sessions": args.time_stop_sessions,
-        "trail": bool(args.trail),                   # M: breakeven@1R, trail 2xATR@1.5R
+        "trail": bool(args.trail),                   # M trail; thresholds below from SOP
+        "trail_arm_r": args.trail_arm_r,             # arm trail at +N R (close gain)
+        "trail_width_atr": args.trail_width_atr,     # trail = highest_close - N*ATR10
+        "trail_breakeven_r": args.trail_breakeven_r, # optional BE step at +N R (v1.1.0 only)
+        "scaleout_r": args.scaleout_r,               # bank a fraction at +N R (close-based)
+        "scaleout_frac": args.scaleout_frac,
         "risk_pct": args.risk_pct, "notional_cap_pct": args.notional_cap_pct,
         "gap_up_max_pct": args.gap_up_max_pct, "gap_down_max_pct": args.gap_down_max_pct,
         "reason": args.reason,
@@ -179,6 +194,11 @@ def _try_fill(plan, bars, prev_close):
 def cmd_run_day(args):
     s = load_state()
     date = args.date
+    if any(entry.get("date") == date for entry in s["log"]):
+        # Idempotency guard: run 5 executed 2025-10-17 twice, double-counting
+        # sessions_held and firing time stops one session early.
+        print(json.dumps({"error": f"run-day {date} already executed (see log)"}))
+        return
     report = {"date": date, "fills": [], "exits": [], "events": [], "skipped": []}
 
     # ---- 1. queued exits from prior session (R target/time stops exit at open)
@@ -192,7 +212,10 @@ def cmd_run_day(args):
             unexecuted.append(ex)  # no data this date — KEEP the exit queued
             continue
         px = float(bars[0][1]) * (1 - SLIPPAGE)
-        _close(s, pos, px, ex["reason"], bars[0][0], report)
+        if ex.get("frac"):
+            _partial_close(s, pos, px, ex["reason"], ex["frac"], bars[0][0], report)
+        else:
+            _close(s, pos, px, ex["reason"], bars[0][0], report)
     s["pending_exits"] = unexecuted
 
     # ---- 2. fill pending entry plans
@@ -229,6 +252,12 @@ def cmd_run_day(args):
             "target_close_pct": plan["target_close_pct"],
             "time_stop_sessions": plan["time_stop_sessions"],
             "trail": plan["trail"], "trailing_stop": round(stop_px, 4),
+            "trail_arm_r": plan.get("trail_arm_r"),
+            "trail_width_atr": plan.get("trail_width_atr"),
+            "trail_breakeven_r": plan.get("trail_breakeven_r"),
+            "scaleout_r": plan.get("scaleout_r"),
+            "scaleout_frac": plan.get("scaleout_frac"),
+            "scaled_out": False,
             "highest_close": px, "prev_close": px, "sessions_held": 0,
             "risk_per_share": round(rps, 4), "reason": plan["reason"],
         }
@@ -262,15 +291,18 @@ def cmd_run_day(args):
             if pos["target_price"] and h >= pos["target_price"]:
                 _close(s, pos, pos["target_price"], "take_profit", ts, report)
                 continue
-            # trailing update (M profile: BE @1R, trail 2xATR @1.5R)
+            # trailing update — arm level / width / optional BE all come from
+            # the plan (SOP-owned numbers; nothing strategy-shaped lives here)
             if pos["trail"]:
                 gain = c - pos["fill_price"]
                 if c > pos["highest_close"]:
                     pos["highest_close"] = c
-                if gain >= pos["risk_per_share"] and pos["trailing_stop"] < pos["fill_price"]:
-                    pos["trailing_stop"] = pos["fill_price"]  # breakeven
-                if gain >= 1.5 * pos["risk_per_share"]:
-                    t = pos["highest_close"] - 2.0 * pos["atr10"]
+                be_r = pos.get("trail_breakeven_r")
+                if (be_r is not None and gain >= be_r * pos["risk_per_share"]
+                        and pos["trailing_stop"] < pos["fill_price"]):
+                    pos["trailing_stop"] = pos["fill_price"]  # breakeven step
+                if gain >= pos["trail_arm_r"] * pos["risk_per_share"]:
+                    t = pos["highest_close"] - pos["trail_width_atr"] * pos["atr10"]
                     if t > pos["trailing_stop"]:
                         pos["trailing_stop"] = t
             # event detection for LLM review
@@ -291,6 +323,11 @@ def cmd_run_day(args):
             s["pending_exits"].append({"id": pos["id"], "reason": "target_close_next_open"})
         elif pos["sessions_held"] >= pos["time_stop_sessions"]:
             s["pending_exits"].append({"id": pos["id"], "reason": "time_stop_next_open"})
+        elif (pos.get("scaleout_r") and not pos.get("scaled_out")
+                and day_close >= pos["fill_price"] + pos["scaleout_r"] * pos["risk_per_share"]):
+            pos["scaled_out"] = True  # once per position
+            s["pending_exits"].append({"id": pos["id"], "reason": "scaleout_next_open",
+                                       "frac": pos["scaleout_frac"]})
 
     report["eod_open"] = [
         {"symbol": p["symbol"], "engine": p["engine"], "shares": p["shares"],
@@ -315,6 +352,24 @@ def _close(s, pos, px, reason, ts, report):
            "fill": pos["fill_price"], "exit": round(px, 4), "reason": reason,
            "pnl": round(pnl, 2), "r": round(r_mult, 2), "ts": ts,
            "entry_reason": pos["reason"], "fill_date": pos["fill_date"]}
+    s["closed"].append(rec)
+    report["exits"].append(rec)
+
+
+def _partial_close(s, pos, px, reason, frac, ts, report):
+    """Scale out frac of the position at px; remainder keeps riding."""
+    part = int(pos["shares"] * frac)
+    if part < 1 or part >= pos["shares"]:
+        return
+    pnl = (px - pos["fill_price"]) * part
+    s["cash"] += part * px
+    pos["shares"] -= part
+    rec = {"symbol": pos["symbol"], "engine": pos["engine"], "shares": part,
+           "fill": pos["fill_price"], "exit": round(px, 4), "reason": reason,
+           "pnl": round(pnl, 2),
+           "r": round((px - pos["fill_price"]) / pos["risk_per_share"], 2),
+           "ts": ts, "entry_reason": pos["reason"], "fill_date": pos["fill_date"],
+           "partial": True}
     s["closed"].append(rec)
     report["exits"].append(rec)
 
@@ -385,6 +440,11 @@ def main():
     p.add_argument("--target-close-pct", type=float)
     p.add_argument("--time-stop-sessions", type=int, required=True)
     p.add_argument("--trail", type=int, default=0)
+    p.add_argument("--trail-arm-r", type=float)        # required when --trail 1
+    p.add_argument("--trail-width-atr", type=float)    # required when --trail 1
+    p.add_argument("--trail-breakeven-r", type=float)  # optional BE step
+    p.add_argument("--scaleout-r", type=float)         # optional partial take @ +N R
+    p.add_argument("--scaleout-frac", type=float)      # fraction sold (with --scaleout-r)
     p.add_argument("--risk-pct", type=float, required=True)
     p.add_argument("--notional-cap-pct", type=float, default=10.0)
     p.add_argument("--gap-up-max-pct", type=float)
