@@ -128,6 +128,12 @@ def cmd_scan(args):
 
 def cmd_plan(args):
     """Agent submits a trade plan (all parameters decided by the agent per SOP)."""
+    if not (args.reason or "").strip():
+        # Run-5 regression guard: a degraded session entered un-vetted
+        # positions (empty DD reason). The agent's thesis is mandatory.
+        print(json.dumps({"error": "plan rejected: --reason is required "
+                          "(log the DD thesis per SOP; no un-vetted entries)"}))
+        return
     s = load_state()
     plan = {
         "date": args.date, "symbol": args.symbol, "engine": args.engine,

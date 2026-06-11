@@ -160,3 +160,53 @@ class TestDayLoopMechanics:
         s = json.loads(self.state.read_text())
         assert len(s["closed"]) == 1  # exit executed on 06-05, not silently dropped
         assert s["closed"][0]["ts"].startswith("2025-06-05")
+
+
+class TestPlanReasonGuard:
+    """Plans without a DD reason must be rejected (run-5 regression:
+    two un-vetted entries slipped in when a degraded session planned
+    with empty --reason)."""
+
+    def setup_method(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.state = Path(self.tmp) / "state.json"
+        wr.STATE = self.state
+        self.state.write_text(json.dumps(
+            {"capital": 100000.0, "cash": 100000.0, "bar_mode": "daily",
+             "open": [], "closed": [], "pending_plans": [],
+             "pending_exits": [], "log": []}))
+
+    def _plan_args(self, reason):
+        class A: pass
+        a = A()
+        a.date = "2025-06-02"; a.symbol = "XYZ"; a.engine = "M"
+        a.entry_type = "market_open"; a.limit_price = None
+        a.stop_price = None; a.stop_atr_mult = 2.5; a.atr10 = 2.0
+        a.target_fill_pct = None; a.target_price = None
+        a.target_close_pct = None; a.time_stop_sessions = 20
+        a.trail = 1; a.risk_pct = 1.0; a.notional_cap_pct = 10.0
+        a.gap_up_max_pct = 5.0; a.gap_down_max_pct = 3.0
+        a.reason = reason
+        return a
+
+    def test_empty_reason_rejected(self, capsys):
+        wr.cmd_plan(self._plan_args(""))
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        s = json.loads(self.state.read_text())
+        assert s["pending_plans"] == []
+
+    def test_whitespace_reason_rejected(self, capsys):
+        wr.cmd_plan(self._plan_args("   "))
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        s = json.loads(self.state.read_text())
+        assert s["pending_plans"] == []
+
+    def test_real_reason_accepted(self, capsys):
+        wr.cmd_plan(self._plan_args("WB M rank1: roc50 34.3 rsi3 19.9 pullback"))
+        out = json.loads(capsys.readouterr().out)
+        assert out.get("planned") == "XYZ"
+        s = json.loads(self.state.read_text())
+        assert len(s["pending_plans"]) == 1
