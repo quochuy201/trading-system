@@ -39,8 +39,21 @@ cap 5→8 (HUMAN DECISION pending); (2) sector concentration (CEG/PWR/AVGO
 same factor) — no gate exists, n=1, watch; (3) scale-out never fired
 (no +2R close) — confirmed harmless OOS, upside still n=1; (4) event
 protocol executed correctly this run (7 large_drops evaluated, AVGO stop
-was the mechanical rule working). Next-cycle candidates: R slot
-reservation (SOP-expressible), concentration gate (needs more evidence).
+was the mechanical rule working).
+
+**Cycle 4 DONE — R-starvation counterfactual + cap proposal:**
+- R-STARVE-1 **largely refuted** (report:
+  `reports/backtests/2026-06-11-r-starvation-counterfactual.md`): 29 skipped
+  Dec washout signals → only 5 fills (83% were free skips — limit never
+  reached), +0.46R total. Slot cap cost in Dec was small.
+- R-slot reservation REJECTED (would have dropped TWLO +1.20R for ≤+0.26R).
+- **Position cap 5→8 PROPOSAL written for human ratification:**
+  `reports/sop-changes/2026-06-11-position-cap-5-to-8.md` (recommend approve
+  with heat ceiling unchanged + interim 2-per-sector rule).
+- **NEW hypothesis for cycle 5 (R-RR-1):** v1.4.0 R targets are structurally
+  0.2-0.6R vs a 1R (2.5×ATR10) stop when the ATR term dominates — engine
+  needs 63-83% WR to break even. Candidate: tighter R stop (e.g. 1.5×ATR10),
+  replay on the 19 historical R trades BEFORE any SOP change.
 
 ---
 
