@@ -50,10 +50,18 @@ was the mechanical rule working).
 - **Position cap 5→8 PROPOSAL written for human ratification:**
   `reports/sop-changes/2026-06-11-position-cap-5-to-8.md` (recommend approve
   with heat ceiling unchanged + interim 2-per-sector rule).
-- **NEW hypothesis for cycle 5 (R-RR-1):** v1.4.0 R targets are structurally
-  0.2-0.6R vs a 1R (2.5×ATR10) stop when the ATR term dominates — engine
-  needs 63-83% WR to break even. Candidate: tighter R stop (e.g. 1.5×ATR10),
-  replay on the 19 historical R trades BEFORE any SOP change.
+- **Cycle 5 DONE — R-RR-1 confirmed, SOP v1.6.0 SHIPPED:** R stop 2.5 →
+  **1.5×ATR10** (report:
+  `reports/backtests/2026-06-11-r-stop-width-replay-v1.6.0.md`). Replay on
+  all 15 fillable R signals: avg R +0.137 → +0.239 (+74%), holds in BOTH
+  cohorts (Aug-Oct +0.160→+0.282, Dec +0.092→+0.152), WR unchanged 73%,
+  only BABA grazed (-0.24 vs -0.23). 1.0×/1.25× tested & REJECTED (overfit:
+  zero adverse paths in n=15; BLDR -1.36R at 1.0× shows failure mode).
+  Monitor skill synced (R stop row). M stop unchanged 2.5×.
+- **LOOP STATE: STOP TUNING.** v1.4+v1.5+v1.6 are three stacked exit changes
+  calibrated on Aug-Dec 2025. Next step MUST be the frozen Jan-Feb 2026
+  forward validation (validates all three together); further replay tuning
+  on the same windows is overfitting by construction.
 
 ---
 

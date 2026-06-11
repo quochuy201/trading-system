@@ -1,0 +1,17 @@
+[
+  {"symbol": "ETSY", "signal_date": "2025-08-26", "cohort": "AUGOCT"},
+  {"symbol": "CSX",  "signal_date": "2025-08-26", "cohort": "AUGOCT"},
+  {"symbol": "APLD", "signal_date": "2025-09-08", "cohort": "AUGOCT"},
+  {"symbol": "HUM",  "signal_date": "2025-09-10", "cohort": "AUGOCT"},
+  {"symbol": "FERG", "signal_date": "2025-09-15", "cohort": "AUGOCT"},
+  {"symbol": "BLDR", "signal_date": "2025-09-19", "cohort": "AUGOCT"},
+  {"symbol": "ALAB", "signal_date": "2025-09-25", "cohort": "AUGOCT"},
+  {"symbol": "WBD",  "signal_date": "2025-10-10", "cohort": "AUGOCT"},
+  {"symbol": "BABA", "signal_date": "2025-10-10", "cohort": "AUGOCT"},
+  {"symbol": "COIN", "signal_date": "2025-10-17", "cohort": "AUGOCT"},
+  {"symbol": "ALNY", "signal_date": "2025-12-10", "cohort": "DEC"},
+  {"symbol": "CORZ", "signal_date": "2025-12-16", "cohort": "DEC"},
+  {"symbol": "NBIS", "signal_date": "2025-12-16", "cohort": "DEC"},
+  {"symbol": "CRDO", "signal_date": "2025-12-17", "cohort": "DEC"},
+  {"symbol": "NBIS", "signal_date": "2025-12-17", "cohort": "DEC"}
+]

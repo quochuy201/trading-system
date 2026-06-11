@@ -67,7 +67,7 @@ DIFFERS by engine — applying the wrong one destroys the engine's edge:
 
 | | Engine M (momentum) | Engine R (mean-reversion) |
 |---|---|---|
-| Stop | 2.5×ATR10 below fill, close-based | 2.5×ATR10 below fill, close-based |
+| Stop | 2.5×ATR10 below fill, close-based | **1.5×ATR10 below fill, close-based** (v1.6.0 — washout bounces work fast or fail fast; the 4-session clock bounds duration) |
 | Profit target | **Scale out 50% when close ≥ fill + 2R** (R = 2.5×ATR10 at entry; execute next open, fires once — SOP v1.5.0); remainder rides the trail | **Volatility-regime-adjusted resting intrabar limit from fill** (see SOP v1.4.0):<br>&nbsp;&nbsp;&nbsp;&nbsp;• spy_tr_atr < 0.8 (Low Vol): max(+2.5%, +0.5×ATR10)<br>&nbsp;&nbsp;&nbsp;&nbsp;• 0.8 ≤ spy_tr_atr ≤ 1.2 (Med Vol): max(+4%, +1×ATR10)<br>&nbsp;&nbsp;&nbsp;&nbsp;• spy_tr_atr > 1.2 (High Vol): max(+5.0%, +1.5×ATR10) |
 | Trailing | **≥ +1R: trail 2×ATR10 below highest close** (v1.2.0 — no breakeven step; trail never moves down) | **NEVER trail** — too short-lived |
 | Time stop | 20 sessions | 4 sessions → exit next open |
