@@ -50,6 +50,7 @@ For each open position, compare current price against the trade plan:
 |-------|-----------|--------|
 | Stop-loss | Bar CLOSES below stop_loss | EXIT at market (retry until filled) |
 | Take-profit | Current price ≥ take_profit | EXIT at market |
+| Partial scale-out (M only) | Engine M AND Current price ≥ entry + (2 × risk) | EXIT 50% of position at market |
 | Trailing stop | Current price ≤ trailing_stop_level | EXIT at market |
 | Dead money | Held 5+ days AND never reached +0.5R | EXIT at market |
 | Time stop | Current time ≥ time_stop (15 days) | EXIT at market |
@@ -57,26 +58,25 @@ For each open position, compare current price against the trade plan:
 | Approaching target (within 2%) | Price within 2% of target | ALERT (consider partial) |
 | None triggered | — | Update trailing stop if applicable |
 
-**Dead money rule:** If a position hasn't shown any momentum toward target within 5 trading days (never reached +0.5R from entry), the thesis isn't working. Exit early instead of waiting for the full stop to be hit. This turns -1.0R losses into -0.3R to -0.5R losses. Backtesting showed 62% of losers were "dead money" that slowly drifted to stop without ever gaining meaningfully.
+**Dead money rule:** If a position hasn't shown any momentum toward target within 5 trading days (never reached +0.5R from entry), the thesis isn't working. Exit early instead of waiting for the full stop to be hit. This turns -1.0R losses into -0.3R to -0.5R losses. Backtracking showed 62% of losers were "dead money" that slowly drifted to stop without ever gaining meaningfully.
 
 ### Engine-aware exit profiles (swing positions)
 
-Swing trade plans carry an `engine` field (`sops/equity/swing/v1.1.0.md` shared
-rule 3). The exit profile DIFFERS by engine — applying the wrong one destroys
-the engine's edge:
+Swing trade plans carry an `engine` field (shared rule 3). The exit profile 
+DIFFERS by engine — applying the wrong one destroys the engine's edge:
 
 | | Engine M (momentum) | Engine R (mean-reversion) |
 |---|---|---|
 | Stop | 2.5×ATR10 below fill, close-based | 2.5×ATR10 below fill, close-based |
-| Profit target | NONE — let it run | **Resting intrabar limit at max(+4%, +1×ATR10) from fill** (v1.3.0 — ATR-symmetric with the entry) |
+| Profit target | NONE — let it run | **Volatility-regime-adjusted resting intrabar limit from fill** (see SOP v1.4.0):<br>&nbsp;&nbsp;&nbsp;&nbsp;• spy_tr_atr < 0.8 (Low Vol): max(+2.5%, +0.5×ATR10)<br>&nbsp;&nbsp;&nbsp;&nbsp;• 0.8 ≤ spy_tr_atr ≤ 1.2 (Med Vol): max(+4%, +1×ATR10)<br>&nbsp;&nbsp;&nbsp;&nbsp;• spy_tr_atr > 1.2 (High Vol): max(+5.0%, +1.5×ATR10) |
 | Trailing | **≥ +1R: trail 2×ATR10 below highest close** (v1.2.0 — no breakeven step; trail never moves down) | **NEVER trail** — too short-lived |
 | Time stop | 20 sessions | 4 sessions → exit next open |
 | Dead money | **DO NOT APPLY to Engine M** (v1.3.0: replay shows it dumps slow-starting winners — CAT was below +0.5R at session 10 and finished +1.7R). Legacy rule applies to intraday/legacy plans only. | Not applicable (time stop is tighter) |
 
-The R rules are mechanical and absolute: when the +4% close or the 4-session
-clock hits, exit at the next open — do NOT re-evaluate the thesis, do NOT hold
-for "a bit more". The R engine's profitability comes from taking many small
-exits fast (Bensdorp Sys-3: short duration IS the edge).
+The R rules are mechanical and absolute: when the intrabar limit price is touched 
+or the 4-session clock hits, exit at the next open — do NOT re-evaluate the 
+thesis, do NOT hold for "a bit more". The R engine's profitability comes from 
+taking many small exits fast (Bensdorp Sys-3: short duration IS the edge).
 
 ### Step 4: Execute Exits
 
@@ -278,7 +278,7 @@ Run at 15:30 ET. The LLM reads current regime and vol data and makes a qualitati
 
 **Regime check (EMA20 / SMA50):**
 - INTACT → no action
-- WEAKENING → note in log; re-evaluate at next 15:30 check
+- WEAKENING → note in log; re-evaluate at next 15:30 cut
 - BROKEN → close full position, exit reason: `thesis_broken_regime`
 
 **Vol-thesis check (IVR / IV-HV):**

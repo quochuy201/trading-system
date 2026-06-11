@@ -25,7 +25,7 @@ The Research agent scans a broad universe and filters down. Start wide, filter a
 | Market cap | > $1B | Institutional interest, less manipulation |
 | Listed exchange | NYSE, NASDAQ, AMEX | Regulated, reliable data |
 
-### Swing Trade Scan — Two Engines (SOP: `sops/equity/swing/v1.1.0.md`)
+### Swing Trade Scan — Two Engines (SOP: `sops/equity/swing/`)
 
 Call `scan_swing_candidates()` — it applies the SOP's mechanical gates and
 returns both engine verdicts per symbol. **The scanner gates; you decide.**
@@ -46,7 +46,7 @@ Your jobs after the scan, per the SOP:
      customer loss, secular demand break → **VETO, log "R-G7-FAIL"**
 5. **Entry discipline** (non-negotiable): M = next-open market order, skip if
    gap up >5% or down >3%. R = limit **0.5×ATR10% below previous close**
-   (ATR-scaled, SOP v1.1.0), day-only; no fill = no trade. Never chase a
+   (ATR-scaled, see SOP), day-only; no fill = no trade. Never chase a
    missed R fill.
 6. **Reentry**: a re-qualifying setup after a stop-out is a NEW valid trade
    (Bensdorp ch.6 §9) — max 2 entries per symbol per week.
@@ -60,7 +60,7 @@ without squinting, relative strength, room to run (not extended), defined
 Engine R (expect ~55-65% WR, small fast winners): sharp 3-day stretch in a
 stock whose LONG-TERM uptrend is intact (>SMA150), drop caused by emotion not
 fundamentals, wide 2.5×ATR10 stop so the bottom has room to form, exit fast
-(+4% or 4 sessions).
+(volatility-regime-adjusted target or 4 sessions).
 
 **Red flags that kill profitability (either engine):**
 - Extended move (> 2.5 ATRs above SMA25) — you're chasing (M-G7)

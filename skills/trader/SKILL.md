@@ -385,6 +385,18 @@ Full sizing-framework rationale in SOP Phase 4 and `OPERATING_MANUAL.md §3`.
 - No entries after 11:30 AM ET (per SOP)
 - All positions must close by 3:45 PM ET
 
+### Swing Trade (Equities)
+- Follow `sops/equity/swing/` for engine-specific entry/exit rules and parameters
+- **Entry levels**: 
+  - Engine M: next-open market order (skip if gap up >5% or down >3%)
+  - Engine R: limit order at 0.5×ATR10% below previous close (day-only)
+- **Exit levels**: Consult current SOP for engine-specific profit targets and stop losses
+  - Engine M: Profit target_NONE_ (trail 2×ATR10 below highest close after +1R)
+  - Engine R: Profit target = volatility-regime-adjusted resting intrabar limit (see SOP)
+  - Both engines: Stop loss = 2.5×ATR10 below fill (close-based)
+- **Position sizing**: Follow conviction-scaled sizing from Step 3 of Trade Planning Process
+- **Regime awareness**: Adjust conviction based on market regime from Risk Manager
+
 ### Options
 - See "Options Execution — Vol-Edge SOP" section above for the full flow.
 - This SOP is a **swing strategy** — positions are held overnight; no mechanical end-of-day
