@@ -29,10 +29,18 @@ on all 11 unique M trades (report:
 - **New replay tooling:** `tools/scripts/replay_exits.py` (generic,
   variant-params-as-data) + trade/variant JSONs.
 
-**NEXT (cycle 3): agent-driven OOS validation of v1.5.0 on Dec 2025**
-(untouched window; Jan-Feb 2026 stays frozen for the full forward
-validation). Plan params for M per SOP v1.5.0: `--trail 1 --trail-arm-r 1.0
---trail-width-atr 2.0 --scaleout-r 2.0 --scaleout-frac 0.5`.
+**Cycle 3 DONE — RUN 6: Dec 2025 OOS under frozen v1.5.0** (report:
+`reports/backtests/2025-dec-oos-swing-v1.5.0.md`): 6 trades (all M), 33% WR,
+**+0.76R total (+0.127R/trade), -$58** — positive expectancy at low WR
+(winners +1.23R avg vs losers -0.43R). Key findings: (1) **R starvation** —
+10+ R washouts during the Dec 10-19 AI-infra selloff all blocked by the
+5-slot cap or a Dec 15-19 scan-batching slip → strongest evidence yet for
+cap 5→8 (HUMAN DECISION pending); (2) sector concentration (CEG/PWR/AVGO
+same factor) — no gate exists, n=1, watch; (3) scale-out never fired
+(no +2R close) — confirmed harmless OOS, upside still n=1; (4) event
+protocol executed correctly this run (7 large_drops evaluated, AVGO stop
+was the mechanical rule working). Next-cycle candidates: R slot
+reservation (SOP-expressible), concentration gate (needs more evidence).
 
 ---
 
