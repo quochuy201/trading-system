@@ -68,10 +68,10 @@ the engine's edge:
 | | Engine M (momentum) | Engine R (mean-reversion) |
 |---|---|---|
 | Stop | 2.5×ATR10 below fill, close-based | 2.5×ATR10 below fill, close-based |
-| Profit target | NONE — let it run | **Resting intrabar limit at +4% from fill** (v1.1.0) |
+| Profit target | NONE — let it run | **Resting intrabar limit at max(+4%, +1×ATR10) from fill** (v1.3.0 — ATR-symmetric with the entry) |
 | Trailing | **≥ +1R: trail 2×ATR10 below highest close** (v1.2.0 — no breakeven step; trail never moves down) | **NEVER trail** — too short-lived |
 | Time stop | 20 sessions | 4 sessions → exit next open |
-| Dead money | Standard 5-day/+0.5R rule | Not applicable (time stop is tighter) |
+| Dead money | **DO NOT APPLY to Engine M** (v1.3.0: replay shows it dumps slow-starting winners — CAT was below +0.5R at session 10 and finished +1.7R). Legacy rule applies to intraday/legacy plans only. | Not applicable (time stop is tighter) |
 
 The R rules are mechanical and absolute: when the +4% close or the 4-session
 clock hits, exit at the next open — do NOT re-evaluate the thesis, do NOT hold
