@@ -97,15 +97,31 @@ shipped** (scanner mirrored, monitor updated, 243 tests green):
 - M trail armed at +1R, breakeven step dropped (replay: M +$841 → +$1,534)
 Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 
+**SOP v1.3.0 SHIPPED (exit-strategy round, from capture-efficiency audit):**
+- R target → resting intrabar limit at **max(+4%, +1×ATR10)** (replay: R
+  +$312 → +$711). Entry and exit now both ATR-scaled.
+- Trail@1R re-confirmed on full 10-trade M set (+$2,009 → +$3,428).
+- TESTED AND REJECTED (recorded in SOP so nobody re-adds them): stagnation
+  exit (<+0.5R @ 10 sessions — would dump CAT-type slow winners, M → -$820);
+  trail ratchet (no effect). Monitor dead-money rule scoped AWAY from Engine M.
+- Combined v1.2.0+v1.3.0 replay on Aug-Oct span ≈ $570/wk @ ~76% WR —
+  IN-SAMPLE ARITHMETIC, not a forecast. Forward validation is the gate.
+
 **NEXT STEPS:**
-1. Forward-validate v1.2.0 on unseen window (Jan-Feb 2026; needs daily
+1. Forward-validate v1.2.0+v1.3.0 on unseen window (Jan-Feb 2026; needs daily
    refresh for the 400-name universe through Feb on user's machine:
    `uv run python scripts/load_universe.py --daily-end 2026-02-28`).
+   NO retuning on that window. Runner supports everything via plan params
+   (`--target-fill-pct` = max(4, atr_pct), trail logic in runner).
 2. HUMAN DECISIONS pending: (a) position cap 5 → 8 (OPERATING_MANUAL change;
-   setups exceeded slots repeatedly), (b) R conviction recalibration if the
-   RSI3<10 cohort keeps winning forward.
-3. Process note: scan-BEFORE-run sequencing is mandatory (4 entries missed
-   early in run 4 from batched scan+run; fixed mid-run, logged in report).
+   setups exceeded slots repeatedly), (b) R conviction recalibration (full
+   1% size for RSI3<10 cohort) if it keeps winning forward, (c) Engine S
+   (short) — deferred 2026-06-10 until long side validated.
+3. Process notes for ANY agent running backtests (learned the hard way):
+   scan-BEFORE-run sequencing is mandatory (4 entries missed in run 4 from
+   batched scan+run); decisions only from data strictly before the scan date;
+   daily-bar mode loses same-day target hits (conservative, acceptable).
+   Background reading distilled in `docs/references/trading-knowledge-notes.md`.
 2. HUMAN DECISION (2026-06-10): **short engine DEFERRED** — develop long side
    first; hostile regime → sit in cash (routing §1 enforces).
 3. Later: Jan-Feb 2026 OOS window (needs hourly or daily refresh through Feb),
