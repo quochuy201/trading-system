@@ -58,3 +58,30 @@ on shipping any variant despite this data belongs to the human — presented,
 not shipped.
 
 Suite: 261 tests green (harness extension covered by existing mechanics tests).
+
+## Addendum — progressive-width trail ("dynamic stop that scales with profit")
+
+User-requested follow-up: trail arms EARLY but starts wide and tightens as
+peak gain grows (tier set by best gain achieved; protection never loosens).
+`m_trail_tiers` added to the harness. Four tier schedules tested:
+
+| Config (arm/width tiers) | Train $/wk | Holdout $/wk | Holdout M avg R |
+|---|---|---|---|
+| **A: control v1.6.0** (arm +1R, 2×ATR flat) | 894 | **1,323** | +0.746 |
+| P2 gentle (.5R/2.5 → 1R/2 → 2R/1.5) | 953 | 1,078 | +0.561 |
+| P1 standard (.5R/3 → 1R/2 → 2R/1) | 584 | 867 | +0.353 |
+| P3 early-arm (.3R/3 → …) | 584 | 867 | +0.353 |
+| P4 wide-long (.5R/3 → 1.5R/2) | 638 | 625 | +0.385 |
+
+- No schedule beats control on both windows (pre-agreed ship criterion).
+  The gentlest (P2) edges train (+$59/wk, DD -$1,100) but gives up
+  -$245/wk on holdout. Aggressive schedules lose 30-50% everywhere.
+- Mechanism unchanged from every prior protect-early test: early/tight
+  protection trades small saved givebacks for amputated runners
+  (holdout M expectancy -25% to -53%).
+- One honest observation FOR the idea: profit protection consistently buys
+  a smoother equity curve (P2 train DD $3.9k vs $5.0k) at the cost of
+  income — same trade-off as quantity-vs-quality. If smoothness ever
+  matters more than P&L (e.g., living off withdrawals), P2 is the
+  best-tested smoothness candidate.
+- **REJECTED for P&L purposes; recorded here so it isn't re-invented.**

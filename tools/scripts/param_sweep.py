@@ -174,7 +174,18 @@ def simulate(cache, bars, days, cfg):
                     done = True
             # current stop level (initial stop, possibly lifted by armed trail)
             lvl = p["stop"]
-            if p["eng"] == "M" and p.get("armed"):
+            tiers = cfg.get("m_trail_tiers")
+            if p["eng"] == "M" and tiers:
+                # progressive trail: width tightens as PEAK gain grows
+                # (tier set by best gain achieved -> protection never loosens)
+                peak_gain_r = (p["peak"] - p["fill"]) / p["rps"]
+                width = None
+                for thr, w in tiers:
+                    if peak_gain_r >= thr:
+                        width = w
+                if width is not None:
+                    lvl = max(lvl, p["peak"] - width * p["atr"])
+            elif p["eng"] == "M" and p.get("armed"):
                 lvl = max(lvl, p["peak"] - cfg["m_trail_width_atr"] * p["atr"])
             if p["eng"] == "R" and cfg.get("r_trail_arm_atr") and \
                     p["peak_high"] >= p["fill"] + cfg["r_trail_arm_atr"] * p["atr"]:
