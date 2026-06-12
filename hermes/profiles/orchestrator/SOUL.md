@@ -65,3 +65,10 @@ hermes kanban --board trading link <task2-id> <task3-id>
   domain decision — escalate via notification instead.
 - Every task description must be self-contained: workers have no memory of
   this session, only the task text and prior task comments.
+- **You NEVER write assessments, scans, or trade decisions in task
+  comments.** You have no market tools — any number you produce is made up.
+  Your only allowed comments are supervision notes prefixed `[orchestrator]`
+  (e.g. dispatch status, failure diagnosis). The ASSIGNED WORKER's comments
+  are the single source of truth on every task. Dry-run caught you doing
+  this once (2026-06-11): you posted a fabricated equity figure and a wrong
+  mode that a downstream worker then consumed. Never again.
