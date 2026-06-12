@@ -5,6 +5,7 @@ to the trading system agents via Model Context Protocol.
 """
 
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -2411,5 +2412,90 @@ def end_backtest() -> str:
     return json.dumps({"ended": True, "run_id": run_id, "broker_restored": restored})
 
 
+# ---------------------------------------------------------------------------
+# Role-scoped tool exposure (Hermes kanban profiles)
+#
+# Each worker profile sets TRADING_TOOL_GROUPS (comma-separated) so its MCP
+# connection only exposes the tools its SKILL.md declares in requires_tools.
+# Unset / "all" -> every tool (back-compat for the monolithic profile and dev).
+# Group membership mirrors each skill's requires_tools frontmatter — keep them
+# in sync when a skill's contract changes.
+# ---------------------------------------------------------------------------
+TOOL_GROUPS: dict[str, set[str]] = {
+    "common": {"check_kill_switch", "log_decision", "send_notification", "get_account"},
+    "research": {
+        "get_market_data", "get_historical_data", "get_latest_bars", "get_news",
+        "get_social_sentiment", "calc_technical_indicators", "score_catalyst",
+        "load_price_cache", "query_price_cache", "scan_for_candidates",
+        "scan_swing_candidates", "get_market_regime",
+        # options DD (vol-edge program)
+        "get_options_chain", "get_options_market_data", "calc_iv_rank",
+        "calc_hv", "get_put_skew", "calc_expected_move",
+    },
+    "trader": {
+        "calc_position_size", "check_portfolio_risk", "check_daily_limits",
+        "get_portfolio_state", "get_market_data", "get_latest_bars",
+        "place_order", "cancel_order", "save_trade_plan", "save_transaction",
+        "score_catalyst", "get_trade_plan", "get_positions",
+        # options execution (vol-edge)
+        "place_multileg_order", "get_options_chain", "get_options_market_data",
+        "calc_expected_move",
+    },
+    "monitor": {
+        "get_positions", "get_market_data", "get_latest_bars", "place_order",
+        "save_transaction", "get_trade_plan", "get_portfolio_state",
+        "check_daily_limits", "cancel_order", "calc_technical_indicators",
+        "get_options_positions", "get_options_market_data",
+    },
+    "risk": {
+        "check_daily_limits", "get_positions", "get_portfolio_state",
+        "get_compliance_score", "generate_performance_report",
+        "query_decisions", "query_transaction_ledger", "get_market_regime",
+        "calc_position_size", "check_portfolio_risk",
+        # kill-switch authority lives with the risk profile
+        "activate_kill_switch", "clear_kill_switch",
+    },
+    "eod": {
+        "query_decisions", "query_transaction_ledger",
+        "generate_performance_report", "get_compliance_score",
+        "get_portfolio_state", "get_positions",
+    },
+    "backtest": {
+        "start_backtest_v2", "advance_to_next_day", "load_day_bars",
+        "step_bar", "backtest_enter", "backtest_exit",
+        "get_backtest_positions", "get_backtest_results", "end_backtest",
+        "load_market_data", "scan_for_candidates", "scan_swing_candidates",
+        "calc_technical_indicators", "get_market_data", "get_news",
+        "get_social_sentiment", "score_catalyst", "calc_position_size",
+        "check_portfolio_risk", "check_daily_limits", "log_backtest_decision",
+        "export_backtest_jsonl", "load_price_cache", "query_price_cache",
+        "get_market_regime",
+    },
+}
+
+
+def _apply_tool_groups() -> None:
+    raw = os.environ.get("TRADING_TOOL_GROUPS", "").strip()
+    if not raw or raw.lower() == "all":
+        return
+    allowed: set[str] = set(TOOL_GROUPS["common"])
+    for group in raw.split(","):
+        group = group.strip().lower()
+        if group and group != "common":
+            if group not in TOOL_GROUPS:
+                logging.getLogger(__name__).warning(
+                    "Unknown TRADING_TOOL_GROUPS entry: %s", group)
+                continue
+            allowed |= TOOL_GROUPS[group]
+    registry = mcp._tool_manager._tools  # FastMCP internal registry
+    removed = [name for name in list(registry) if name not in allowed]
+    for name in removed:
+        del registry[name]
+    logging.getLogger(__name__).info(
+        "Tool groups %s: exposing %d tools (removed %d)",
+        raw, len(registry), len(removed))
+
+
 if __name__ == "__main__":
+    _apply_tool_groups()
     mcp.run()

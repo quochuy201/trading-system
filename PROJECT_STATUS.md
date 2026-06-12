@@ -82,6 +82,40 @@ was the mechanical rule working).
 
 ---
 
+## ⏩ Session handoff — 2026-06-11 session 4c (Hermes kanban redesign + deploy)
+
+**User report:** monolithic Hermes profile placed NO orders and started slowly
+(all 6 skills + 52 tools up front). **Root causes found:** (1) the installer
+copied `mcp.json` into the profile but Hermes never reads it — MCP servers
+must be registered via `hermes mcp add`, so the agent had ZERO trading tools;
+(2) all skills/tools loaded into one session.
+
+**Shipped (kanban multi-profile layout, v2 install):**
+- `hermes/profiles/*/SOUL.md` — lean orchestrator (kanban coordinator, no
+  MCP) + 5 worker stubs (research/trader/monitor/risk/eod), each loading ONE
+  skill.
+- `TRADING_TOOL_GROUPS` gating in `tools/server.py` (+6 tests, suite 267):
+  per-role MCP tool exposure — research 22, trader 21, monitor 16, risk 16,
+  eod 10 of 52. Groups mirror each skill's `requires_tools`.
+- `tools/run_mcp.sh` launcher (hermes mcp add can't pass dash-args).
+- `install.sh` rewritten: 6 profiles, per-profile `hermes -p X mcp add`
+  (non-interactive), kanban board `trading`, dispatcher ticker script.
+- Cron (host is US/Pacific → ET-adjusted): `trading-morning` @ 6:35 PT
+  weekdays (orchestrator profile store) + `trading-kanban-tick` every 5 min
+  6-13 PT (global, --no-agent).
+- Hermes CLI gotchas documented in cron/README-kanban.md + orchestrator
+  SOUL: `--board` BEFORE subcommand; `--assignee/--body`; positional prompt
+  before `--name`; per-profile cron stores; `-p` is argv-preprocessed.
+
+**Validated:** research worker spawns in ~16-34s with scoped tools and made
+real Alpaca-backed calls (check_kill_switch, scan_swing_candidates); trader
+worker did a full paper order round-trip (place limit far-OTM -> cancel ->
+log_decision, unprompted skill compliance); kanban task lifecycle
+(create -> dispatch -> spawn -> comment -> complete) ran in 34s. Full
+orchestrator daily-cycle dry run in progress at handoff time.
+
+---
+
 ## ⏩ Session handoff — 2026-06-11 session 4 (run-5 post-mortem + plan guard)
 
 **Context:** the 2026-06-10 overnight `/iterate` session ran backtest windows

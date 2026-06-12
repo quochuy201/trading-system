@@ -26,33 +26,79 @@ log() { echo "[install] $*"; }
 run() { if [ "$DRY_RUN" = true ]; then echo "[dry-run] $*"; else "$@"; fi; }
 
 install_hermes() {
+    # Kanban multi-profile layout (v2): one lean orchestrator + five worker
+    # profiles. Each worker loads ONLY its skill and a role-scoped MCP tool
+    # set (TRADING_TOOL_GROUPS gates registration in tools/server.py) — this
+    # replaces the monolithic profile whose all-skills/all-tools startup was
+    # slow and which never had its MCP server registered (mcp.json is not
+    # read by Hermes; servers must be added via `hermes mcp add`).
     local HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-    local PROFILE_DIR="$HERMES_HOME/profiles/trading-system"
+    local ROLES="orchestrator research trader monitor risk eod"
 
-    log "Installing as Hermes profile at $PROFILE_DIR"
+    for role in $ROLES; do
+        local PROFILE="trading-$role"
+        local PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE"
+        log "Installing profile $PROFILE"
+        run mkdir -p "$PROFILE_DIR"
+        run cp "$REPO_DIR/hermes/profiles/$role/SOUL.md" "$PROFILE_DIR/SOUL.md"
+        run cp "$REPO_DIR/OPERATING_MANUAL.md" "$PROFILE_DIR/OPERATING_MANUAL.md"
 
-    run mkdir -p "$PROFILE_DIR"
-    run cp "$REPO_DIR/SOUL.md" "$PROFILE_DIR/SOUL.md"
-    # OPERATING_MANUAL.md is the constitution SOUL.md says to READ FIRST — the
-    # agent is non-functional without it. Must be installed alongside SOUL.md.
-    run cp "$REPO_DIR/OPERATING_MANUAL.md" "$PROFILE_DIR/OPERATING_MANUAL.md"
-    run cp "$REPO_DIR/config.yaml" "$PROFILE_DIR/config.yaml"
-    run cp "$REPO_DIR/mcp.json" "$PROFILE_DIR/mcp.json"
-    run cp "$REPO_DIR/distribution.yaml" "$PROFILE_DIR/distribution.yaml"
-    run cp "$REPO_DIR/.env.EXAMPLE" "$PROFILE_DIR/.env.EXAMPLE"
-    # Copy directory *contents* (trailing /.) so our skills/sops/cron overwrite
-    # in place when the profile already exists. A plain `cp -r src dst` nests as
-    # dst/src when dst pre-exists (e.g. a live Curator-managed profile), leaving
-    # the files Hermes actually loads stale. Merge-copy preserves other skills.
-    run mkdir -p "$PROFILE_DIR/skills" "$PROFILE_DIR/sops" "$PROFILE_DIR/cron"
-    run cp -R "$REPO_DIR/skills/." "$PROFILE_DIR/skills/"
-    run cp -R "$REPO_DIR/sops/." "$PROFILE_DIR/sops/"
-    run cp -R "$REPO_DIR/cron/." "$PROFILE_DIR/cron/"
+        if [ "$role" != "orchestrator" ]; then
+            # one skill per worker (merge-copy: trailing /. avoids nesting)
+            local SKILL_SRC_NAME="$role"
+            [ "$role" = "risk" ] && SKILL_SRC_NAME="risk-manager"
+            [ "$role" = "eod" ] && SKILL_SRC_NAME="eod-review"
+            run mkdir -p "$PROFILE_DIR/skills/$SKILL_SRC_NAME"
+            run cp -R "$REPO_DIR/skills/$SKILL_SRC_NAME/." "$PROFILE_DIR/skills/$SKILL_SRC_NAME/"
+            # research/trader/monitor/risk consult SOPs; eod does not
+            if [ "$role" != "eod" ]; then
+                run mkdir -p "$PROFILE_DIR/sops"
+                run cp -R "$REPO_DIR/sops/." "$PROFILE_DIR/sops/"
+            fi
+            # role-scoped MCP registration (idempotent: remove then add).
+            # HERMES_PROFILE targets the profile; the launcher script avoids
+            # `--args` (argparse rejects dash-prefixed values like --directory).
+            local GROUP="$role"
+            if [ "$DRY_RUN" = true ]; then
+                echo "[dry-run] HERMES_PROFILE=$PROFILE hermes mcp add trading-tools (TRADING_TOOL_GROUPS=$GROUP)"
+            else
+                hermes -p "$PROFILE" mcp remove trading-tools >/dev/null 2>&1 || true
+                # `mcp add` interactively asks "Enable all N tools?" — answer yes
+                printf 'y\n' | hermes -p "$PROFILE" mcp add trading-tools \
+                    --command "$REPO_DIR/tools/run_mcp.sh" \
+                    --env "TRADING_TOOL_GROUPS=$GROUP"
+            fi
+        fi
+    done
+
+    # Shared kanban board + dispatcher ticker script
+    if [ "$DRY_RUN" = true ]; then
+        echo "[dry-run] hermes kanban init && boards create trading"
+        echo "[dry-run] install ~/.hermes/scripts/trading-kanban-tick.sh"
+    else
+        hermes kanban init >/dev/null 2>&1 || true
+        hermes kanban boards create trading >/dev/null 2>&1 || true
+        mkdir -p "$HERMES_HOME/scripts"
+        cat > "$HERMES_HOME/scripts/trading-kanban-tick.sh" <<'TICK'
+#!/usr/bin/env bash
+# Dispatch ready trading tasks (scheduled monitor/eod tasks + retries).
+# Silent when nothing to do (cron --no-agent: empty stdout = no delivery).
+out=$(hermes kanban dispatch --board trading --max 3 --json 2>/dev/null)
+spawned=$(printf '%s' "$out" | python3 -c 'import json,sys
+try: print(len(json.load(sys.stdin).get("spawned", [])))
+except Exception: print(0)' 2>/dev/null)
+[ "${spawned:-0}" -gt 0 ] && echo "dispatched $spawned trading task(s)"
+exit 0
+TICK
+        chmod +x "$HERMES_HOME/scripts/trading-kanban-tick.sh"
+    fi
 
     log "Done. Next steps:"
-    log "  1. cp $PROFILE_DIR/.env.EXAMPLE $PROFILE_DIR/.env && edit .env"
-    log "  2. Start tools: cd $REPO_DIR/tools && uv run server.py"
-    log "  3. Run: hermes -p trading-system chat"
+    log "  1. Ensure .env at repo root has ALPACA keys (server.py loads it)"
+    log "  2. Register cron jobs (see cron/README-kanban.md):"
+    log "       hermes cron create '35 9 * * 1-5' --name trading-morning ..."
+    log "  3. Smoke test a worker: hermes -p trading-research -z 'list your tools'"
+    log "  4. Morning cycle manually: hermes -p trading-orchestrator chat"
 }
 
 install_kermes() {
