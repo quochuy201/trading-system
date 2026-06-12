@@ -128,6 +128,16 @@ def r_target_pct(tr_atr, atr_pct, cfg):
     return max(cfg["r_target_high_floor"], cfg["r_target_high_atr"] * atr_pct)
 
 
+def swing_low_before(df, day, lookback=20):
+    """Most recent confirmed 2-bar-fractal low strictly before `day`, or None."""
+    lows = df[df.index < day]["low"].tolist()[-lookback:]
+    for i in range(len(lows) - 3, 1, -1):
+        if lows[i] < lows[i - 1] and lows[i] < lows[i - 2] \
+                and lows[i] < lows[i + 1] and lows[i] < lows[i + 2]:
+            return lows[i]
+    return None
+
+
 def simulate(cache, bars, days, cfg):
     cash, open_pos, closed = CAPITAL, [], []
     equity_curve = []
@@ -140,6 +150,8 @@ def simulate(cache, bars, days, cfg):
         # ---- exits first (mirror week_runner order: queued exits at open)
         still = []
         for p in open_pos:
+            touch = cfg.get(f"exec_mode_{p['eng'].lower()}",
+                            cfg.get("exec_mode")) == "touch"
             b = bars[p["sym"]]
             if day not in b.index:
                 still.append(p)
@@ -160,11 +172,34 @@ def simulate(cache, bars, days, cfg):
                     cash += p["shares"] * px
                     closed.append({**p, "exit": px, "reason": p["exit_at_open"], "exit_date": day})
                     done = True
-            if not done:
-                # close-based stop / trail breach checked on PRIOR close
-                lvl = p["stop"]
-                if p["eng"] == "M" and p.get("armed"):
-                    lvl = max(lvl, p["peak"] - cfg["m_trail_width_atr"] * p["atr"])
+            # current stop level (initial stop, possibly lifted by armed trail)
+            lvl = p["stop"]
+            if p["eng"] == "M" and p.get("armed"):
+                lvl = max(lvl, p["peak"] - cfg["m_trail_width_atr"] * p["atr"])
+            if p["eng"] == "R" and cfg.get("r_trail_arm_atr") and \
+                    p["peak_high"] >= p["fill"] + cfg["r_trail_arm_atr"] * p["atr"]:
+                lvl = max(lvl, p["peak_high"] - cfg["r_trail_width_atr"] * p["atr"])
+            if not done and touch:
+                # TOUCH MODE: resting stop order — fills the moment price trades
+                # through it. Pessimistic intrabar ordering: stop before target.
+                if o <= lvl or l <= lvl:
+                    px = (o if o <= lvl else lvl) * (1 - SLIPPAGE)
+                    cash += p["shares"] * px
+                    closed.append({**p, "exit": px, "reason": "stop", "exit_date": day})
+                    done = True
+                if not done and cfg.get("m_scaleout_r") and p["eng"] == "M" \
+                        and not p.get("scaled") \
+                        and h >= p["fill"] + cfg["m_scaleout_r"] * p["rps"]:
+                    so_px = p["fill"] + cfg["m_scaleout_r"] * p["rps"]
+                    part = int(p["shares"] * cfg["m_scaleout_frac"])
+                    if 0 < part < p["shares"]:
+                        cash += part * so_px
+                        closed.append({**p, "shares": part, "exit": so_px, "partial": True,
+                                       "reason": "scaleout", "exit_date": day})
+                        p["shares"] -= part
+                    p["scaled"] = True
+            elif not done:
+                # CLOSE-CONFIRM MODE (v1.x): prior close breached -> exit this open
                 if p["prev_close"] < lvl:
                     px = o * (1 - SLIPPAGE)
                     cash += p["shares"] * px
@@ -177,11 +212,12 @@ def simulate(cache, bars, days, cfg):
             if not done:
                 p["sessions"] += 1
                 p["peak"] = max(p["peak"], c)
+                p["peak_high"] = max(p["peak_high"], h)
                 gain = c - p["fill"]
                 if p["eng"] == "M":
                     if gain >= cfg["m_trail_arm_r"] * p["rps"]:
                         p["armed"] = True
-                    if (cfg.get("m_scaleout_r") and not p.get("scaled")
+                    if (not touch and cfg.get("m_scaleout_r") and not p.get("scaled")
                             and gain >= cfg["m_scaleout_r"] * p["rps"]):
                         p["scaled"], p["exit_at_open"] = True, "scaleout"
                 ts = cfg["m_time_stop"] if p["eng"] == "M" else cfg["r_time_stop"]
@@ -219,7 +255,7 @@ def simulate(cache, bars, days, cfg):
                         if gap > cfg["gap_up_max"] or gap < -cfg["gap_down_max"]:
                             continue
                         fill = o * (1 + SLIPPAGE)
-                        rps = cfg["m_stop_atr"] * m["atr10"]
+                        k_atr = cfg["m_stop_atr"]
                         target = None
                     else:
                         lim = prev_c - cfg["r_limit_atr"] * m["atr10"]
@@ -229,8 +265,16 @@ def simulate(cache, bars, days, cfg):
                             fill = lim
                         else:
                             continue
-                        rps = cfg["r_stop_atr"] * m["atr10"]
+                        k_atr = cfg["r_stop_atr"]
                         target = fill * (1 + r_target_pct(reg["tr_atr"], m["atr10_pct"], cfg) / 100)
+                    stop = fill - k_atr * m["atr10"]
+                    if cfg.get("stop_basis") == "hybrid_swing":
+                        sl = swing_low_before(bars[sym], day, cfg.get("swing_lookback", 20))
+                        if sl is not None and sl < fill:
+                            stop = max(stop, sl)  # structure level, ATR as disaster floor
+                    rps = fill - stop
+                    if rps <= 0:
+                        continue
                     equity = cash + sum(p["shares"] * p["prev_close"] for p in open_pos)
                     shares = int(min(equity * cfg["risk_pct"] / 100 / rps,
                                      equity * cfg["notional_cap_pct"] / 100 / fill))
@@ -238,10 +282,10 @@ def simulate(cache, bars, days, cfg):
                         continue
                     cash -= shares * fill
                     open_pos.append({"sym": sym, "eng": eng, "fill": fill, "shares": shares,
-                                     "rps": rps, "stop": fill - rps, "target": target,
-                                     "atr": m["atr10"], "peak": c, "prev_close": c,
-                                     "sessions": 1, "risk_pct": cfg["risk_pct"],
-                                     "fill_date": day})
+                                     "rps": rps, "stop": stop, "target": target,
+                                     "atr": m["atr10"], "peak": c, "peak_high": h,
+                                     "prev_close": c, "sessions": 1,
+                                     "risk_pct": cfg["risk_pct"], "fill_date": day})
                     heat += cfg["risk_pct"]
                     taken += 1
         equity_curve.append(cash + sum(p["shares"] * p["prev_close"] for p in open_pos))
