@@ -100,7 +100,7 @@ def _log_to_ledger(
 def _track_tool(name: str) -> None:
     """Register a tool call with the backtest harness (if active) for server-side validation."""
     if _harness is not None:
-        _harness.record_tool_call(name)
+        _harness.validator.record_tool_call(name)
 
 
 # --- Broker Tools ---

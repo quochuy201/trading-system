@@ -26,14 +26,14 @@ log() { echo "[install] $*"; }
 run() { if [ "$DRY_RUN" = true ]; then echo "[dry-run] $*"; else "$@"; fi; }
 
 install_hermes() {
-    # Kanban multi-profile layout (v2): one lean orchestrator + five worker
+    # Kanban multi-profile layout (v2): one lean orchestrator + six worker
     # profiles. Each worker loads ONLY its skill and a role-scoped MCP tool
     # set (TRADING_TOOL_GROUPS gates registration in tools/server.py) — this
     # replaces the monolithic profile whose all-skills/all-tools startup was
     # slow and which never had its MCP server registered (mcp.json is not
     # read by Hermes; servers must be added via `hermes mcp add`).
     local HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-    local ROLES="orchestrator research trader monitor risk eod"
+    local ROLES="orchestrator research trader monitor risk eod backtest"
 
     for role in $ROLES; do
         local PROFILE="trading-$role"
