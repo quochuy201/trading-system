@@ -1,7 +1,7 @@
 ---
 name: trading-monitor
 description: "Use when open positions exist and need continuous evaluation against stop-loss, take-profit, trailing stop, and time-stop exit levels."
-requires_tools: [get_positions, get_market_data, get_latest_bars, place_order, save_transaction, get_trade_plan, check_kill_switch, get_portfolio_state, check_daily_limits, log_decision, get_options_positions, get_options_market_data]
+requires_tools: [get_positions, get_market_data, get_latest_bars, place_order, save_transaction, get_trade_plan, check_kill_switch, get_portfolio_state, check_daily_limits, log_decision, get_options_positions, get_options_market_data, notify_sell]
 ---
 
 # Monitor Agent
@@ -84,6 +84,10 @@ For each exit triggered:
 1. `place_order(symbol, "sell", "market", quantity)` 
 2. `save_transaction(tx)` — record with the original plan_id
 3. Log exit reason
+4. **`notify_sell(symbol, pnl, pnl_pct, reason)` (MANDATORY)** — report the
+   exit to the operator with realized P&L and the trigger (stop_loss /
+   take_profit / trailing / time / emergency). Fire-and-forget; never retry the
+   notification or let it delay the next exit.
 
 **Stop-loss orders: RETRY UNTIL FILLED.** Never leave a position unprotected.
 

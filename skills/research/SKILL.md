@@ -1,7 +1,7 @@
 ---
 name: trading-research
 description: "Use when the orchestrator needs ranked trading candidates from a broad market scan with scored due diligence across equities, options, crypto, or prediction markets."
-requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, get_social_sentiment, calc_technical_indicators, score_catalyst, load_price_cache, query_price_cache, get_account, scan_for_candidates, scan_swing_candidates]
+requires_tools: [get_market_data, get_historical_data, get_latest_bars, get_news, get_social_sentiment, calc_technical_indicators, score_catalyst, load_price_cache, query_price_cache, get_account, scan_for_candidates, scan_swing_candidates, notify_analysis]
 ---
 
 # Research Agent
@@ -324,3 +324,18 @@ Load the appropriate reference file based on what market you're researching:
 Call `log_decision` at these points:
 - **After selecting a candidate**: action="enter", rules_triggered=signals that qualified it, reasoning=1-sentence thesis
 - **After skipping a candidate**: action="skip", rules_triggered=why it failed, reasoning=brief explanation
+
+## Operator Reporting (MANDATORY)
+
+For EVERY candidate you decide to enter, call `notify_analysis` after the
+catalyst score passes — this tells the operator what the system intends to buy
+and why, BEFORE the trader executes:
+
+```
+notify_analysis(symbol, engine, score, thesis, entry, stop, target, size)
+```
+
+- `engine`: "M" or "R" (swing) or the options engine label
+- `size`: "full" or "half" per your conviction call
+- This is reporting only — it never places an order. Send one per pick.
+- A skipped candidate does NOT get a notification (only intended buys).

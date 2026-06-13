@@ -57,3 +57,18 @@ def format_daily_summary(trades: int, wins: int, pnl: float, equity: float) -> s
 def format_alert(message: str, severity: str = "warning") -> str:
     emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(severity, "⚠️")
     return f"{emoji} *Alert*: {message}"
+
+
+def format_analysis_pick(
+    symbol: str, engine: str, score: float, thesis: str,
+    entry: float, stop: float, target: float, size: str,
+) -> str:
+    """Research output: a stock the system intends to buy and why."""
+    rr = (target - entry) / (entry - stop) if entry > stop else 0
+    return (
+        f"🔍 *Analysis — will buy {symbol}*  ({engine}, score {score})\n"
+        f"• Thesis: {thesis}\n"
+        f"• Entry ${entry:.2f} | Stop ${stop:.2f} | Target ${target:.2f}"
+        f" (R:R {rr:.1f}:1)\n"
+        f"• Size: {size}"
+    )

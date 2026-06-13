@@ -21,7 +21,17 @@ def _tools_for(groups):
 
 
 def test_unset_exposes_everything():
-    assert len(_tools_for("")) == 52
+    assert len(_tools_for("")) == 55
+
+
+def test_reporting_tools_scoped_to_role():
+    assert "notify_analysis" in _tools_for("research")
+    assert "notify_buy" in _tools_for("trader")
+    assert "notify_sell" in _tools_for("monitor")
+    # each role gets only its own reporting tool, not the others
+    assert "notify_buy" not in _tools_for("research")
+    assert "notify_sell" not in _tools_for("trader")
+    assert "notify_analysis" not in _tools_for("monitor")
 
 
 def test_research_has_scan_but_no_orders():

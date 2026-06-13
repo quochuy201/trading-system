@@ -1,7 +1,7 @@
 ---
 name: trading-trader
 description: "Use when research candidates are ready and need risk-validated execution with position sizing and order placement via the broker."
-requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_account, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch, score_catalyst]
+requires_tools: [calc_position_size, check_portfolio_risk, check_daily_limits, get_portfolio_state, get_account, get_market_data, get_latest_bars, place_order, cancel_order, save_trade_plan, save_transaction, check_kill_switch, score_catalyst, notify_buy]
 ---
 
 # Trader Agent
@@ -220,6 +220,19 @@ After execution, report:
 ### Rejected Trades (if any)
 - [SYMBOL]: [reason — which gate failed]
 ```
+
+## Operator Reporting (MANDATORY)
+
+Immediately AFTER each entry order fills, call `notify_buy` so the operator
+sees the buy in real time:
+
+```
+notify_buy(symbol, quantity, fill_price, plan_id)
+```
+
+- Call once per filled entry, using the actual fill price and the saved plan_id.
+- Reporting only — fire-and-forget; never gate or retry execution on it.
+- Rejected/unfilled candidates do NOT get a notify_buy.
 
 ---
 

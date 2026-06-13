@@ -886,26 +886,91 @@ def get_trade_plan(plan_id: str) -> str:
 # --- Notifications ---
 
 
+def _broadcast(text: str) -> dict:
+    """Fan a pre-formatted message out to every configured channel (Slack + Discord).
+
+    Fire-and-forget: each channel that lacks a webhook is silently skipped; a
+    failure on one channel never affects the other or the caller.
+    """
+    from notifications.slack import send_slack_message
+    from notifications.discord import send_discord_message
+    return {
+        "slack": send_slack_message(text),
+        "discord": send_discord_message(text),
+    }
+
+
 @mcp.tool()
 def send_notification(message: str, severity: str = "info") -> str:
-    """Send a Slack notification. Fire-and-forget — never blocks trading operations.
+    """Send a free-form notification to all configured channels (Slack + Discord). Fire-and-forget — never blocks trading.
 
-    When to use: After trade execution, position exits, daily summaries, or alerts. Severity controls the emoji prefix in the message.
+    When to use: ad-hoc alerts or summaries that don't fit the structured
+    notify_analysis / notify_buy / notify_sell tools. Severity controls the emoji prefix.
 
-    Sample input: send_notification("BUY 10 NVDA @ $220.50", "info")
-                  send_notification("Daily loss limit at 80%", "warning")
+    Sample input: send_notification("Daily loss limit at 80%", "warning")
                   send_notification("Kill switch activated", "critical")
 
-    Expected output (webhook configured):
-    {"sent": true, "status": 200}
-
-    Expected output (no webhook):
-    {"sent": false, "reason": "no webhook configured"}
+    Expected output:
+    {"slack": {"sent": true, "status": 200}, "discord": {"sent": false, "reason": "no webhook configured"}}
     """
-    from notifications.slack import send_slack_message, format_alert
+    from notifications.slack import format_alert
     text = format_alert(message, severity) if severity != "info" else message
-    result = send_slack_message(text)
-    return json.dumps(result)
+    return json.dumps(_broadcast(text))
+
+
+@mcp.tool()
+def notify_analysis(symbol: str, engine: str, score: float, thesis: str,
+                    entry: float, stop: float, target: float,
+                    size: str = "full") -> str:
+    """Report a trade the system intends to buy, with the analysis behind it, to all channels.
+
+    When to use: Research agent calls this for EACH candidate it decides to
+    enter, after DD/catalyst scoring — so the operator sees what will be bought
+    and why BEFORE the trader executes. Reporting only; never places an order.
+
+    Sample input: notify_analysis("NVDA", "M", 8, "Quantum catalyst, fresh upgrade",
+                                   220.50, 210.00, 245.00, "full")
+
+    Expected output:
+    {"slack": {"sent": true, "status": 200}, "discord": {"sent": true, "status": 200}}
+    """
+    from notifications.slack import format_analysis_pick
+    text = format_analysis_pick(symbol, engine, score, thesis, entry, stop, target, size)
+    return json.dumps(_broadcast(text))
+
+
+@mcp.tool()
+def notify_buy(symbol: str, quantity: int, price: float, plan_id: str) -> str:
+    """Report a BUY/entry fill to all channels (Slack + Discord). Fire-and-forget.
+
+    When to use: Trader agent calls this immediately AFTER place_order fills a
+    new entry, so the operator sees what was bought, how much, and at what price.
+
+    Sample input: notify_buy("NVDA", 10, 220.50, "plan_abc123")
+
+    Expected output:
+    {"slack": {"sent": true, "status": 200}, "discord": {"sent": true, "status": 200}}
+    """
+    from notifications.slack import format_trade_executed
+    text = format_trade_executed(symbol, "buy", quantity, price, plan_id)
+    return json.dumps(_broadcast(text))
+
+
+@mcp.tool()
+def notify_sell(symbol: str, pnl: float, pnl_pct: float, reason: str) -> str:
+    """Report a SELL/exit to all channels (Slack + Discord) with realized P&L. Fire-and-forget.
+
+    When to use: Monitor agent calls this immediately AFTER an exit order fills,
+    so the operator sees what was sold, the P&L, and why (stop/target/trail/time).
+
+    Sample input: notify_sell("NVDA", 245.00, 11.1, "take_profit")
+
+    Expected output:
+    {"slack": {"sent": true, "status": 200}, "discord": {"sent": true, "status": 200}}
+    """
+    from notifications.slack import format_position_exited
+    text = format_position_exited(symbol, pnl, pnl_pct, reason)
+    return json.dumps(_broadcast(text))
 
 
 # --- Kill Switch ---
@@ -2427,7 +2492,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_market_data", "get_historical_data", "get_latest_bars", "get_news",
         "get_social_sentiment", "calc_technical_indicators", "score_catalyst",
         "load_price_cache", "query_price_cache", "scan_for_candidates",
-        "scan_swing_candidates", "get_market_regime",
+        "scan_swing_candidates", "get_market_regime", "notify_analysis",
         # options DD (vol-edge program)
         "get_options_chain", "get_options_market_data", "calc_iv_rank",
         "calc_hv", "get_put_skew", "calc_expected_move",
@@ -2436,7 +2501,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "calc_position_size", "check_portfolio_risk", "check_daily_limits",
         "get_portfolio_state", "get_market_data", "get_latest_bars",
         "place_order", "cancel_order", "save_trade_plan", "save_transaction",
-        "score_catalyst", "get_trade_plan", "get_positions",
+        "score_catalyst", "get_trade_plan", "get_positions", "notify_buy",
         # options execution (vol-edge)
         "place_multileg_order", "get_options_chain", "get_options_market_data",
         "calc_expected_move",
@@ -2445,7 +2510,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_positions", "get_market_data", "get_latest_bars", "place_order",
         "save_transaction", "get_trade_plan", "get_portfolio_state",
         "check_daily_limits", "cancel_order", "calc_technical_indicators",
-        "get_options_positions", "get_options_market_data",
+        "get_options_positions", "get_options_market_data", "notify_sell",
     },
     "risk": {
         "check_daily_limits", "get_positions", "get_portfolio_state",
