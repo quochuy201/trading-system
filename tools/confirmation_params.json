@@ -1,0 +1,8 @@
+{
+  "version": "2026-06-14",
+  "confirmation_window_min": 30,
+  "rvol_multiple": 1.2,
+  "entry_cutoff_et": "11:00",
+  "slippage_buffer_pct": 0.75,
+  "regime": "default"
+}
