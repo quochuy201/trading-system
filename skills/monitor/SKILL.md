@@ -379,3 +379,169 @@ The `rules_triggered` list must also include the same exit-reason value.
 `iv_rank`, `iv_hv`, `delta`, `theta`, `vega`, `structure`, `engine`, `max_profit`, `max_loss`, `breakeven`, `dte`.
 
 Full schema: SOP Phase 7 → Journal Schema section.
+
+---
+
+## Engine B Directional-Swing (v1.1.0)
+
+This section extends the monitor for **Engine B** positions governed by
+`sops/options/vol-edge/v1.1.0.md`. It covers two distinct responsibilities:
+**entry confirmation** (Phase B — armed plans) and **hybrid exit** (open
+option positions). All existing options-exit-loop rules above remain in force;
+the rules below add Engine B specifics on top.
+
+---
+
+### Responsibility 1 — Entry Confirmation (Phase B): Armed Plans
+
+Armed plans are written by the Research agent during pre-market (~9:00 ET) and
+stored in the **armed_plans store** with a trigger price, invalidation
+condition, and a cutoff time (default **11:00 ET soft / end-of-session hard**).
+They are **not orders**. The monitor sentinel is the only agent that converts
+them into orders, and only after confirmation.
+
+#### Mechanical pre-filter (Tier 1 — no LLM, every minute)
+
+For each armed plan, check mechanically:
+
+1. Is the underlying at or through the trigger price?
+2. Is basic volume consistent with the plan's minimum RVOL floor?
+
+If both conditions are not yet met → keep waiting; do not wake the LLM.
+
+#### LLM real-vs-trap validation (Tier 2 — wake reason: `entry_confirm`)
+
+When the sentinel emits an `entry_confirm` wake reason, the LLM **re-validates**
+before any order is placed. All four sub-checks must pass:
+
+| Check | Pass condition |
+|-------|---------------|
+| **Bar close above trigger** | The first 15–30 min bar (window from `confirmation_params.json: confirmation_window_min`) closes at or above the trigger level — not just an intraday touch |
+| **No engulfing reversal** | The confirming bar is not an engulfing bearish candle; no close-below-trigger on the confirmation bar |
+| **RVOL threshold** | Underlying RVOL ≥ `rvol_multiple` from `tools/confirmation_params.json`; default 1.1× (hard min 1.1×, hard max 2.0×) |
+| **Underlying leads** | The underlying's move precedes / drives the option premium move — not the other way around |
+
+#### On confirmation — enter immediately (NO resting orders)
+
+1. Fire an **immediate marketable limit order** (limit set at or just above the
+   current ask, IOC/day), slippage-capped at
+   `touched_price × (1 + slippage_buffer_pct)` from `confirmation_params.json`
+   (default 0.5–1% on the option / a tick band). If the limit cannot be filled
+   within the cap → cancel; re-evaluate on the next sentinel run.
+2. **Mark the armed plan filled** in the armed_plans store.
+3. Call `notify_buy(symbol, structure, fill_price, plan_id)`.
+4. Log via `log_decision(action="entry_confirmed", ...)` with the plan_id,
+   confirmation bar close, RVOL observed, and `sop_version: "options/vol-edge/v1.1.0"`.
+
+**Never place a resting buy limit.** A resting order fills on a dip into the
+trap with no thesis validation at fill time.
+
+#### On failure or cutoff — stand down
+
+Cancel the armed plan if any of the following occur:
+
+- Price closes back below the trigger level (invalidation condition met).
+- The soft cutoff passes (default **11:00 ET**) without confirmation.
+- The hard cutoff (end-of-session) passes without confirmation.
+
+Log via `log_decision(action="stood_down", ...)` with the reason
+(`invalidation` | `soft_cutoff` | `hard_cutoff`) and plan_id.
+
+**A plan that never confirms is a success — trap avoided, not a missed trade.**
+Do not treat a stand-down as a failure or relax the confirmation gate to fill.
+
+---
+
+### Responsibility 2 — Hybrid Exit (Engine B open positions)
+
+Once an armed plan is filled, the position transitions to the hybrid exit loop.
+The sentinel monitors every minute throughout the session. The two exit legs
+(underlying-trail and premium-scale-out) operate independently; either can fire
+at any time.
+
+#### Exit Leg 1 — Stop / trailing stop on the UNDERLYING (close-based)
+
+The stop is tracked on the **underlying equity price**, not the option premium.
+This is a **close-based** rule — wicks are ignored (reuses the existing
+close-based guard from §Step 3 above).
+
+| Phase | Stop level | Rule |
+|-------|-----------|------|
+| **Initial stop** | Underlying close at or below the armed plan's entry trigger / invalidation level | Exit the option position immediately (next sentinel run after bar close) |
+| **Trailing stop** | Trail under rising structure: prior swing low or chosen EMA, updated on each new higher underlying close | Stop level moves **up only** — never down |
+| **Trigger** | Underlying bar **closes** below the current trailed level | Exit the full remaining option position; call `notify_sell` |
+
+**Never exit on an intraday wick.** Only a bar close below the trailed level
+triggers the stop. This prevents shakeouts on intraday volatility spikes.
+
+**Execution (stop triggered):**
+1. Fire an immediate marketable order (same marketable-limit pattern as entry,
+   now on the sell side). Retry until filled — do not leave the position open.
+2. `save_transaction(tx)` with the original plan_id.
+3. `notify_sell(symbol, pnl, pnl_pct, reason="trailing_stop")`.
+4. Log `log_decision(action="exit", exit_reason="trailing_stop", ...)` with
+   the underlying close price, trailed level breached, and option P&L.
+
+#### Exit Leg 2 — Profit scale-out on the OPTION PREMIUM (confirm-then-act)
+
+The sentinel watches the option's premium mark every minute.
+
+**Scale-out target:** when current premium reaches **+50% of contract max
+gain** (the "half-the-upside" level established at entry).
+
+**Two-tier process — no resting sell limit:**
+
+- **Tier 1 (mechanical, no LLM):** sentinel checks `current_premium ≥ scale_out_target`. If not → continue monitoring. If yes → emit wake reason `premium_target_touch`.
+- **Tier 2 (LLM — wake reason `premium_target_touch`):** LLM confirms **real
+  strength vs. noise** — e.g., is the premium move driven by underlying
+  momentum or a transient vol spike? On confirmation → fire an **immediate**
+  marketable sell order for **half** the position (IOC/day, limit at/just below
+  the current bid, slippage-capped). On rejection (noise) → log and resume
+  monitoring.
+
+**After the first scale-out:**
+- The sold half: P&L locked; `notify_sell` for the half-lot.
+- The **runner half** continues riding the underlying trailing stop (Leg 1
+  above); uncapped on a long call; bounded by the short strike on a spread.
+- The scale-out fires **once** per position — do not re-evaluate the
+  premium target on the remaining runner.
+
+**Execution (scale-out confirmed):**
+1. `place_order(symbol, "sell", marketable_limit, half_quantity)`.
+2. `save_transaction(tx)` with plan_id and `partial=True`.
+3. `notify_sell(symbol, pnl_half, pnl_pct_half, reason="scale_out_50pct")`.
+4. Log `log_decision(action="adjust", exit_reason="50pct_profit", ...)` noting
+   `partial=True`, scale fraction, and `sop_version: "options/vol-edge/v1.1.0"`.
+
+#### Retained hard guards (unchanged from v1.0.0)
+
+All existing Always-On Mechanical rules and Emergency rules above apply in full
+to Engine B positions:
+
+- **21-DTE hard close** — close the full position when DTE ≤ 21.
+- **2× premium loss cap** — if option unrealized loss ≥ 2× debit paid, close.
+- **Kill switch** — if active, close everything at market immediately.
+- **Daily-loss limit** — if breached, close all positions at market.
+- **Gap-through-strike** — immediate defensive exit, same day.
+
+`notify_sell` is mandatory on every exit from an Engine B position, including
+partial scale-outs.
+
+---
+
+### Engine B Exit Logging
+
+In addition to the base options logging schema (see §Exit Logging (Options)
+above), every Engine B exit must include:
+
+| Extra field | Required content |
+|-------------|-----------------|
+| `engine` | `"B-v1.1.0"` |
+| `sop_version` | `"options/vol-edge/v1.1.0"` |
+| `exit_leg` | `"underlying_trail"` or `"premium_scale_out"` or `"guard"` (for hard guards) |
+| `plan_id` | The armed plan ID that originated the position |
+| `partial` | `true` for scale-out half; `false` (or omitted) for full exits |
+
+The `exit_reason` enum from the existing 13-value list is reused verbatim;
+`50pct_profit` covers the premium scale-out, `trailing_stop` covers the
+underlying-trail exit.
