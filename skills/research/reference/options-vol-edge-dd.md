@@ -176,3 +176,139 @@ Produce a ranked candidate list. Each row must carry all five fields below:
 ```
 
 Valid `structure` values: `bull_put_spread`, `bear_call_spread`, `debit_vertical_call`, `debit_vertical_put`, `momentum_debit_spread_call`, `momentum_debit_spread_put`, `single_leg_call`, `single_leg_put`.
+
+---
+
+## Engine B — Directional Swing (v1.1.0)
+
+> **SOP:** `options-vol-edge/v1.1.0`
+> This section describes the research process specific to Engine B in v1.1.0.
+> It supplements (does not replace) the shared scan gates in Steps 1–5 above.
+> Direction scope: **long-only** for v1.1.0 (SPY regime = UPTREND, bullish structures only).
+> The short path (DOWNTREND → bearish structures) is a reserved seam, not active.
+
+---
+
+### Three-Leg Research Model
+
+Every Engine B candidate is evaluated on three independent evidence streams. The
+research agent must **reconcile** all three and show its work in the logged rationale
+before producing an armed plan.
+
+#### Leg 1 — Technical Analysis (GATE with veto power)
+
+**Tools:** `calc_technical_indicators`, price/volume bars, continuation-setup gates
+(Steps 4–5 above), `calc_iv_rank`, `calc_hv`, `get_put_skew`, `calc_expected_move`.
+
+**What it answers:** Is the price-action setup real, and is the option priced right?
+
+**Veto rule:** If the setup or pricing does not qualify under the shared scan gates
+(Steps 1–5), no amount of social or LLM signal can override. The leg 1 gate is binary
+pass/fail — a fail ends DD immediately.
+
+Passing leg 1 requires:
+
+- One confirmed continuation setup (pullback-to-EMA20 + bullish reversal candle +
+  RVOL ≥ 1.2×; OR consolidation/BB-squeeze breakout + RVOL ≥ 1.5×; OR MACD resumption
+  cross after pullback).
+- Stock is not extended (anti-chase: not at or above upper Bollinger Band).
+- IVR, HV, skew, and expected-move computed — these feed the IVR committee below.
+
+#### Leg 2 — Web / Social Research
+
+**Tools:** `WebSearch` + firecrawl over r/options, r/wallstreetbets, X, and
+high-signal accounts.
+
+**What it answers:** What is the catalyst? How known, crowded, or priced-in is it?
+Is there an event the tape has not yet shown?
+
+**Reddit access note:** Reddit's direct crawler is blocked — the agent NEVER hits
+reddit.com directly. Reach r/options and r/wallstreetbets content via `WebSearch`
+(Google surfaces threads) and firecrawl to fetch the resulting URLs.
+
+**Signal weighting rules:**
+
+| Signal type | Weight |
+|---|---|
+| Thesis with explicit reasoning + fresh timestamp (≤ 48 h) | High — include verbatim excerpt in rationale |
+| Thesis with old timestamp or no date | Medium — note staleness; require corroboration |
+| Rocket-emoji / gain-screenshot posts | Discount heavily — do not treat as thesis |
+| Consensus across independent sources + verifiable claims | High — note the convergence |
+| Single high-follower-count account without corroboration | Low — authority ≠ accuracy |
+
+**Crowding read is contrarian:** if the overwhelming public posture is
+"everyone is long into the event," treat it as a **caution signal**, not
+confirmation. Crowded trades have compressed upside and amplified reversal risk.
+
+#### Leg 3 — LLM Reasoning (the referee)
+
+The model synthesizes legs 1 and 2 and acts as referee.
+
+**Required outputs in the logged rationale:**
+
+1. Explicit statement of how legs 1 and 2 align or conflict.
+2. If they conflict: which leg wins and why. Default resolution rules:
+   - Social NEVER overrides the quant gate (leg 1 always retains veto).
+   - On any other conflict → default to the **safer structure** (spread over
+     single-leg) and/or smaller size; state the reason explicitly.
+3. The chosen structure (see IVR committee below) and conviction tier.
+4. Earnings/event handling judgment: if a confirmed event lands inside the option's
+   life, the LLM decides skip / force-spread-and-downsize / hold-through with
+   written justification; quant IV-crush risk retains veto.
+
+---
+
+### IVR Committee — Instrument Selection
+
+IVR is the **lead vote** for instrument selection, never the lone trigger. Apply
+after leg 1 passes; use `calc_iv_rank`, `calc_hv`, `get_put_skew`, and
+`calc_expected_move` output.
+
+| IVR band | Default structure | DTE target |
+|---|---|---|
+| IVR < 35 (cheap vol) | Long call, delta 0.55–0.65 | 35–45 DTE |
+| IVR > 55 (rich vol) | Call debit vertical: buy ~ATM (0.45–0.55 delta), sell OTM ~1.5–2 expected-moves out | 35–45 DTE |
+| IVR 35–55 (neutral band) | LLM tiebreak on IV/HV + skew + setup quality; **default to spread** when ambiguous | 35–45 DTE |
+
+**Neutral-band tiebreak heuristics (IVR 35–55):**
+
+- `IV/HV > 1.2` (vol rich relative to realized) → lean spread.
+- `IV/HV < 0.85` (vol cheap relative to realized) → lean single-leg call.
+- `put_skew > 5` in a bullish setup → no special adjustment; note skew confirms
+  downside hedging demand and bullish positioning may be cleaner.
+- Setup quality A+ with very clean momentum → LLM may lean single-leg; document why.
+
+---
+
+### Armed Plan Output Format
+
+The research agent produces an **ARMED PLAN, never an order.** An armed plan is a
+pre-market trade blueprint that the monitor sentinel executes only after intraday
+confirmation triggers. Producing a plan is not a trade — it is a conditional
+intention.
+
+Per qualified candidate, emit all of the following fields:
+
+```
+symbol:             [ticker]
+direction:          long
+structure:          [long_call | call_debit]
+trigger_price:      [underlying price level that must confirm intraday — e.g. "break and hold above $143.50"]
+invalidation_price: [underlying level that, if hit, cancels the plan — e.g. "close below $140.00"]
+cutoff_et:          [time after which the plan expires unexecuted — default "11:00"]
+dte_target:         [~40]
+delta_target:       [~0.60 for long_call; ~0.50 for call_debit long leg]
+rationale:          [three-leg reconciliation: leg 1 findings → leg 2 findings →
+                     how they align or conflict → chosen structure and why →
+                     size tier (base, reduced, or skip)]
+```
+
+After emitting the plan, call `notify_analysis` with the armed plan as the payload.
+
+**Long-only constraint:** `direction` is always `long` in v1.1.0. `structure` values
+are limited to `long_call` and `call_debit`. The short path (`long_put`,
+`put_debit`) is reserved and not active.
+
+**Size discipline:** conviction from legs 2–3 may only shrink size from the
+quarter-Kelly base (per `OPERATING_MANUAL.md`). Social or LLM confidence never
+enlarges the base size.
