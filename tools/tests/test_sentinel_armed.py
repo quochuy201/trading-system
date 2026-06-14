@@ -41,3 +41,15 @@ def test_armed_invalidation_cancels_plan(tmp_path, monkeypatch):
     reasons = monitor_sentinel._armed_plan_triggers()
     assert reasons == []                      # invalidation does not wake the LLM
     assert store.list_active() == []          # it cancels the plan
+
+
+def test_signature_distinguishes_two_armed_plans_same_symbol():
+    r1 = "NVDA:entry_confirm@221.00:armed_aaa111"
+    r2 = "NVDA:entry_confirm@221.00:armed_bbb222"
+    assert monitor_sentinel._signature(r1) != monitor_sentinel._signature(r2)
+
+
+def test_signature_unchanged_for_non_armed_reasons():
+    # existing behavior must be preserved
+    assert monitor_sentinel._signature("kill_switch_active") == "kill"
+    assert monitor_sentinel._signature("NVDA:near_stop_0.83pct") == "NVDA:near"

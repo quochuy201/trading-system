@@ -118,7 +118,13 @@ def _save_state(state: dict) -> None:
 
 def _signature(reason: str) -> str:
     """Collapse a reason to a stable key so the same condition dedupes across
-    minutes even as the exact percentage drifts (e.g. near_stop_0.83pct vs 0.91)."""
+    minutes even as the exact percentage drifts (e.g. near_stop_0.83pct vs 0.91).
+    Armed-plan entry_confirm reasons key on plan_id so each armed plan dedupes
+    independently (multiple plans can be armed on the same symbol)."""
+    if "entry_confirm" in reason:
+        # format: "{symbol}:entry_confirm@{price}:{plan_id}" -> key on symbol+plan_id
+        parts = reason.split(":")
+        return f"{parts[0]}:entry_confirm:{parts[-1]}"
     return reason.split("_")[0] if ":" not in reason else \
         reason.split(":")[0] + ":" + reason.split(":")[1].split("_")[0]
 
