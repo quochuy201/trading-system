@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import server  # loads ../.env, registers tool functions
+from armed_plans import ArmedPlanStore
 
 # --- thresholds (tune here) ------------------------------------------------
 NEAR_STOP_PCT = 1.0      # within 1% of stop -> wake (close-based rule applied by LLM)
@@ -154,8 +155,42 @@ def _monitor_task_already_queued() -> bool:
     return False
 
 
+def _armed_store() -> ArmedPlanStore:
+    return ArmedPlanStore()
+
+
+def _underlying_price(symbol: str) -> float | None:
+    """Latest underlying price via the server tool; None on any failure."""
+    try:
+        data = json.loads(server.get_market_data(symbol))
+        return data.get("mid") or data.get("price")
+    except Exception:
+        return None
+
+
+def _armed_plan_triggers() -> list[str]:
+    """Check each armed plan: confirm -> wake reason; invalidation -> cancel.
+
+    Long-only (v1.1.0): trigger when underlying >= trigger_price; invalidate when
+    underlying <= invalidation_price. Returns wake-reasons for confirmations only;
+    invalidations are cancelled silently (no LLM wake).
+    """
+    reasons: list[str] = []
+    store = _armed_store()
+    for plan in store.list_active():
+        price = _underlying_price(plan.symbol)
+        if price is None:
+            continue
+        if price <= plan.invalidation_price:
+            store.cancel(plan.plan_id, reason=f"invalidation@{price}")
+            continue
+        if price >= plan.trigger_price:
+            reasons.append(f"{plan.symbol}:entry_confirm@{price:.2f}:{plan.plan_id}")
+    return reasons
+
+
 def main() -> int:
-    reasons = _reasons_to_wake()
+    reasons = _reasons_to_wake() + _armed_plan_triggers()
     if not reasons:
         return 0  # quiet minute, no LLM, no output
 
