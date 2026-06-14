@@ -29,7 +29,12 @@ def send_discord_message(text: str) -> dict:
         req = Request(
             webhook_url,
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
+            # Discord rejects urllib's default User-Agent (Python-urllib/x.y)
+            # with HTTP 403; a custom UA is required.
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "trading-system-bot/1.0 (+https://github.com)",
+            },
         )
         with urlopen(req, timeout=5) as resp:
             return {"sent": True, "status": resp.status}

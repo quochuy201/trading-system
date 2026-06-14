@@ -32,12 +32,15 @@ def test_discord_posts_content_field(monkeypatch):
     def fake_urlopen(req, timeout=5):
         captured["url"] = req.full_url
         captured["payload"] = json.loads(req.data.decode())
+        captured["headers"] = req.headers
         return FakeResp()
 
     with mock.patch("notifications.discord.urlopen", fake_urlopen):
         result = send_discord_message("BUY 10 NVDA")
     assert result == {"sent": True, "status": 204}
     assert captured["payload"] == {"content": "BUY 10 NVDA"}
+    # Discord 403s urllib's default UA — a custom User-Agent must be set.
+    assert "User-agent" in captured["headers"]
 
 
 def test_discord_truncates_to_2000_chars(monkeypatch):
