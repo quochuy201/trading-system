@@ -61,17 +61,27 @@ class ArmedPlanStore:
                 return ArmedPlan(**r)
         return None
 
-    def _set_status(self, plan_id: str, status: str, reason: str = "") -> None:
+    def _set_status(self, plan_id: str, status: str, reason: str = "") -> bool:
+        """Set a plan's status. Returns True if a matching plan was found.
+
+        A False return means the plan_id did not match any stored row (typo,
+        already-rotated, or never armed). Callers should treat that as a signal,
+        not a silent no-op — e.g. the sentinel must not assume a fill applied.
+        """
         rows = self._read()
+        found = False
         for r in rows:
             if r.get("plan_id") == plan_id:
                 r["status"] = status
                 if reason:
                     r["cancel_reason"] = reason
-        self._write(rows)
+                found = True
+        if found:
+            self._write(rows)
+        return found
 
-    def cancel(self, plan_id: str, reason: str = "") -> None:
-        self._set_status(plan_id, "cancelled", reason)
+    def cancel(self, plan_id: str, reason: str = "") -> bool:
+        return self._set_status(plan_id, "cancelled", reason)
 
-    def fill(self, plan_id: str) -> None:
-        self._set_status(plan_id, "filled")
+    def fill(self, plan_id: str) -> bool:
+        return self._set_status(plan_id, "filled")
