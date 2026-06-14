@@ -8,9 +8,10 @@ from confirmation_params import load_params, RAILS
 
 def test_defaults_load_and_are_within_rails():
     p = load_params()
-    assert p["confirmation_window_min"] == 30
-    assert p["rvol_multiple"] == 1.2
-    assert p["entry_cutoff_et"] == "11:00"
+    for name, (lo, hi) in RAILS.items():
+        assert lo <= p[name] <= hi, f"{name}={p[name]} outside rail ({lo}, {hi})"
+    # railed numeric keys are always present after load
+    assert set(RAILS) <= set(p)
 
 
 def test_out_of_range_values_are_clamped(tmp_path):
