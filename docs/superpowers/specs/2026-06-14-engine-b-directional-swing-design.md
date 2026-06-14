@@ -42,7 +42,50 @@ Every candidate is judged on three independent evidence streams; the LLM must
 
 ---
 
-## 3. Entry mechanics — two phases
+## 3. Scan & filter funnel (market → candidates)
+
+The 3-leg DD (§2) is expensive, so it only ever runs on a handful of survivors.
+Getting there is a **4-stage funnel** — cheap mechanical filters on the whole
+universe first, LLM analysis last. This is the "scanner gates, AI decides"
+pattern (CLAUDE.md), same code path live and in backtest.
+
+```
+Universe (~70–500 names)   tools/universe_backtest.json (price/ADV-gated list)
+   │  Stage 1 — equity quant scan: scan_for_candidates (DAILY bars, cheap, no LLM)
+   │    liquidity (price $10–500, vol >2M, ATR 1.5–5%, RVOL >1.1×) · RS vs SPY
+   │    >2%/10d · trend (>SMA20, SMA20>SMA50) · momentum (RSI 40–70, MACD
+   │    bullish, not upper BB) · anti-chase
+   ▼  ~3–10 names
+   │  Stage 2 — options hard gates (vol-edge SOP, per survivor):
+   │    SPY regime gate · RS sign matches direction · OPTION-CHAIN liquidity
+   │    (20d $ADV ≥$20M, target-strike OI ≥100, spread ≤20% of mid) · earnings
+   │    (confirmed date outside expiry, else SKIP) · compute IVR / IV-HV / skew
+   ▼  the few that clear every gate
+   │  Stage 3 — 3-leg DD (technical + social/firecrawl + LLM synthesis)  ← §2
+   ▼
+   │  Stage 4 — armed plan + intraday confirmation  ← §4 Phase B
+```
+
+**Direction scope — long-only to start, short seam reserved:**
+- v1.1.0 takes Engine B trades **only when SPY regime = UPTREND**, long structures
+  only (long call / call debit spread). This reuses the existing bullish
+  `scan_for_candidates` as-is — the scanner we already trust — and ships fastest.
+- The **short path is a documented placeholder, not built:** DOWNTREND → bearish
+  structures (long put / put debit spread) would need a direction-aware scan
+  (the current Stage-1 momentum filter is bullish-only). The SOP, skill, and
+  sentinel reserve the seam (regime/direction is already a parameter), but the
+  bearish scan and bearish structures are explicitly out of scope until the
+  long-only core is proven profitable. Rationale: optimize one direction to
+  profitability before doubling the surface area to build and validate.
+
+**Ordering note:** option-chain liquidity is per-contract, so it is checked in
+Stage 2 *after* a strike/expiry is provisionally chosen — not in the Stage-1
+universe scan. A name with an attractive chart but untradeable options is
+dropped at Stage 2 before any DD spend.
+
+---
+
+## 4. Entry mechanics — two phases
 
 ### Phase A — Pre-market (~9:00 ET): build an ARMED PLAN, do not trade
 
@@ -81,7 +124,7 @@ The plan is **armed but unfilled**. The every-minute **monitor sentinel**
   LLM to judge **real confirmation vs. trap** (did the breakout *hold* — e.g.
   first 15–30 min bar closes above the trigger, no engulfing reversal, RVOL
   confirms; underlying leads, then enter the option).
-- **Enter:** confirmed → fire an **immediate marketable order** (see §5), then
+- **Enter:** confirmed → fire an **immediate marketable order** (see §6), then
   `notify_buy`.
 - **Stand down:** invalidation hits (price closes back below trigger) or the
   cutoff passes (default 11:00 ET; hard stop end-of-session) → cancel the plan,
@@ -93,7 +136,7 @@ confirmation** — never a pre-placed order on yesterday's signal.
 
 ---
 
-## 4. Exit mechanics — hybrid (underlying trail + premium scale-out)
+## 5. Exit mechanics — hybrid (underlying trail + premium scale-out)
 
 Governed by the monitor sentinel every minute once filled.
 
@@ -114,7 +157,7 @@ Governed by the monitor sentinel every minute once filled.
 
 ---
 
-## 5. Order-placement rule — NO resting orders, either side
+## 6. Order-placement rule — NO resting orders, either side
 
 A resting limit order is passive: it fills whenever price *touches* it, with no
 thesis validation at fill time. A resting **buy** limit fills on a dip into the
@@ -141,7 +184,7 @@ exits as well as entries depend on its uptime.
 
 ---
 
-## 6. Adaptive confirmation parameters — propose-and-ratify
+## 7. Adaptive confirmation parameters — propose-and-ratify
 
 The confirmation **logic** is fixed in the SOP. Only a bounded **parameter set**
 adapts: `{confirmation_window_min, rvol_multiple, reversal_sensitivity,
@@ -164,7 +207,7 @@ entry_cutoff, regime_band, slippage_buffer}`, stored in
 
 ---
 
-## 7. Architecture & data flow
+## 8. Architecture & data flow
 
 ```
 ~9:00 ET   Research worker — 3-leg analysis (technical gate → IVR committee →
@@ -188,7 +231,7 @@ EOD/weekly EOD review → analyze confirmation + exit outcomes by regime →
 
 ---
 
-## 8. Artifacts (new / changed)
+## 9. Artifacts (new / changed)
 
 | Artifact | Change |
 |---|---|
@@ -201,10 +244,14 @@ EOD/weekly EOD review → analyze confirmation + exit outcomes by regime →
 
 ---
 
-## 9. Non-goals / out of scope
+## 10. Non-goals / out of scope
 
 - Engine A (vol-edge income credit spreads) is unchanged.
 - No naked options; defined-risk only.
+- **Short / bearish path is out of scope** for v1.1.0 — long-only (SPY UPTREND).
+  The seam is reserved in the SOP/skill/sentinel (direction is a parameter) but
+  the bearish scan and bearish structures are not built until the long-only core
+  is proven profitable (§3).
 - Bridge (<$3.5k) equity-swing fallback unchanged.
 - No new broker; paper (Alpaca) now, broker-agnostic principles.
 - Bounded-autonomous adaptation (auto-apply within rails) is explicitly deferred;
@@ -212,7 +259,7 @@ EOD/weekly EOD review → analyze confirmation + exit outcomes by regime →
 
 ---
 
-## 10. Open parameters to confirm during spec review
+## 11. Open parameters to confirm during spec review
 
 - Slippage buffer default (0.5–1% on the option / tick band).
 - Entry cutoff default (11:00 ET soft, end-of-session hard).
