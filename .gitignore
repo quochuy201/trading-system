@@ -37,3 +37,6 @@ exports/
 
 # Lock files (regenerated per-platform)
 uv.lock
+
+# Monitor sentinel runtime state (per-condition cooldown timestamps)
+tools/monitor_sentinel_state.json
