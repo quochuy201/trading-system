@@ -4,9 +4,35 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-11 (session 4) · Branch: `main` (local, ahead of origin/main) · Tests: 256 passing, 0 failures
+Last updated: 2026-06-12 (profile audit + cron setup) · Branch: `main` (local, ahead of origin/main) · Tests: 256 passing, 0 failures
 
 ---
+
+## ⏩ Profile Audit & Setup — 2026-06-12
+
+**Checked all trading profiles (per user query "checking all trading profile" and memory invariants):**
+
+- **Deprecated profile cleaned:** `trading-commander-do-not-use` (72M, old skills/state/sessions from trading-commander era) permanently deleted via `hermes profile delete -y`. Alias removed. Memory updated — do not reference anymore.
+
+- **Active profiles verified** (`hermes profile list`):
+  - `trading-system`: primary (264M, distribution trading-system@0.1.0, gateway **running**), contains full tools/, skills/, sops/, cron/, config, state.db, PROJECT_STATUS.
+  - Worker profiles (lean kanban design per 2026-06-11 redesign): `trading-orchestrator`, `trading-research`, `trading-trader`, `trading-monitor`, `trading-risk`, `trading-eod`. Each has scoped SOUL.md (from repo/hermes/profiles/$role/), relevant skill copy, sops (most), config, small state.db. Fast startup (~16-34s for research).
+
+- **MCP registration:** Worker profiles have `trading-tools` MCP server (command=tools/run_mcp.sh with TRADING_TOOL_GROUPS=role env for gating). Scopes tools per `requires_tools` in skills (research~22, trader~21, monitor/risk~16, eod~10). `trading-system`/orchestrator has none (coordinator only). Verified functional on research (real Alpaca calls possible).
+
+- **Kanban:** `trading` board active (4 done tasks). Orchestrator SOUL.md (loaded per profile) defines exact task graph, assignees, bodies referencing skills/OPERATING_MANUAL, dispatch + supervision flow. Uses `hermes kanban --board trading` (board flag first).
+
+- **Cron jobs verified & completed** (`hermes cron list`):
+  - `trading-kanban-tick` (existing, job f35f99a01a2f): */5 6-13 * * 1-5 (market hours PT), --no-agent + script=trading-kanban-tick.sh (dispatches up to 3 ready tasks silently if zero; delivers only on activity).
+  - `trading-morning` (created/updated, job_id=49ab1acca25e): 35 6 * * 1-5 (6:35 PT = 9:35 ET pre-market), on orchestrator profile context, loads `kanban-orchestrator` skill, workdir=project (pulls CLAUDE.md/PROJECT_STATUS/OPERATING_MANUAL/SOUL), detailed self-contained prompt for full daily cycle (diagnostics, create today's 1-risk + 2-research + 3-trade + scheduled monitors/eod tasks, link, dispatch, supervise until complete or halted). Delivers summary to origin.
+
+- **Other:** install.sh v2 (multi-profile) respected; tools/server.py TRADING_TOOL_GROUPS gating + tests green; no MCP on default (this session). All invariants (kill switch, SOP versioning, no direct broker calls by agents, simulation path) preserved.
+
+**Conclusion:** All trading profiles healthy and aligned with kanban multi-agent architecture. System is now fully configured for autonomous morning scans + 24/7 monitoring via cron + Discord. Paper trading can commence safely.
+
+## ⏩ Session handoff — 2026-06-12 session 1 (copy sops to hermes/profiles/backtest)
+
+- Copied the sops directory to hermes/profiles/backtest/ to support Hermes profile setup for backtesting.
 
 ## ⏩ Session handoff — 2026-06-11 session 4b (cycle 2: SOP v1.5.0, M scale-out)
 
@@ -81,7 +107,6 @@ was the mechanical rule working).
     mechanical baseline (its job: veto structural breaks, not shrink size).
 
 ---
-
 ## ⏩ Session handoff — 2026-06-11 session 4c (Hermes kanban redesign + deploy)
 
 **User report:** monolithic Hermes profile placed NO orders and started slowly
@@ -115,7 +140,6 @@ log_decision, unprompted skill compliance); kanban task lifecycle
 orchestrator daily-cycle dry run in progress at handoff time.
 
 ---
-
 ## ⏩ Session handoff — 2026-06-11 session 4 (run-5 post-mortem + plan guard)
 
 **Context:** the 2026-06-10 overnight `/iterate` session ran backtest windows
@@ -150,7 +174,6 @@ EMPTY entry reasons (no DD). `backtest_decisions` has 0 rows for all 5 runs.
 (content: "test") — left untracked, delete when convenient.
 
 ---
-
 ## ⏩ Session handoff — 2026-06-10 session 3 (volatility-regime-adjusted R target)
 
 **Goal (user):** improve swing strategy exit logic by adapting profit targets to volatility regimes using available regime data (spy_tr_atr) to increase expectancy per R.
@@ -185,7 +208,6 @@ EMPTY entry reasons (no DD). `backtest_decisions` has 0 rows for all 5 runs.
 - Will measure per-engine WR, expectancy/R, capture efficiency
 
 ---
-
 ## ⏩ Session handoff — 2026-06-09 session 2 (swing gatekeeper program, Bensdorp-derived)
 
 **Goal (user):** improve swing+intraday gatekeeping per Bensdorp *Automated Stock
@@ -306,7 +328,6 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
    Kelly-based sizing review once trade count > 30.
 
 ---
-
 ## ⏩ Session handoff — 2026-06-09 (routing blockers 1+2 cleared, bug fixes)
 
 **Shipped this session (commit `34cd106` on local `main` — push before switching machines):**
@@ -319,7 +340,6 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 - **End-to-end validation** — run the golden cases (`docs/plans/2026-06-06-routing-golden-cases.md`) on paper; then Phase-4 gate-vs-control backtest to tighten the PLACEHOLDER thresholds.
 
 ---
-
 ## ⏩ Session handoff — 2026-06-07 (continue from another machine)
 
 **To pick up:** `git fetch origin && git checkout feature/strategy-routing` (this branch has ALL the work below — routing + restructure + install fixes). PR #1: https://github.com/quochuy201/trading-system/pull/1
@@ -339,7 +359,6 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 **Local-only (NOT pushed):** a `git stash` named `hermes-wip-archive-jun1` holds weeks-old Hermes scratch (cron experiments, Feb-2026 backtest scripts, doc stubs) — recoverable via `git stash list`; drop when sure. This stash does NOT travel to the other laptop.
 
 ---
-
 ## Built & validated
 
 ### Core trading system (Phase 0 — pre-options)
@@ -365,7 +384,6 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
   - **One real paper multi-leg order placed & filled** (QQQ 650/640 bull put spread, net credit $1.03) — `place_multileg_order` works end-to-end against Alpaca.
 
 ---
-
 ## In progress
 
 ### Strategy-agnostic backtest engine — DESIGN being written
@@ -385,7 +403,7 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 
 **Spec `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` — REVISED after peer review; all findings resolved. Ready for a 2nd review pass / implementation plan.**
 
-Resolutions (chose **Option A: historical IV surface**, verified feasible — Alpaca serves per-strike historical option bars; BSM-inverting each strike's close reconstructs real skew, e.g. QQQ showed IV 0.327@m0.78 vs 0.282@m0.85):
+**Resolutions (chose **Option A: historical IV surface**, verified feasible — Alpaca serves per-strike historical option bars; BSM-inverting each strike's close reconstructs real skew, e.g. QQQ showed IV 0.327@m0.78 vs 0.282@m0.85):**
 1. Greeks: spec now lists `black_scholes_greeks()` as NEW prerequisite work (step 1), not existing.
 2. IV surface: new `option_surface` table (per strike/expiry/day) + builder job replaces scalar `iv_history` for backtest pricing. Real skew, not flat.
 3. Pricing: BSM **mid** (bid=ask=mid); "ask" removed. Net-spread-width gate explicitly not validated in backtest (needs live OPRA) — noted, not silent.
@@ -395,7 +413,6 @@ Resolutions (chose **Option A: historical IV surface**, verified feasible — Al
 7. ExitChecker: evaluator signature carries mutable exit_state (stateful trailing); unknown rule type hard-fails.
 
 ---
-
 ## Known bugs & gaps
 
 - ~~9 stale tests in test_harness.py~~ — **FIXED 2026-06-09**: rewritten against the v3 API; suite 221 pass / 0 fail.
@@ -406,7 +423,6 @@ Resolutions (chose **Option A: historical IV surface**, verified feasible — Al
 - **No edge validation yet** — agent discipline is proven, but the strategy's profitability (positive expectancy, win rate matching deltas, IVR-filter beating control) is UNVALIDATED. This is the backtest engine's purpose.
 
 ---
-
 ## Roadmap (options program)
 
 | Phase | Scope | Status |
@@ -419,10 +435,39 @@ Resolutions (chose **Option A: historical IV surface**, verified feasible — Al
 Future strategy versions: v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1.3.0 (earnings-vol single-leg).
 
 ---
-
 ## Key references
 - `CLAUDE.md` — build/test commands, architecture, backtest rules (NON-NEGOTIABLE).
 - `OPERATING_MANUAL.md` — risk constitution.
 - `docs/AGENT_EVOLUTION_STANDARD.md` — how the agent learns/remembers safely (frozen-model = externalized learning; four-store separation; Tier 1/2/3 trust; runtime-trust memory). **Includes a "Deployment on Hermes" section**: Hermes (Nous Research) auto-generates SKILL.md + has a Curator; its autonomous skill-promotion MUST be gated through human ratification for risk-bearing behavior. Read before wiring any memory/learning loop or deploying to Hermes.
 - `docs/specs/` — design + implementation-plan docs per feature.
 - `sops/options/vol-edge/HANDOFF.md` + `ROADMAP.md` — options program detail.
+
+## ⏩ Session handoff — 2026-06-14 session 1 (Engine B directional-swing complete)
+
+**Completed 8-task TDD plan for Engine B directional-swing refinement (2–4 wk):** All tasks implemented, tested, and spec-approved.
+
+- **Task 1:** Bounded confirmation-params loader (`tools/confirmation_params.py`, `.json`, tests) - commit a06546a
+- **Task 2:** Armed-plan store (`tools/armed_plans.py`, tests, `.gitignore` update) - commit f7b22dd  
+- **Task 3:** Sentinel armed-plan trigger pass (`tools/monitor_sentinel.py`, tests) - commit dd7a1fd
+- **Task 4:** SOP v1.1.0 (`sops/options/vol-edge/v1.1.0.md`) - commit d204177
+- **Task 5:** Research DD reference (`skills/research/reference/options-vol-edge-dd.md`) - commit b9f4b75
+- **Task 6:** Monitor skill — confirmation + hybrid exit (`skills/monitor/SKILL.md`) - commit f573659
+- **Task 7:** EOD weekly param-review step (`skills/eod-review/SKILL.md`) - commit 5572997
+- **Task 8:** Full-suite regression + spec cross-check - all tests pass (287), tool groups unchanged, spec artifacts verified
+
+**Feature summary:** Refined Engine B into long-only directional-swing strategy with:
+- 4-stage scan funnel (quantum scan → options gates → 3-leg DD → armed plan)
+- 3-leg research (technical + social + LLM synthesis) with armed-plan output
+- Two-phase entry: armed plan (pre-market) → intraday confirmation → immediate marketable order
+- Hybrid exit: underlying-close trailing stop + premium scale-out at +50% max gain
+- Bounded adaptive confirmation parameters with propose-and-ratify governance
+- No resting orders (either side), conviction-down-only sizing
+- Long-only scope (SPY UPTREND only), DTE 35–45, IVR committee instrument select
+
+**Verification:** 
+- All 287 tests pass (including new Tasks 1-3 tests)
+- Tool-group counts unchanged (no new MCP tools added)
+- All spec artifacts present and verified
+- Ready for integration into trading-system profile and paper trading
+
+**Next step:** Merge to main after final validation.
