@@ -40,3 +40,6 @@ uv.lock
 
 # Monitor sentinel runtime state (per-condition cooldown timestamps)
 tools/monitor_sentinel_state.json
+
+# Armed-plan runtime store (pre-market plans awaiting intraday confirmation)
+tools/armed_plans.json
