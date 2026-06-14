@@ -137,3 +137,88 @@ These feed into the OPERATING_MANUAL §4.4 circuit breakers:
 4. **Tag fault correctly.** SOP_FAULT = the trade was taken correctly but lost (expected). AGENT_FAULT = a rule was broken.
 5. **Never rationalize.** "I felt the stop was too tight" is an AGENT_FAULT, not valid reasoning.
 6. **Compliance gates are automatic.** < 0.9 compliance = DEFENSIVE next day. No override.
+
+---
+
+## Weekly: Engine B confirmation-param review (propose-and-ratify)
+
+**When:** on the Friday EOD review only (or the last trading day of the week). Do NOT run this on daily reviews or per-trade. Batching kills noise-chasing and prevents the loosen-after-losses runaway loop.
+
+### What to analyze
+
+Pull all Engine B trades closed during the week from `query_transaction_ledger` and `query_decisions`. For each, record:
+
+- **Confirmed-and-followed-through:** confirmation fired, trade entered, trade reached at least 1× risk reward before stop. The confirmation signal was genuine.
+- **Confirmed-and-trapped:** confirmation fired, trade entered, price reversed sharply within the confirmation window. The signal was a false breakout.
+- **Stood-down-but-would-have-worked:** confirmation never fired (plan expired or invalidation hit); underlying continued in the intended direction without the system entering. A missed trade — potentially useful signal if it recurs.
+
+Key each outcome to **market regime at the time of the event**: high-VIX vs. calm; trending vs. choppy (use SPY daily regime tag from `query_decisions`). Regime-keyed analysis is what makes a parameter adjustment meaningful; a "too tight" window in trending markets may be exactly right in chop.
+
+### Bounded parameters and hard rails
+
+The three adaptive parameters live in `tools/confirmation_params.json`. Their hard rails are enforced in `tools/confirmation_params.py` (`RAILS` dict) — they are clamped in code and can never be exceeded regardless of what a proposal says:
+
+| Parameter | Default | Rail (min, max) |
+|---|---|---|
+| `confirmation_window_min` | 30 | 15 – 90 min |
+| `rvol_multiple` | 1.2 | 1.1 – 2.0 |
+| `slippage_buffer_pct` | 0.75 | 0.25% – 2.0% |
+
+Any proposed value MUST fall within its rail (inclusive). Proposals that violate a rail are invalid and must be revised before submission.
+
+### Decision criteria
+
+- If trapped trades dominate in a given regime → consider tightening `confirmation_window_min` or raising `rvol_multiple` for that regime.
+- If stood-down-but-would-have-worked trades dominate → consider loosening `confirmation_window_min` or lowering `rvol_multiple`.
+- If slippage is systematically eating entry quality → consider adjusting `slippage_buffer_pct`.
+- Require **at least 5 Engine B outcomes** in the regime bucket before proposing a change. Fewer than 5 → note the pattern, do not propose.
+- **Never adjust parameters to compensate for losses alone.** A losing week with correct SOP execution is not evidence for a parameter change.
+
+### Governance: propose-and-ratify
+
+If the evidence meets the threshold, write a proposal to `reports/sop-changes/YYYY-MM-DD-engineb-confirm-params.md` using this template:
+
+```markdown
+# PROPOSAL — Engine B confirmation-param adjustment (human ratification required)
+
+**Status: PROPOSED [DATE]. Not shipped — agents may not modify tools/confirmation_params.json directly.**
+
+## Proposed changes
+
+| Parameter | Old value | New value | Rail |
+|---|---|---|---|
+| confirmation_window_min | [old] | [new] | 15 – 90 min (confirmation_params.py RAILS) |
+| rvol_multiple | [old] | [new] | 1.1 – 2.0 (confirmation_params.py RAILS) |
+| slippage_buffer_pct | [old] | [new] | 0.25 – 2.0 (confirmation_params.py RAILS) |
+
+(Omit rows where the value is unchanged.)
+
+## Regime context
+
+[Which regime prompted this? e.g. "high-VIX choppy week (SPY tagged NEUTRAL/CHOP Mon–Thu)"]
+
+## Trade evidence
+
+[List each relevant trade: symbol, date, outcome type, regime tag, and specifically how the current parameter contributed to the outcome. Minimum 5 outcomes in the bucket.]
+
+## Decision
+
+- [ ] APPROVED [DATE] (user) — apply to tools/confirmation_params.json
+- [ ] REJECTED — reason: ______
+- [ ] DEFERRED until: ______
+```
+
+Then **STOP**. Do not modify `tools/confirmation_params.json`, any file under `sops/`, or any other file. A human ratifies before anything changes. This matches the project rule: agents propose, never edit `sops/` or config directly.
+
+**Reproducibility note:** `tools/confirmation_params.json` carries a `version` timestamp. Backtests pin the param version they ran under, so every ratified change is auditable and historical runs remain reproducible.
+
+### Zero-proposal outcome
+
+If the weekly evidence does not meet the threshold (fewer than 5 outcomes in any regime bucket, or results are mixed with no directional signal), log in the journal:
+
+```
+### Engine B param review — [DATE]
+Outcome: NO PROPOSAL — [reason: e.g. "only 3 Engine B trades this week, insufficient sample"]
+```
+
+Do not propose a change just to have something to show. Patience here is correctness.
