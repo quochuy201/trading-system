@@ -2471,6 +2471,38 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
 
 
 @mcp.tool()
+def refresh_market_data(daily_end: str = "", lookback_days: int = 400) -> str:
+    """Refresh the universe's daily bars from the data source (single writer).
+
+    When to use: pre-market daily (cron), or any time the scan reports data_stale.
+    Fetches adjusted bars for the full universe through `daily_end` (default
+    yesterday) and reports freshness. Sample: refresh_market_data("2026-06-20").
+    Output: {"refreshed": 399, "bars": 144000, "as_of": "2026-06-19", "aligned": true}
+    """
+    _track_tool("refresh_market_data")
+    from datetime import date, timedelta
+    from data.validate import freshness_report
+    try:
+        repo = get_repo()
+        symbols = _universe_symbols(get_broker())
+        if "SPY" not in symbols:
+            symbols.append("SPY")
+        end = daily_end or (date.today() - timedelta(days=1)).isoformat()
+        start = (date.fromisoformat(end) - timedelta(days=lookback_days)).isoformat()
+        data = get_data_source().get_daily_bars(symbols, start, end)
+        bars = 0
+        for _s, blist in data.items():
+            if blist:
+                repo.save_price_bars(blist)
+                bars += len(blist)
+        fresh = freshness_report(repo, [s for s in symbols if s != "SPY"])
+        return json.dumps({"refreshed": len(data), "bars": bars,
+                           "as_of": fresh["freshest"], "aligned": fresh["aligned"]})
+    except Exception as e:
+        return json.dumps({"error": f"refresh failed: {e}"})
+
+
+@mcp.tool()
 def end_backtest() -> str:
     """End the current backtest and restore the live/paper broker.
 
@@ -2518,6 +2550,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_social_sentiment", "calc_technical_indicators", "score_catalyst",
         "load_price_cache", "query_price_cache", "scan_for_candidates",
         "scan_swing_candidates", "get_market_regime", "notify_analysis",
+        "refresh_market_data",
         # options DD (vol-edge program)
         "get_options_chain", "get_options_market_data", "calc_iv_rank",
         "calc_hv", "get_put_skew", "calc_expected_move",

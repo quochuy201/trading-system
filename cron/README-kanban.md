@@ -23,3 +23,13 @@ hermes cron create '*/5 9-16 * * 1-5' \
 
 Note: Hermes cron schedules run in the machine's local timezone — adjust the
 hour fields if the host is not in US/Eastern.
+
+## 3. Data refresh (pre-market, before the scan)
+
+```bash
+hermes cron create '15 6 * * 1-5' --name trading-data-refresh \
+  --script trading-data-refresh.sh --no-agent
+```
+
+Keeps the DB's daily bars current and consistent. If it fails, the morning
+scan still runs but reports `data_stale` (loud, not silent).
