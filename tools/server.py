@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 
 from broker.alpaca import AlpacaBrokerAdapter
 from broker.retry import RetryConfig, with_retry
+from data.source import get_data_source
 from models import to_json
 from persistence.repository import Repository
 
@@ -219,9 +220,17 @@ def get_market_data(symbol: str) -> str:
      "bid_size": 200, "ask_size": 100, "timestamp": "2026-05-21T17:00:00+00:00"}
     """
     _track_tool("get_market_data")
-    broker = get_broker()
-    data = with_retry(broker.get_market_data, _retry_config)(symbol)
-    return json.dumps(data)
+    try:
+        px = get_data_source().get_last_price(symbol)
+    except Exception as e:  # never raise to the agent
+        return json.dumps({"error": f"data source failed: {e}"})
+    if px is None:
+        return json.dumps({"error": f"no price available for {symbol}"})
+    return json.dumps({
+        "symbol": symbol, "price": px, "mid": px,
+        "source": os.environ.get("TRADING_DATA_SOURCE", "yfinance"),
+        "as_of": datetime.utcnow().isoformat(),
+    })
 
 
 @mcp.tool()
