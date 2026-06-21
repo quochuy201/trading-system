@@ -28,7 +28,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -47,26 +47,29 @@ FUND_WORDS = ("ETF", "TRUST", "FUND", "INDEX", "SHARES OUTSTANDING", "ISHARES",
               "PROSHARES", "VANGUARD", "SPDR", "DIREXION")
 
 
+def _default_daily_end() -> str:
+    """Yesterday (UTC) — avoids the previous stale hardcoded default."""
+    return (date.today() - timedelta(days=1)).isoformat()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-symbols", type=int, default=400)
     ap.add_argument("--daily-start", default="2025-01-02")
-    ap.add_argument("--daily-end", default="2025-12-05")
+    ap.add_argument("--daily-end", default=_default_daily_end())
     ap.add_argument("--batch", type=int, default=300)
     args = ap.parse_args()
 
     from alpaca.trading.client import TradingClient
     from alpaca.trading.requests import GetAssetsRequest
     from alpaca.trading.enums import AssetClass, AssetStatus
-    from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
+    from data.source import get_data_source
     from persistence.repository import Repository
 
     api_key = os.environ["ALPACA_API_KEY"]
     secret = os.environ["ALPACA_SECRET_KEY"]
     trading = TradingClient(api_key, secret, paper=True)
-    data = StockHistoricalDataClient(api_key, secret)
+    src = get_data_source()
     repo = Repository(str(Path(__file__).parent.parent / "trading.db"))
 
     # ---- Stage 1: candidate symbols from the assets API -------------------
@@ -93,19 +96,15 @@ def main() -> int:
     for i in range(0, len(syms), args.batch):
         chunk = syms[i:i + args.batch]
         try:
-            bars = data.get_stock_bars(StockBarsRequest(
-                symbol_or_symbols=chunk, timeframe=TimeFrame.Day,
-                start=datetime.fromisoformat(PREFILTER_START),
-                end=datetime.fromisoformat(PREFILTER_END)))
+            bars_map = src.get_daily_bars(chunk, PREFILTER_START, PREFILTER_END)
         except Exception as e:
             print(f"  batch {i//args.batch}: FAILED {e} — skipping")
             continue
-        for sym in chunk:
-            blist = bars.data.get(sym, [])
+        for sym, blist in bars_map.items():
             if len(blist) < 15:
                 continue
-            closes = [b.close for b in blist]
-            dvols = [b.close * b.volume for b in blist]
+            closes = [b["close"] for b in blist]
+            dvols = [b["close"] * b["volume"] for b in blist]
             avg_close = sum(closes) / len(closes)
             adv = sum(dvols) / len(dvols)
             if 10 <= avg_close <= 500 and adv >= 50_000_000:
@@ -126,30 +125,30 @@ def main() -> int:
 
     # ---- Stage 3: full daily history for universe + SPY -------------------
     to_load = universe + ["SPY"]
+    deleted = repo.clear_price_data("1Day")
+    print(f"Cleared {deleted} existing 1Day bars before clean reload")
     total = 0
     for i in range(0, len(to_load), args.batch):
         chunk = to_load[i:i + args.batch]
         try:
-            bars = data.get_stock_bars(StockBarsRequest(
-                symbol_or_symbols=chunk, timeframe=TimeFrame.Day,
-                start=datetime.fromisoformat(args.daily_start),
-                end=datetime.fromisoformat(args.daily_end)))
+            bars_map = src.get_daily_bars(chunk, args.daily_start, args.daily_end)
         except Exception as e:
             print(f"  history batch {i//args.batch}: FAILED {e}")
             continue
-        rows = []
-        for sym, blist in bars.data.items():
-            for b in blist:
-                rows.append({
-                    "symbol": sym, "timestamp": b.timestamp.isoformat(),
-                    "open": float(b.open), "high": float(b.high),
-                    "low": float(b.low), "close": float(b.close),
-                    "volume": float(b.volume), "timeframe": "1Day",
-                })
+        rows = [b for blist in bars_map.values() for b in blist]
         if rows:
             repo.save_price_bars(rows)
             total += len(rows)
         print(f"  history batch {i//args.batch + 1}: {total} bars cumulative")
+
+    # ---- Anomaly validation ------------------------------------------------
+    from data.validate import find_price_anomalies
+    flagged = 0
+    for sym in to_load:
+        flagged += len(find_price_anomalies(
+            repo.query_price_data(sym, args.daily_start, args.daily_end + "T23:59:59", "1Day")))
+    print(f"Validation: {flagged} >35% single-day moves across the universe "
+          f"(should be ~0 on adjusted data; investigate if high)")
 
     # ---- Stage 4: verify ---------------------------------------------------
     ok = 0
