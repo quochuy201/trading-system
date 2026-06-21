@@ -220,6 +220,20 @@ class Repository:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def latest_price_date(self, symbol: str, timeframe: str = "1Day") -> str | None:
+        """Return the max timestamp stored for a symbol/timeframe, or None."""
+        row = self.conn.execute(
+            "SELECT MAX(timestamp) AS mx FROM price_data WHERE symbol = ? AND timeframe = ?",
+            (symbol, timeframe),
+        ).fetchone()
+        return row["mx"] if row and row["mx"] else None
+
+    def clear_price_data(self, timeframe: str = "1Day") -> int:
+        """Delete all bars of a timeframe (used before a clean re-load). Returns rows deleted."""
+        cur = self.conn.execute("DELETE FROM price_data WHERE timeframe = ?", (timeframe,))
+        self.conn.commit()
+        return cur.rowcount
+
     # --- Decision Audit ---
 
     def save_decision(self, d: "DecisionLogEntry") -> None:

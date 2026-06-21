@@ -229,3 +229,19 @@ class TestRepository:
         result = self.repo.query_price_data("AAPL", "2024-01-01", "2024-01-04")
         assert len(result) == 2
         assert result[0]["close"] == 151.0
+
+
+class TestPriceDataHelpers:
+    def test_latest_price_date_and_clear(self):
+        from persistence.repository import Repository
+        repo = Repository(":memory:")
+        repo.save_price_bars([
+            {"symbol": "AAA", "timestamp": "2026-06-12T00:00:00+00:00", "open": 1,
+             "high": 1, "low": 1, "close": 1, "volume": 10, "timeframe": "1Day"},
+            {"symbol": "AAA", "timestamp": "2026-06-18T00:00:00+00:00", "open": 1,
+             "high": 1, "low": 1, "close": 1, "volume": 10, "timeframe": "1Day"},
+        ])
+        assert repo.latest_price_date("AAA") == "2026-06-18T00:00:00+00:00"
+        assert repo.latest_price_date("ZZZ") is None
+        assert repo.clear_price_data("1Day") == 2
+        assert repo.latest_price_date("AAA") is None
