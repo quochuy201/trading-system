@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import data.cache as cache_module
 from persistence.repository import Repository
 from data.cache import load_price_cache, query_price_cache
 from analysis.indicators import calc_technical_indicators
@@ -47,29 +48,33 @@ class TestPriceCache:
     def teardown_method(self):
         self.repo.close()
 
-    def test_load_price_cache(self):
-        mock_broker = MagicMock()
-        mock_broker.get_historical_data.return_value = _sample_bars("AAPL", 5)
+    def test_load_price_cache(self, monkeypatch):
+        aapl_bars = _sample_bars("AAPL", 5)
 
+        class _FakeSource:
+            def get_daily_bars(self, symbols, start, end):
+                return {"AAPL": aapl_bars}
+
+        monkeypatch.setattr(cache_module, "get_data_source", lambda: _FakeSource())
         result = load_price_cache(
-            mock_broker, self.repo, ["AAPL"], "2024-01-01", "2024-01-10"
+            None, self.repo, ["AAPL"], "2024-01-01", "2024-01-10"
         )
         assert result["bars_loaded"] == 5
         assert result["symbols"] == ["AAPL"]
-        mock_broker.get_historical_data.assert_called_once()
 
-    def test_load_multiple_symbols(self):
-        mock_broker = MagicMock()
-        mock_broker.get_historical_data.side_effect = [
-            _sample_bars("AAPL", 3),
-            _sample_bars("MSFT", 3),
-        ]
+    def test_load_multiple_symbols(self, monkeypatch):
+        aapl_bars = _sample_bars("AAPL", 3)
+        msft_bars = _sample_bars("MSFT", 3)
 
+        class _FakeSource:
+            def get_daily_bars(self, symbols, start, end):
+                return {"AAPL": aapl_bars, "MSFT": msft_bars}
+
+        monkeypatch.setattr(cache_module, "get_data_source", lambda: _FakeSource())
         result = load_price_cache(
-            mock_broker, self.repo, ["AAPL", "MSFT"], "2024-01-01", "2024-01-05"
+            None, self.repo, ["AAPL", "MSFT"], "2024-01-01", "2024-01-05"
         )
         assert result["bars_loaded"] == 6
-        assert mock_broker.get_historical_data.call_count == 2
 
     def test_query_price_cache(self):
         self.repo.save_price_bars(_sample_bars("AAPL", 10))
