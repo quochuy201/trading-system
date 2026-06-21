@@ -2363,10 +2363,18 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
     spy_data = stock_data.get("SPY")
     candidates = scan_universe(stock_data, spy_data)
 
+    from data.validate import freshness_report, is_stale
+    scan_date = end.strftime("%Y-%m-%d")
+    fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
+    stale_flag = is_stale(fresh["freshest"], scan_date)
+
     return json.dumps({
         "candidates": candidates,
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
         "passed": len(candidates),
+        "as_of": fresh["freshest"],
+        "data_stale": stale_flag,
+        "stale_count": len(fresh["stale"]) + len(fresh["missing"]),
     })
 
 
@@ -2446,11 +2454,19 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     spy_data = stock_data.get("SPY")
     candidates = scan_universe_swing(stock_data, spy_data)
 
+    from data.validate import freshness_report, is_stale
+    scan_date = end.strftime("%Y-%m-%d")
+    fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
+    stale_flag = is_stale(fresh["freshest"], scan_date)
+
     return json.dumps({
         "candidates": candidates,
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
         "passed": len(candidates),
         "sop_version": "equity/swing v1.0.0",
+        "as_of": fresh["freshest"],
+        "data_stale": stale_flag,
+        "stale_count": len(fresh["stale"]) + len(fresh["missing"]),
     })
 
 
