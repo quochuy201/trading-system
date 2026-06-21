@@ -2459,6 +2459,8 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
     stale_flag = is_stale(fresh["freshest"], scan_date)
 
+    # Staleness fields reflect the whole DB's latest bar date (live-oriented) and are
+    # informational only — not clock-bounded to backtest's current_time.
     return json.dumps({
         "candidates": candidates,
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),

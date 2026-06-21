@@ -46,7 +46,7 @@ From the Research agent's report, extract:
 
 ### Step 2: Get Live Price + First-Hour Confirmation
 
-Call `get_market_data(symbol)` for the current bid/ask.
+Call `get_market_data(symbol)` for the current price.
 
 **Check:**
 - Is current price within the recommended entry zone?

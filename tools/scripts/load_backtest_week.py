@@ -5,9 +5,10 @@ RUN LOCALLY (needs Alpaca keys in .env and internet):
 
 Loads into trading.db:
   - DAILY bars 2025-01-02 → 2025-11-28 for the config universe + SPY
+    (split-adjusted, from the configured market data source — default yfinance)
     (>= 160 trading days before Nov 17, required by SMA150/ROC50 gates)
   - HOURLY bars 2025-11-17 → 2025-11-26 for the same symbols
-    (backtest week + 3 sessions so open trades can resolve)
+    (from Alpaca broker API; backtest week + 3 sessions so open trades can resolve)
   - Re-fetches any cached bar that fails sanity checks (e.g. the corrupted
     SPY 2026-02-02 daily bar with low=69.005, a decimal-shifted tick)
 
