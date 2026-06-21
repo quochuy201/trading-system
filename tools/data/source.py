@@ -52,7 +52,7 @@ class YFinanceSource(MarketDataSource):
                          progress=False, group_by="ticker", threads=True)
         for s in symbols:
             try:
-                sub = df[s] if len(symbols) > 1 else df
+                sub = df[s]
             except KeyError:
                 continue
             sub = sub.dropna(how="all")
@@ -65,11 +65,13 @@ class YFinanceSource(MarketDataSource):
         df = yf.download(symbol, period="5d", auto_adjust=True, progress=False)
         if df is None or df.empty:
             return None
-        # Handle MultiIndex columns from yfinance (single ticker returns MultiIndex)
-        if isinstance(df.columns, pd.MultiIndex):
-            closes = df[("Close", symbol)].dropna()
-        else:
-            closes = df["Close"].dropna()
+        # Handle both flat and MultiIndex columns from yfinance robustly.
+        # Keying on ("Close", symbol) breaks for tickers with normalised names
+        # (e.g. BRK.B → BRK-B), so select the Close level then take first column.
+        closes = df["Close"]
+        if hasattr(closes, "columns"):
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
         return float(closes.iloc[-1]) if len(closes) else None
 
 

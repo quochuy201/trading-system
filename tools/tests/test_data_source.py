@@ -42,3 +42,36 @@ def test_factory_unknown_raises():
     import pytest
     with pytest.raises(ValueError):
         get_data_source("bloomberg")
+
+
+def test_get_daily_bars_single_symbol_multiindex(monkeypatch):
+    """get_daily_bars must handle a MultiIndex DataFrame for a single-symbol list.
+
+    yfinance 1.4.x always returns MultiIndex columns when group_by='ticker' is
+    used, even for a single ticker.  The previous `else df` branch passed the
+    raw MultiIndex frame to _normalize_bars, causing KeyError: 'Close'.
+    """
+    idx = pd.to_datetime(["2026-06-17"])
+    columns = pd.MultiIndex.from_tuples(
+        [("SPY", "Open"), ("SPY", "High"), ("SPY", "Low"),
+         ("SPY", "Close"), ("SPY", "Volume")]
+    )
+    fake_df = pd.DataFrame(
+        [[560.0, 562.0, 558.0, 561.0, 100_000.0]],
+        index=idx,
+        columns=columns,
+    )
+
+    monkeypatch.setattr("yfinance.download", lambda *a, **k: fake_df)
+
+    result = YFinanceSource().get_daily_bars(["SPY"], "2026-06-17", "2026-06-18")
+
+    assert list(result.keys()) == ["SPY"]
+    bars = result["SPY"]
+    assert len(bars) == 1
+    bar = bars[0]
+    assert set(bar.keys()) == {"symbol", "timestamp", "open", "high", "low", "close", "volume", "timeframe"}
+    assert bar["symbol"] == "SPY"
+    assert bar["close"] == 561.0
+    assert bar["open"] == 560.0
+    assert bar["timeframe"] == "1Day"
