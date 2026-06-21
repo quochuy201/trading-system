@@ -209,15 +209,15 @@ def cancel_order(order_id: str) -> str:
 
 @mcp.tool()
 def get_market_data(symbol: str) -> str:
-    """Get the current real-time quote (bid, ask, mid price) for a symbol.
+    """Get the current real-time price for a symbol.
 
     When to use: Research agent scanning candidates, Monitor agent checking current price against stop/target levels.
 
     Sample input: get_market_data("AAPL")
 
     Expected output:
-    {"symbol": "AAPL", "bid": 303.67, "ask": 303.69, "mid": 303.68,
-     "bid_size": 200, "ask_size": 100, "timestamp": "2026-05-21T17:00:00+00:00"}
+    {"symbol": "AAPL", "price": 298.01, "mid": 298.01, "source": "yfinance",
+     "as_of": "2026-06-21T13:30:00"}
     """
     _track_tool("get_market_data")
     try:
