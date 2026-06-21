@@ -43,3 +43,22 @@ tools/monitor_sentinel_state.json
 
 # Armed-plan runtime store (pre-market plans awaiting intraday confirmation)
 tools/armed_plans.json
+
+# Quarantined scratch (archived 2026-06-20; not deleted) — see _archive/README.md
+_archive/
+
+# Scratch guards: keep AI debug/verification scratch out of the repo root.
+# Real tests live in tools/tests/; real diagnostics belong in tools/scripts/.
+/test_*.py
+/debug_*.py
+/simple_verify.py
+/check_db.py
+/run_*_backtest.py
+/*VERIFICATION*.md
+/SCANNING_FIX_SUMMARY.md
+/test.txt
+/testdir/
+tools/backtest_state_*.json
+tools/backtest_week_state.json
+tools/sweep_metric_cache.json
+tools/test.txt
