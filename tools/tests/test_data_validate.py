@@ -47,3 +47,22 @@ def test_freshness_report_detects_patchwork():
     assert rep["stale"] == ["PM"]
     assert rep["missing"] == ["ZZZ"]
     assert rep["aligned"] is False
+
+
+def test_is_stale_boundary_equals_max_age():
+    # gap of exactly 3 days with max_age_days=3 → within tolerance, not stale
+    assert is_stale("2026-06-15", "2026-06-18", max_age_days=3) is False
+    assert is_stale("2026-06-15", "2026-06-19", max_age_days=3) is True
+
+
+def test_find_price_anomalies_empty():
+    assert find_price_anomalies([]) == []
+
+
+def test_freshness_report_all_missing():
+    class _Repo:
+        def latest_price_date(self, s, timeframe="1Day"): return None
+    rep = freshness_report(_Repo(), ["AAA", "BBB"])
+    assert rep["freshest"] is None
+    assert rep["missing"] == ["AAA", "BBB"]
+    assert rep["aligned"] is False
