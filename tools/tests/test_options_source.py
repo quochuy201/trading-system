@@ -27,3 +27,23 @@ def test_get_chain_filters_dte_and_sanity():
 
 def test_factory_returns_adapter():
     assert isinstance(get_options_source(_FakeBroker()), OptionsDataSource)
+
+
+def test_iv_rank_reads_history_only():
+    from persistence.repository import Repository
+    repo = Repository(":memory:")
+    rows = [{"symbol": "AAA", "date": f"2026-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}",
+             "iv": 0.20 + (i % 40) * 0.005, "source": "snapshot"} for i in range(70)]
+    repo.save_iv_data_batch(rows)
+    src = AlpacaOptionsSource(_FakeBroker())
+    out = src.iv_rank(repo, "AAA")
+    assert out["data_points"] >= 60
+    assert 0 <= out["iv_rank"] <= 100
+
+
+def test_iv_rank_insufficient_history():
+    from persistence.repository import Repository
+    repo = Repository(":memory:")
+    repo.save_iv_data("AAA", "2026-06-01", 0.3, "snapshot")
+    out = AlpacaOptionsSource(_FakeBroker()).iv_rank(repo, "AAA")
+    assert "error" in out

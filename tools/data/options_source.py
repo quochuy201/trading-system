@@ -20,6 +20,10 @@ class OptionsDataSource(ABC):
     def get_snapshot(self, option_symbols: list[str]) -> list[dict]:
         """Live quote+greeks+IV for specific contracts, sanity-gated."""
 
+    @abstractmethod
+    def iv_rank(self, repo, symbol: str, min_days: int = 60) -> dict:
+        """IV-rank from accrued iv_history (read-only). {symbol,iv_rank,current_iv,data_points} or {error,...}."""
+
 
 class AlpacaOptionsSource(OptionsDataSource):
     def __init__(self, broker):
@@ -40,6 +44,16 @@ class AlpacaOptionsSource(OptionsDataSource):
     def get_snapshot(self, option_symbols: list[str]) -> list[dict]:
         snaps = self._broker.get_option_snapshot(option_symbols)
         return [s for s in snaps if sanity_check_quote(s)[0]]
+
+    def iv_rank(self, repo, symbol: str, min_days: int = 60) -> dict:
+        from analysis.options import calc_iv_rank
+        hist = repo.query_iv_history(symbol, min_days=min_days)
+        if not hist:
+            return {"error": f"insufficient IV history for {symbol}",
+                    "data_points": repo.count_iv_history(symbol)}
+        current_iv = hist[-1]
+        return {"symbol": symbol, "iv_rank": round(calc_iv_rank(current_iv, hist), 1),
+                "current_iv": round(current_iv, 4), "data_points": len(hist)}
 
 
 def get_options_source(broker, name: str | None = None) -> OptionsDataSource:
