@@ -45,6 +45,30 @@ class AlpacaOptionsSource(OptionsDataSource):
         snaps = self._broker.get_option_snapshot(option_symbols)
         return [s for s in snaps if sanity_check_quote(s)[0]]
 
+    def capture_iv(self, repo, symbols: list[str], today: str) -> dict:
+        """Capture today's ATM IV30 for each symbol into iv_history (anomaly-gated)."""
+        from analysis.options import atm_iv
+        from data.options_validate import iv_anomaly
+        rows, skipped, anomalies = [], 0, 0
+        for sym in symbols:
+            try:
+                chain = self._broker.get_option_chain(underlying=sym)
+            except Exception:
+                skipped += 1
+                continue
+            iv = atm_iv(chain)
+            if iv is None:
+                skipped += 1
+                continue
+            prior = repo.query_iv_history(sym, min_days=1)
+            if iv_anomaly(prior[-1] if prior else None, iv):
+                anomalies += 1
+                continue
+            rows.append({"symbol": sym, "date": today, "iv": iv, "source": "snapshot"})
+        if rows:
+            repo.save_iv_data_batch(rows)
+        return {"captured": len(rows), "skipped": skipped, "anomalies": anomalies}
+
     def iv_rank(self, repo, symbol: str, min_days: int = 60) -> dict:
         from analysis.options import calc_iv_rank
         hist = repo.query_iv_history(symbol, min_days=min_days)

@@ -1716,6 +1716,29 @@ def calc_expected_move(symbol: str, dte: int) -> str:
 
 
 @mcp.tool()
+def capture_iv_universe(symbols: str = "") -> str:
+    """Capture today's ATM IV30 for the universe into iv_history (daily accrual job).
+
+    When to use: once daily after the close (cron), so per-name IV-rank accrues.
+    Sample: capture_iv_universe("")  — full universe;  capture_iv_universe("AAPL,MSFT")
+    Output: {"captured": 380, "skipped": 18, "anomalies": 2, "as_of": "2026-06-21"}
+    """
+    _track_tool("capture_iv_universe")
+    from datetime import date
+    from data.options_source import get_options_source
+    try:
+        broker = get_broker()
+        repo = get_repo()
+        syms = [s.strip() for s in symbols.split(",") if s.strip()] or _universe_symbols(broker)
+        today = date.today().isoformat()
+        res = get_options_source(broker).capture_iv(repo, syms, today)
+        res["as_of"] = today
+        return json.dumps(res)
+    except Exception as e:
+        return json.dumps({"error": f"iv capture failed: {e}"})
+
+
+@mcp.tool()
 def place_multileg_order(
     legs: str,
     order_type: str,
