@@ -33,3 +33,13 @@ hermes cron create '15 6 * * 1-5' --name trading-data-refresh \
 
 Keeps the DB's daily bars current and consistent. If it fails, the morning
 scan still runs but reports `data_stale` (loud, not silent).
+
+## 4. IV capture (daily, after close — options IVR accrual)
+
+```bash
+hermes cron create '5 13 * * 1-5' --name trading-iv-capture \
+  --script trading-iv-capture.sh --no-agent
+```
+Captures ATM IV30 per name into `iv_history` so per-name IV-rank (and credit-spread
+routing) become usable over time. IV history cannot be backfilled — the sooner this
+runs daily, the sooner IVR is trustworthy. (`5 13` PT = just after the 13:00 PT / 16:00 ET close.)
