@@ -15,7 +15,7 @@ def sanity_check_quote(contract: dict, max_rel_spread: float = 0.25) -> tuple[bo
     if ask < bid:
         return False, "crossed quote (ask < bid)"
     mid = (bid + ask) / 2
-    if mid > 0 and (ask - bid) / mid > max_rel_spread:
+    if (ask - bid) / mid > max_rel_spread:
         return False, f"spread too wide ({(ask - bid) / mid:.0%} > {max_rel_spread:.0%})"
     if not (0 < iv < 5):
         return False, f"implausible IV ({iv})"

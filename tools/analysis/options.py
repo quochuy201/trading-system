@@ -56,6 +56,19 @@ def parse_occ_symbol(symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def nearest_dte_contracts(chain: list[dict], target_dte: int = 30) -> list[dict]:
+    """Return only the contracts of the single expiration whose DTE is closest to target_dte.
+
+    Used to capture a consistent ~30-day ATM IV (IV30) rather than mixing tenors.
+    Returns [] for an empty chain.
+    """
+    dtes = {c.get("dte") for c in chain if c.get("dte") is not None}
+    if not dtes:
+        return []
+    best = min(dtes, key=lambda d: abs(d - target_dte))
+    return [c for c in chain if c.get("dte") == best]
+
+
 def atm_iv(chain: list[dict]) -> float | None:
     """Aggregate ATM IV: average of the call and put whose |delta| is nearest 0.50.
 

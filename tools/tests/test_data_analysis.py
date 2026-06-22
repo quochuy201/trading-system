@@ -149,3 +149,14 @@ class TestAtmIv:
     def test_atm_iv_none_when_no_iv(self):
         from analysis.options import atm_iv
         assert atm_iv([{"type": "C", "iv": 0, "greeks": {"delta": 0.5}}]) is None
+
+    def test_nearest_dte_contracts_picks_closest_expiry(self):
+        from analysis.options import nearest_dte_contracts
+        chain = [
+            {"dte": 7, "iv": 0.5, "type": "C", "greeks": {"delta": 0.5}},
+            {"dte": 35, "iv": 0.3, "type": "C", "greeks": {"delta": 0.5}},
+            {"dte": 35, "iv": 0.3, "type": "P", "greeks": {"delta": -0.5}},
+        ]
+        out = nearest_dte_contracts(chain, target_dte=30)
+        assert len(out) == 2 and all(c["dte"] == 35 for c in out)
+        assert nearest_dte_contracts([], 30) == []

@@ -1840,12 +1840,7 @@ def place_multileg_order(
 
 
 def _get_atm_iv(chain: list[dict]) -> float | None:
-    """Extract aggregate ATM IV (avg of nearest ATM call + put IV by delta closest to 0.50).
-
-    Searches the chain for the call and put whose absolute delta is closest to
-    0.50, then returns the average of their IVs. Returns None if no suitable
-    contracts are found.
-    """
+    """Delegate to analysis.options.atm_iv (kept for existing call sites)."""
     from analysis.options import atm_iv
     return atm_iv(chain)
 

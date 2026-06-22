@@ -5,10 +5,17 @@ The ONLY persisted options data is iv_history (see capture_iv_universe); chains,
 greeks, and quotes are never stored.
 """
 
+from __future__ import annotations
+
 import os
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from data.options_validate import sanity_check_quote
+
+if TYPE_CHECKING:
+    from persistence.repository import Repository
+    from broker.adapter import BrokerAdapter
 
 
 class OptionsDataSource(ABC):
@@ -21,12 +28,12 @@ class OptionsDataSource(ABC):
         """Live quote+greeks+IV for specific contracts, sanity-gated."""
 
     @abstractmethod
-    def iv_rank(self, repo, symbol: str, min_days: int = 60) -> dict:
+    def iv_rank(self, repo: "Repository", symbol: str, min_days: int = 60) -> dict:
         """IV-rank from accrued iv_history (read-only). {symbol,iv_rank,current_iv,data_points} or {error,...}."""
 
 
 class AlpacaOptionsSource(OptionsDataSource):
-    def __init__(self, broker):
+    def __init__(self, broker: "BrokerAdapter"):
         self._broker = broker
 
     def get_chain(self, symbol: str, dte_min: int = 30, dte_max: int = 45) -> list[dict]:
@@ -45,9 +52,9 @@ class AlpacaOptionsSource(OptionsDataSource):
         snaps = self._broker.get_option_snapshot(option_symbols)
         return [s for s in snaps if sanity_check_quote(s)[0]]
 
-    def capture_iv(self, repo, symbols: list[str], today: str) -> dict:
+    def capture_iv(self, repo: "Repository", symbols: list[str], today: str) -> dict:
         """Capture today's ATM IV30 for each symbol into iv_history (anomaly-gated)."""
-        from analysis.options import atm_iv
+        from analysis.options import atm_iv, nearest_dte_contracts
         from data.options_validate import iv_anomaly
         rows, skipped, anomalies = [], 0, 0
         for sym in symbols:
@@ -56,6 +63,7 @@ class AlpacaOptionsSource(OptionsDataSource):
             except Exception:
                 skipped += 1
                 continue
+            chain = nearest_dte_contracts(chain, target_dte=30)
             iv = atm_iv(chain)
             if iv is None:
                 skipped += 1
@@ -69,7 +77,7 @@ class AlpacaOptionsSource(OptionsDataSource):
             repo.save_iv_data_batch(rows)
         return {"captured": len(rows), "skipped": skipped, "anomalies": anomalies}
 
-    def iv_rank(self, repo, symbol: str, min_days: int = 60) -> dict:
+    def iv_rank(self, repo: "Repository", symbol: str, min_days: int = 60) -> dict:
         from analysis.options import calc_iv_rank
         hist = repo.query_iv_history(symbol, min_days=min_days)
         if not hist:
