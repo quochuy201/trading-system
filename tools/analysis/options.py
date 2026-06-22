@@ -52,6 +52,39 @@ def parse_occ_symbol(symbol: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ATM IV Extraction
+# ---------------------------------------------------------------------------
+
+
+def atm_iv(chain: list[dict]) -> float | None:
+    """Aggregate ATM IV: average of the call and put whose |delta| is nearest 0.50.
+
+    Returns None if no suitable contract is found. (Relocated from server.py for
+    reuse by the options data source.)
+    """
+    calls = [c for c in chain if c.get("type", "").upper() == "C" and c.get("iv", 0) > 0]
+    puts = [c for c in chain if c.get("type", "").upper() == "P" and c.get("iv", 0) > 0]
+    if not calls and not puts:
+        return None
+    ivs = []
+    if calls:
+        best_call = min(calls, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
+        if abs(abs(best_call.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
+            ivs.append(best_call["iv"])
+    if puts:
+        best_put = min(puts, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
+        if abs(abs(best_put.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
+            ivs.append(best_put["iv"])
+    if not ivs:
+        all_with_delta = [c for c in chain if c.get("iv", 0) > 0 and c.get("greeks", {}).get("delta")]
+        if all_with_delta:
+            best = min(all_with_delta, key=lambda c: abs(abs(c["greeks"]["delta"]) - 0.50))
+            return best["iv"]
+        return None
+    return sum(ivs) / len(ivs)
+
+
+# ---------------------------------------------------------------------------
 # IV Rank
 # ---------------------------------------------------------------------------
 

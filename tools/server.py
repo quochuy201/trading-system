@@ -1823,32 +1823,8 @@ def _get_atm_iv(chain: list[dict]) -> float | None:
     0.50, then returns the average of their IVs. Returns None if no suitable
     contracts are found.
     """
-    calls = [c for c in chain if c.get("type", "").upper() == "C" and c.get("iv", 0) > 0]
-    puts = [c for c in chain if c.get("type", "").upper() == "P" and c.get("iv", 0) > 0]
-
-    if not calls and not puts:
-        return None
-
-    ivs = []
-    if calls:
-        best_call = min(calls, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
-        if abs(abs(best_call.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
-            ivs.append(best_call["iv"])
-
-    if puts:
-        best_put = min(puts, key=lambda c: abs(abs(c.get("greeks", {}).get("delta", 0)) - 0.50))
-        if abs(abs(best_put.get("greeks", {}).get("delta", 0)) - 0.50) < 0.15:
-            ivs.append(best_put["iv"])
-
-    if not ivs:
-        # Fallback: use any contract with delta closest to 0.50
-        all_with_delta = [c for c in chain if c.get("iv", 0) > 0 and c.get("greeks", {}).get("delta")]
-        if all_with_delta:
-            best = min(all_with_delta, key=lambda c: abs(abs(c["greeks"]["delta"]) - 0.50))
-            return best["iv"]
-        return None
-
-    return sum(ivs) / len(ivs)
+    from analysis.options import atm_iv
+    return atm_iv(chain)
 
 
 def _cache_atm_iv(underlying: str, chain: list[dict]) -> None:

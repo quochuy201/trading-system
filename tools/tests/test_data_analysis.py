@@ -134,3 +134,18 @@ class TestTechnicalIndicators:
         )
         assert isinstance(result["above_sma20"], bool)
         assert isinstance(result["above_sma50"], bool)
+
+
+class TestAtmIv:
+    def test_atm_iv_averages_nearest_half_delta(self):
+        from analysis.options import atm_iv
+        chain = [
+            {"type": "C", "iv": 0.30, "greeks": {"delta": 0.50}},
+            {"type": "P", "iv": 0.34, "greeks": {"delta": -0.50}},
+            {"type": "C", "iv": 0.90, "greeks": {"delta": 0.95}},  # far ITM, ignored
+        ]
+        assert atm_iv(chain) == 0.32
+
+    def test_atm_iv_none_when_no_iv(self):
+        from analysis.options import atm_iv
+        assert atm_iv([{"type": "C", "iv": 0, "greeks": {"delta": 0.5}}]) is None
