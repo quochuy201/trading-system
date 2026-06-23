@@ -184,24 +184,31 @@ Never simulate or guess past sentiment.
 
 **Step 5: Score the catalyst** — call `score_catalyst(symbol, freshness, magnitude, priced_in, convergence, relevance, headline, thesis)`
 
-This is MANDATORY. You cannot recommend an entry without a catalyst score. Score each dimension 0-2:
+**How this score is used depends on the routed strategy (read carefully):**
+
+- **`equity/swing` (Engine M/R) and `options/vol-edge`:** the catalyst is a **CONVICTION MODIFIER, not an entry gate.** A candidate that passed the mechanical scanner gates AND is regime-eligible is ELIGIBLE to enter *regardless of catalyst score* — the mechanical edge is what the backtest validated; fresh news strengthens conviction (sizing), it does not gate entry. Still subject to the hard vetoes below. Score the catalyst to set size, then proceed.
+- **`equity/intraday-momentum`:** the catalyst score is **MANDATORY** — this is a catalyst-driven day-trade; you cannot recommend an intraday entry without a score ≥ 7.
+
+Score each dimension 0-2:
 - **freshness**: 0=>5 days old, 1=2-5 days, 2=today/yesterday
 - **magnitude**: 0=maintains/reiterates, 1=single upgrade, 2=earnings beat or multi-source
 - **priced_in**: 0=stock ran >5% already, 1=ran 2-5%, 2=hasn't moved yet (<2%)
 - **convergence**: 0=one weak source, 1=news + volume, 2=analyst + news + volume + buzz
 - **relevance**: 0=generic/macro, 1=company news unclear impact, 2=revenue-impacting event
 
-**Total ≥ 7 → ENTER** (strong catalyst, proceed to Layer 4)
-**Total 5-6 → WATCH** (borderline, only enter with OVERWHELMING first-hour confirmation)
-**Total < 5 → SKIP** (no real catalyst, technical-only setup, historically >50% failure rate)
+**For `equity/intraday-momentum` (MANDATORY gate):**
+**Total ≥ 7 → ENTER** (proceed to Layer 4) · **5-6 → WATCH** (only with overwhelming first-hour confirmation) · **< 5 → SKIP** (technical-only, historically >50% failure rate)
 
-**Kill if:**
-- score_catalyst returns verdict "SKIP" (total < 5)
-- Can't articulate thesis in one sentence
-- News is "maintains/reiterates" (no change) → freshness=0, magnitude=0
-- Catalyst is >5 days old (stale) → freshness=0
-- Stock already ran >5% on this news (priced in) → priced_in=0
-- Analyst upgrade AFTER a >10% run (they're following the price, not leading it) → priced_in=0, magnitude=0
+**For `equity/swing` and `options/vol-edge` (conviction modifier — NEVER skips a mechanically-valid, regime-eligible setup):**
+**Total ≥ 7 → full conviction/size** · **5-6 → standard size** · **< 5 → half size** (technical-only swing entry IS allowed). A low catalyst score alone never skips a swing/vol-edge setup.
+
+**Hard vetoes (ALL strategies — these DO skip the trade):**
+- Engine-R **structural-break** news (R-G7): fraud, accounting, guidance cut, regulatory action, key-customer loss, secular demand break → VETO the dip, log "R-G7-FAIL"
+- **Confirmed earnings inside the hold window** (binary direction / IV-crush risk)
+- **R:R < 2:1** for Engine M
+- Can't articulate the trade in one sentence
+
+**Intraday-momentum additionally kills on:** score_catalyst verdict "SKIP" (<5); "maintains/reiterates" news (freshness=0, magnitude=0); catalyst >5 days old (freshness=0); stock already ran >5% on the news (priced_in=0); analyst upgrade after a >10% run (priced_in=0, magnitude=0).
 
 ### Layer 4: Technical Setup
 

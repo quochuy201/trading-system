@@ -23,8 +23,13 @@ def find_price_anomalies(bars: list[dict], threshold_pct: float = 35.0) -> list[
     return out
 
 
-def is_stale(freshest_date: str | None, scan_date: str, max_age_days: int = 3) -> bool:
-    """True if data is missing or older than max_age_days vs scan_date (YYYY-MM-DD prefixes)."""
+def is_stale(freshest_date: str | None, scan_date: str, max_age_days: int = 5) -> bool:
+    """True if data is missing or older than max_age_days vs scan_date (YYYY-MM-DD prefixes).
+
+    Default tolerance is 5 calendar days so a normal market gap (weekend, or a
+    holiday + weekend, e.g. Thu close -> Mon scan across Juneteenth) does NOT
+    false-flag as stale; a genuinely broken refresh (6+ days) still trips it.
+    """
     if not freshest_date:
         return True
     f = date.fromisoformat(freshest_date[:10])

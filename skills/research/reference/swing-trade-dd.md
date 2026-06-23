@@ -8,7 +8,17 @@ its routed engine. Bensdorp's frame: a system is 12 ingredients; the scanner
 covered universe/filter/setup — you cover ranking context, catalyst, risk
 geometry, and the decision.
 
-**Thresholds: ≥ 70 ENTER full conviction · 60–69 ENTER half size · < 60 SKIP.**
+**Score → conviction/SIZE (it does NOT gate entry).** The mechanical scanner has
+already qualified the setup; this score only sets size: **≥ 70 → full size · 50–69 →
+half size · < 50 → quarter / minimum size.** A mechanically-valid, regime-eligible
+candidate ENTERS at the corresponding size — a low score (e.g. no fresh catalyst, so
+the 25-pt catalyst block is ~0) **reduces size, it does not SKIP.** The catalyst &
+narrative block is a conviction modifier, consistent with `skills/research/SKILL.md`
+Layer 3.
+
+**Hard SKIP only via the engine kill list** (gap rules violated · confirmed earnings in
+the hold window · R:R < 2:1 · Engine-R structural break / R-G7 · Engine-M LATE-HYPE
+chase). A low composite score alone never skips.
 
 ---
 
