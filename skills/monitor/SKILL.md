@@ -54,6 +54,8 @@ For each open position, compare current price against the trade plan:
 | Trailing stop | Current price ≤ trailing_stop_level | EXIT at market |
 | Dead money | Held 5+ days AND never reached +0.5R | EXIT at market |
 | Time stop | Current time ≥ time_stop (15 days) | EXIT at market |
+| Theta decay alert | For options positions: |daily theta| ≥ 3% of position value | ALERT (consider exit due to accelerating time decay) |
+| Days-to-expiry warning | For options positions: DTE ≤ 30 days AND DTE > 21 | ALERT (approaching expiration, monitor closely) |
 | Approaching stop (within 1%) | Price within 1% of stop | ALERT (no exit yet) |
 | Approaching target (within 2%) | Price within 2% of target | ALERT (consider partial) |
 | None triggered | — | Update trailing stop if applicable |
