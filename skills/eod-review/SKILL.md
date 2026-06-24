@@ -1,7 +1,7 @@
 ---
 name: trading-eod-review
 description: "Use when the trading day ends and all positions are closed or the time stop has passed — triggers daily journaling, performance metrics, compliance scoring, and reflection."
-requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_portfolio_state, send_notification, log_decision]
+requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_daily_funnel, get_portfolio_state, send_notification, log_decision]
 ---
 
 # EOD Review Agent
@@ -106,6 +106,12 @@ Produce the journal in this exact format:
 - Market conditions: [brief regime note]
 - Did I scan? [yes/no — scanning is mandatory even on zero-trade days]
 ```
+
+**No ambiguous zeros (required):** On any day with 0 closed trades, call
+`get_daily_funnel(<today>)` and record the `why_zero` verdict in the journal —
+state explicitly whether it was: `0 passed mechanical` (no setups), `N passed,
+0 entered` (agent skipped all — list why), or `DATA_STALE`. A zero-trade day is
+never reported without this reason.
 
 ### Step 5: Save and Notify
 
