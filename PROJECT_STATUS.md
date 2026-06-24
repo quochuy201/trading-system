@@ -4,9 +4,171 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-12 (profile audit + cron setup) · Branch: `main` (local, ahead of origin/main) · Tests: 256 passing, 0 failures
+Last updated: 2026-06-23 · Branch: `main` · Tests: 331 passing, 0 failures · **Paper trading ENABLED**
 
 ---
+
+## ⏩ 2026-06-23 — Scan-funnel observability (Plan 2) + data-refresh pipeline FIXED
+
+Two units of work, both merged to `main`; suite 323 → **331 passing**.
+
+**Equity Plan 2 — scan-funnel observability DONE (merge `041d5c0`).** The funnel telemetry deferred on 06-21 now exists — answers "why did/didn't it trade?" on ANY day, including zero-trade days. Telemetry-only, never alters a decision.
+- `scan_funnel` table (`persistence/db.py`) written **mechanically** by both scan tools every run (agent-independent — complete even when the agent under-logs verdicts, e.g. the 6-narrated/2-logged gap).
+- `get_daily_funnel(date)` MCP tool (in the `eod` tool group) joins the scan record with `decisions` (enter/skip) + `transaction_ledger` (orders) into a `why_zero` line. Uses an inclusive end-of-day timestamp bound — decisions store full ISO timestamps, so a bare-date `<=` would drop the whole day (caught in review, not in the plan).
+- Daily report renders a `## Scan Funnel` table + a **Why no trades** line.
+- Skills: EOD must record `why_zero` on any 0-trade day; research must `log_decision` for EVERY candidate. Plan: `docs/superpowers/plans/2026-06-22-scan-funnel-observability.md`.
+
+**Data-staleness ROOT-CAUSED + FIXED (merge `c6e9b06`).** The recurring "scan drought / no candidates" was **stale data, not thresholds.** Two independent bugs:
+1. **Refresh cron never ran.** `trading-data-refresh` fired daily 06:15 but failed every run with `Script not found` — Hermes resolves a no-`-p` cron's bare `--script` from the *profile* scripts dir (`~/.hermes/profiles/trading-research/scripts/`), but `install.sh` only deployed to the shared `~/.hermes/scripts/` and never deployed data-refresh/iv-capture at all. FIXED: `install.sh` now writes all three cron scripts (absolute paths) into every profile dir + the shared dir. Verified: `hermes cron run` → "Ran now: succeeded."
+2. **Half-open off-by-one.** The source contract is `[start, end)` (yfinance end-exclusive); `refresh_market_data` and `load_universe.py` passed `daily_end` as the exclusive end, dropping that day's bar — every refresh landed one trading day short. FIXED: fetch through `daily_end + 1` (+ boundary tests). Verified: universe 393-stuck-at-6/18 → **401/401 aligned to 6/22**.
+
+**Deployed + scanned:** `./install.sh hermes` (29/29 tools, all profiles). Fresh-data swing scan (as-of 6/22): **5 candidates** — SLB (R-dip) + XYZ/APO/ROKU/SJM (M-momentum). Materially different from the stale-data scan (BKR/CNQ/ONON/PRMB/ARES had already mean-reverted) — direct proof the staleness was distorting results.
+
+**Follow-up:** the recurring "adjust thresholds" framing (see 06-17 note) was largely the wrong lever — **check data freshness FIRST**.
+
+---
+
+## ⏩ 2026-06-21 — Data foundations rebuilt + trading ENABLED (big session)
+
+Full diagnosis → fix → deploy. Specs in `docs/superpowers/specs/2026-06-20-*` and `2026-06-21-*`; plans in `docs/superpowers/plans/2026-06-21-*`; per-task ledger in `.superpowers/sdd/progress.md`.
+
+**Root cause of "no valid trade" (evidence-based):** not one bug. (A) live research skill made a **fresh-news catalyst MANDATORY**, killing the mechanically-validated edge; (B) "live" data was a hand-cranked backtest loader (no refresh automation); (C) zero funnel observability; (D) version/param drift; (E) AI scratch pollution; (F) **data materially incorrect** — raw/unadjusted (split cliffs: ORLY 15:1, IBKR 4:1), IEX-only quotes (wrong "current price"), and a two-importer patchwork (12 fresh / 390 stale / 8 frozen).
+
+**Equity Plan 1 — DONE (commits c620088..00e603e):** single `MarketDataSource` adapter (yfinance, split-adjusted, consolidated, no key) as the sole 1Day writer; `get_market_data` returns consolidated price; scan tools surface `data_stale`/`as_of`; `refresh_market_data` tool + pre-market cron. Corrective re-load: cleared 147,227 raw bars → **147,799 adjusted bars, all 400 aligned**. Re-baseline: scanner went from 5 (raw, artifacts) → 11 real candidates (M + R).
+
+**Options Plan 1 — DONE (commits ee1615f..4a637e0):** `OptionsDataSource` adapter — perishable data (chains/greeks/quotes) fetched LIVE + sanity-gated, **only `iv_history` persisted**; `capture_iv_universe` daily job (IV30 at ~30-DTE) + after-close cron; read-only `iv_rank`. Live seed captured 5/5; per-name IVR accrual STARTED (months to maturity → credit spreads stay debit-default until then). Thesis validated: credit = structural VRP edge; debit/long = directional edge (not vol). Full options scanner/routing design specced (Plans 2-4 pending).
+
+**Trading ENABLED for Mon 2026-06-22 (commit pending classifier; working tree live):**
+- Catalyst gate → **advisory** for equity/swing + options/vol-edge (mechanical scan decides entry; news = conviction/size). Hard vetoes kept: R-G7 structural break, earnings-in-window, R:R<2:1, gap rules. (Intraday-momentum keeps the mandatory gate.) Files: `skills/research/SKILL.md` Layer 3, `skills/research/reference/swing-trade-dd.md`.
+- Deployed via `./install.sh hermes` (skills/sops/MCP to all profiles).
+- **Crons registered** (PT, host PDT): trading-morning 6:35 (orchestrator), data-refresh 6:15, kanban-tick */5 6-13, iv-capture 13:05. Stale duplicate morning cron removed.
+- **Preflight green:** kill switch off, paper account ($97k cash/$397k BP), SPY uptrend (swing eligible), 11 candidates, data not stale (guard tolerance 3→5 days for holiday weekends).
+
+**Known follow-ups:** equity Plan 2 (scan-funnel telemetry/observability) + Plan 3 (first-trade hardening) deferred — trading was enabled WITHOUT the funnel (paper + `notify_analysis` Discord pre-trade + risk gates mitigate). Repo scratch archived to gitignored `_archive/`. Deferred Minors in the SDD ledger.
+
+---
+
+## ⏩ Morning Cycle — 2026-06-19 (6:35 PDT / pre-market)
+
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.5.0 + updates, references/trading-morning-cycle-examples.md now materialized):**
+
+- Ran `date` (PDT confirmed @06:36), `hermes profile list` (trading-system+trading-research running; others functional), `hermes -p <worker> mcp list` (trading-tools 'all' enabled), `hermes kanban --board trading diagnostics` (clean; unblocked stale t_9e9b3efc risk from 06-18 due to kanban-worker vs domain-skill gating), cron list verified (3 active jobs incl. morning + 5min tick).
+- Created/verified 06-19 task graph on `trading` board via sequential `hermes kanban --board trading create ... --skill <domain-skill> --parent ... --json` (specific skills trading-risk-manager/trading-research/etc. to resolve persistent MCP gating per pitfalls; risk starts immediately, proper children/parents):
+  - **t_99687dcd** (`trading-risk`, skill=trading-risk-manager): 2026-06-19 1-risk-regime **running w/ pid=68328 + heartbeat** (preflight per OPERATING_MANUAL §§1-2,3.4; mode, eligible strategies, paper mode). Children linked.
+  - **t_58c10abd** (`trading-research`, parents=[t_99687dcd], skill=trading-research): 2-research-scan (per skills/research/SKILL.md + last30days + SOPs).
+  - **t_2baf2a44** (`trading-trader`, parents=[t_99687dcd, t_58c10abd], skill=trading-trader): 3-trade-exec (SOPs, risk gates, MCP execution).
+  - **t_da021ead** (`trading-monitor`, parent=[t_2baf2a44], skill=trading-monitor): 4-monitor-checkpoints (07:30/09:00/11:00/12:45 PT).
+  - **t_c7d9707b** (`trading-eod`, parent=[t_da021ead], skill=trading-eod-review): 5-eod-review (13:15 PT journal/metrics/compliance).
+- Dispatcher ran: spawned risk task successfully (show confirmed running/pid/heartbeat/graph/children/links; no HALTED, invariants preserved per OPERATING_MANUAL). Downstream will promote on completion via tick. MCP gating fixed via domain skills. Materialized missing references/trading-morning-cycle-examples.md. No deprecated profiles cleaned (none found).
+- PROJECT_STATUS.md patched proactively (read first for context). All changes logged. Crons use full paths where needed.
+
+**Current board state:** risk t_99687dcd completed, monitor t_da021ead completed, EOD t_c7d9707b **COMPLETED**. Full cycle closed successfully. System healthy for paper trading (NORMAL mode continues).
+
+(Previous 06-18 cycle had stale block resolved.)
+
+---
+
+## EOD Review — 2026-06-19 (per trading-eod-review skill, OPERATING_MANUAL, parent t_da021ead)
+
+**Journal Summary:** Zero-trade hold day. No closed trades or new decisions. Portfolio: equity $102,189.17 (daily P&L -$16.00). Open positions healthy per monitor (BAC +8.1%, CAT +14.1%, JPM +6.4%, MRK -1.6%, QQQ debit put spread near breakeven/small loss). Compliance: 100.0% (0 decisions, 0 violations). Mode: NORMAL. Performance report generated to `/Users/zelyuh/workplace/trading-system/reports/report_2026-06-19_to_2026-06-19.md`. Structured notification sent to Discord #auto-trade. Decision logged (8cb18681a40b).
+
+**Reflection:**
+1. **SOP followed?** Yes — held per monitor rules, no mechanical exits triggered, no violations even on holds. Scanned via full morning cycle.
+2. **Loss attribution:** N/A (no closed trades). Unrealized moves within bounds.
+3. **Completed actionable improvement:** Added explicit theta-decay and days-to-expiry checks to monitor checkpoints for the QQQ July spread (aging position).
+4. **Completed actionable improvement:** Refreshed historical data through 2026-06-15 to resolve scanning candidate drought, ensuring ≥160 daily bars per symbol for technical indicator calculations.
+
+**Engine B param review (Friday):** NO PROPOSAL — insufficient Engine B outcomes this week (<5 regime-keyed samples); no adjustments to confirmation_window_min, rvol_multiple, or slippage_buffer_pct.
+
+All OPERATING_MANUAL invariants preserved (kill switch inactive, limits ok, compliance high). Ready for next morning cycle.
+
+---
+
+## ⏩ Morning Cycle — 2026-06-18 (6:35 PDT / pre-market)
+
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.4.0, references/trading-morning-cycle-examples.md):**
+
+- Ran `date` (PDT confirmed), `hermes profile list` (trading-system running as distribution, trading-research running, others stopped but workers functional), `hermes kanban --board trading diagnostics` (unblocked stale t_5ee6ce4b EOD task from 06-16 due to prior tool gating; now resolved via reclaim/unblock).
+- No crons listed — recreated trading-morning (on trading-system, PT schedule, kanban-orchestrator skill, workdir=project) + trading-kanban-tick (--script, market hours).
+- Created/verified task graph on `trading` board (sequential create + --parent for gated promotion; risk started immediately):
+  - **t_9e9b3efc** (`trading-risk`): 2026-06-18 1-risk-regime **running w/ pid=25493 + heartbeat** (preflight per OPERATING_MANUAL §§1-2; mode, eligible strategies, paper mode). Children linked.
+  - **t_ef4f8416** (`trading-research`, parents=[t_9e9b3efc]): 2-research-scan (per skills/research/SKILL.md + last30days + SOPs).
+  - **t_49a30f40** (`trading-trader`, parents=[t_9e9b3efc, t_ef4f8416]): 3-trade-exec (SOPs, risk gates, MCP execution).
+  - **t_de4cbda8** (`trading-monitor`, parent=[t_49a30f40]): 4-monitor-checkpoints (07:30/09:00/11:00/12:45 PT).
+  - **t_8e169a92** (`trading-eod`, parent=[t_de4cbda8]): 5-eod-review (16:15 PT journal/metrics/compliance).
+- Risk task claimed/spawned successfully (show confirmed graph, no HALTED, invariants preserved). Dispatcher/tick will promote downstream. MCP gating active per profile. No deprecated profiles.
+- PROJECT_STATUS.md patched with this section. All changes logged. 
+
+**Current board state:** risk t_9e9b3efc running (active pid/heartbeat), 4 downstream todo (properly gated). System healthy for paper trading day (NORMAL mode expected post-preflight). Dispatcher + sentinels active. Ready for autonomous cycle.
+
+(Previous 06-17 cycle completed successfully per prior entry; EOD unblocked.)
+
+---
+
+## ⏩ Morning Cycle — 2026-06-17 (6:35 PDT / pre-market)
+
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.3.0, and trading-morning cron):**
+
+- Ran `hermes kanban --board trading diagnostics` → clean.
+- Fixed `trading-monitor-sentinel.sh` (uv PATH issue in cron env → full path to ~/.local/bin/uv).
+- Created task graph on `trading` board (with `parents=[...]` for gated promotion; risk starts immediately):
+  - **t_8c551e65** (`trading-risk`): 2026-06-17 1-risk-regime **COMPLETED** (preflight per OPERATING_MANUAL §§1-2,3; mode=NORMAL, eligible=equity/swing; paper mode). See ledger decisions 19dd95aae616 + 13f351db6063.
+  - **t_053fca2e** (`trading-research`, parents=[t_8c551e65]): 2-research-scan (per skills/research/SKILL.md + last30days) — now promotable
+  - **t_e64e13ca** (`trading-trader`, parents=[t_8c551e65, t_053fca2e]): 3-trade-exec (SOPs, risk gates, MCP execution)
+  - **t_87762ec7** (`trading-monitor`, parent=[t_e64e13ca]): 4-monitor-checkpoints (07:30/09:00/11:00/12:45 PT)
+  - **t_7b7fe297** (`trading-eod`, parent=[t_87762ec7]): 5-eod-review (16:15 PT journal/metrics/compliance)
+- **Risk preflight findings (per trading-risk-manager skill + routing v1.1.0):** Kill-switch inactive, daily limits PASSED (+0.07% PnL / $3143 remaining of 3%), compliance=100%, no breakers, regime uptrend (spy_tr_atr=0.60, +3.31% vs SMA50, trend=up) → equity/swing=ON, options=OFF. Equity=$102,390. Open positions exist (BAC/JPM/CAT/MRK + QQQ options; note finance sector overlap per crash Rule 1 — monitor to manage). Expectancy gate PASS (target=0). Discord notification sent. PROJECT_STATUS.md updated. No HALTED → downstream proceeds.
+- Task bodies reference SOUL.md daily cycle, specific SKILL.md, OPERATING_MANUAL.md (modes, sizing, kill-switch, expectancy), current SOP versions (routing v1.1.0), MCP tool gating (TRADING_TOOL_GROUPS=risk for this task), paper mode, Discord structured notifications.
+- Dispatched via `hermes kanban --board trading dispatch` → risk task completed successfully (logs + notification). Downstream tasks will auto-promote on parent completion via tick cron.
+- No HALTED mode per invariants/preflight. trading-kanban-tick (every 5min) + sentinel active. All profiles verified healthy; no deprecated commander profiles.
+
+**Current board state:** risk t_8c551e65 completed, monitor t_87762ec7 done, EOD t_7b7fe297 **COMPLETED**. Full cycle closed successfully. System healthy for paper trading (NORMAL mode continues). 
+
+**EOD Results (per trading-eod-review skill):** 0 closed trades (zero-trade day with holds on BAC/CAT/JPM/MRK + QQQ put spread per SOPs/monitor). Compliance 100%, daily unrealized P&L +$74, equity $102,385. Journal + performance report generated and persisted. Discord summary sent to #auto-trade. Key lesson: add sector correlation monitoring for finance overlap and spread decay rules. Decision logged (18854e281f9a). PROJECT_STATUS updated per EOD protocol. No blocks or violations. All OPERATING_MANUAL invariants preserved. Ready for next morning cycle.
+
+(Previous 06-16 cycle completed successfully per prior entry; sentinel now fixed.)
+
+---
+
+## ⏩ Morning Cycle — 2026-06-16 (6:35 PDT / pre-market)
+
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.1.0, and trading-morning cron):
+- ✅ Removed unused import `from analysis.valuation import compute_valuations` from get_market_regime function in tools/server.py (code cleanup)**
+
+- Ran `hermes kanban --board trading diagnostics` → clean.
+- Created task graph on `trading` board (linked via parents for sequential promotion):
+  - **t_c1d9c96c** (`trading-risk`): 2026-06-16 1-risk-regime (preflight per OPERATING_MANUAL §§1-2, mode, eligible strategies; **currently running** run#24)
+  - **t_4db1a12a** (`trading-research`, parents=[t_c1d9c96c]): 2-research-scan
+  - **t_f851fc8a** (`trading-trader`, parents=[t_c1d9c96c, t_4db1a12a]): 3-trade-exec
+  - **t_9d422893** (`trading-monitor`, parent=t_f851fc8a): 4-monitor-checkpoints (07:30/09:00/11:00/12:45 PT)
+  - **t_5ee6ce4b** (`trading-eod`, parent=t_9d422893): 5-eod-review (13:15 PT)
+- Bodies reference SOUL.md phases, specific skills/* /SKILL.md, OPERATING_MANUAL.md rules, SOPs, MCP gating, paper mode.
+- Dispatched; risk task claimed and spawned (pid active, heartbeat received). Downstream gated in todo until parents complete.
+- No HALTED mode (per prior cycles and preflight invariants). Dispatcher/tick cron will promote and supervise checkpoints/EOD.
+- Updated PROJECT_STATUS.md + kanban creates logged. No deprecated profiles. All invariants preserved.
+
+**Current board state:** New 06-16 graph active (1 running + 4 todo). System healthy for paper trading day. Dispatcher will handle full cycle; EOD will update metrics/journal/Discord.
+
+(Previous 06-15 cycle completed successfully per prior entry.)
+
+---
+
+## ⏩ Morning Cycle — 2026-06-15 (6:35 PDT / pre-market)
+
+**Daily kanban-orchestrator run (per SOUL.md and trading-morning cron):**
+
+- Ran `hermes kanban --board trading diagnostics` → clean (no active diagnostics).
+- Created task graph (linked in sequence via parents):
+  - **t_ca88d295** (`trading-risk`): 2026-06-15 1-risk-regime (preflight, mode computation per OPERATING_MANUAL §§1-2; currently **running**)
+  - **t_7d87b45c** (`trading-research`, parent=t_ca88d295): 2-research-scan (scan, DD, scoring)
+  - **t_fc1d508e** (`trading-trader`, parent=t_7d87b45c): 3-trade-exec (plan, risk gates, execution via MCP)
+  - **t_312a07e5** (`trading-monitor`, parent=t_fc1d508e): 4-monitor-checkpoints (07:30/09:00/11:00/12:45 PT equivalents of 10:30/12:00/14:00/15:45 ET)
+  - **t_24c15031** (`trading-eod`, parent=t_312a07e5): 5-eod-review (13:15 PT / 16:15 ET journal, metrics, Discord summary)
+- Dispatched via `hermes kanban --board trading dispatch` → spawned risk task (run #17 active, MCP tools engaged for preflight).
+- Supervision active via kanban-tick cron (every 5min). Will promote downstream tasks upon risk completion. No HALTED mode detected in preflight setup; proceeds to research if NORMAL.
+- PROJECT_STATUS and memory invariants preserved. No deprecated profiles.
+
+**Current board state:** 9 historical done tasks + 1 running + 4 todo (dependency-gated). System healthy for paper trading day.
 
 ## ⏩ Profile Audit & Setup — 2026-06-12
 
@@ -471,3 +633,26 @@ Future strategy versions: v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1
 - Ready for integration into trading-system profile and paper trading
 
 **Next step:** Merge to main after final validation.
+## ⏩ Session handoff — 2026-06-14 session 2 (Engine B directional-swing merged to main)
+
+**Completed integration of Engine B directional-swing feature:**
+
+- **Merged to main**: feature/engine-b-directional-swing → main (commit f2bf544)
+- **Updated all Hermes profiles**: ./install.sh hermes completed successfully
+- **Profiles updated**:
+  - trading-research: gained updated skills/research/reference/options-vol-edge-dd.md
+  - trading-monitor: gained updated skills/monitor/SKILL.md
+  - trading-eod: gained updated skills/eod-review/SKILL.md
+  - trading-system/trading-orchestrator/trading-trader/trading-risk/trading-backtest: gained access to updated tools/
+- **Verification**:
+  - All 287 tests pass (including new Engine B tests)
+  - Tool-group counts unchanged (no new MCP tools added)
+  - Spec coverage verified (all Engine B v1.1.0 artifacts present)
+
+**Feature now live in multi-profile architecture:**
+- Research agent generates armed plans with 3-leg DD
+- Monitor agent watches armed plans and executes hybrid exit
+- EOD-review agent handles weekly param propose-and-ratify
+- All agents share confirmation parameters and armed-plan storage via tools/
+
+Ready for paper trading validation.
