@@ -1249,6 +1249,53 @@ def get_compliance_score(start_date: str = "", end_date: str = "", sop_version: 
 
 
 
+@mcp.tool()
+def get_daily_funnel(date: str = "") -> str:
+    """Assemble the full decision funnel for a date — even on zero-trade days.
+
+    When to use: EOD review, or any time you must answer "why did/didn't it trade?"
+    Joins the mechanical scan record with the agent's enter/skip verdicts and the
+    orders actually placed. Sample: get_daily_funnel("2026-06-22").
+    Output: {"date","scan":{...},"verdicts":{"entered","skipped",...},"orders","why_zero"}
+    """
+    _track_tool("get_daily_funnel")
+    from datetime import date as _date
+    try:
+        repo = get_repo()
+        d = date or _date.today().isoformat()
+        scans = repo.query_scan_funnel(d)
+        scan = scans[0] if scans else {}
+        # Decisions/orders store full ISO timestamps (e.g. "<d>T14:30:00"); use an
+        # inclusive end-of-day bound so same-day entries are not excluded by a bare
+        # "timestamp <= <d>" comparison.
+        end_dt = f"{d}T23:59:59.999999"
+        decisions = repo.query_decisions(start_date=d, end_date=end_dt, limit=2000)
+        ledger = repo.query_ledger(start_date=d, end_date=end_dt, limit=2000)
+        enters = [x for x in decisions if (x.get("action") or "") == "enter"]
+        skips = [x for x in decisions if (x.get("action") or "") == "skip"]
+        n_orders = len([x for x in ledger if (x.get("action") or "") in ("buy", "sell")])
+        passed = scan.get("passed", 0)
+        if scan.get("data_stale"):
+            why = f"DATA_STALE (as_of {scan.get('as_of')}) — scan ran on stale data"
+        elif not scan:
+            why = "no scan recorded for this date (cycle did not run)"
+        elif passed == 0:
+            why = f"0 passed mechanical gates of {scan.get('scanned', 0)} scanned — no setups"
+        elif not enters:
+            why = f"{passed} passed mechanical, 0 entered — agent skipped all (see skip_list)"
+        else:
+            why = f"{passed} passed, {len(enters)} entered, {n_orders} order(s) placed"
+        return json.dumps({
+            "date": d, "scan": scan,
+            "verdicts": {"entered": len(enters), "skipped": len(skips),
+                         "enter_list": [{"symbol": x.get("symbol"), "why": x.get("reasoning")} for x in enters],
+                         "skip_list": [{"symbol": x.get("symbol"), "why": x.get("reasoning")} for x in skips]},
+            "orders": n_orders, "why_zero": why,
+        }, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"funnel assembly failed: {e}"})
+
+
 def export_decisions(
     start_date: str, end_date: str, format: str = "json",
     symbol: str = "", sop_version: str = "",
