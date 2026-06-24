@@ -1209,6 +1209,7 @@ def generate_performance_report(
             "by_type": comp["by_type"],
         },
     }
+    metrics["funnel"] = get_daily_funnel(end_date)
 
     # Save to DB
     report = PerformanceReport(
@@ -1398,6 +1399,31 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
         for sym, data in trading["by_symbol"].items():
             lines.append(f"| {sym} | {data['trades']} | {data['win_rate']:.1%} | ${data['total_pnl']:.2f} |")
         lines.append("")
+
+    import json as _json
+    funnel_raw = metrics.get("funnel")
+    if funnel_raw:
+        try:
+            fn = _json.loads(funnel_raw) if isinstance(funnel_raw, str) else funnel_raw
+        except Exception:
+            fn = {}
+        sc = fn.get("scan", {}) or {}
+        v = fn.get("verdicts", {}) or {}
+        lines += [
+            "",
+            "## Scan Funnel",
+            "",
+            "| Stage | Value |",
+            "|-------|-------|",
+            f"| Scanned | {sc.get('scanned', 0)} |",
+            f"| Passed mechanical | {sc.get('passed', 0)} (M {sc.get('passed_m', 0)} / R {sc.get('passed_r', 0)}) |",
+            f"| Data as-of | {sc.get('as_of', 'n/a')}{' (STALE)' if sc.get('data_stale') else ''} |",
+            f"| Entered | {v.get('entered', 0)} |",
+            f"| Skipped | {v.get('skipped', 0)} |",
+            f"| Orders placed | {fn.get('orders', 0)} |",
+            "",
+            f"**Why no trades:** {fn.get('why_zero', 'n/a')}",
+        ]
 
     lines.append(f"*Generated: {report.generated_at.isoformat()}*")
 
@@ -2669,7 +2695,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
     "eod": {
         "query_decisions", "query_transaction_ledger",
         "generate_performance_report", "get_compliance_score",
-        "get_portfolio_state", "get_positions",
+        "get_portfolio_state", "get_positions", "get_daily_funnel",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",
