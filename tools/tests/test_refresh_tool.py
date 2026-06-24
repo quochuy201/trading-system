@@ -30,3 +30,26 @@ def test_refresh_market_data(monkeypatch):
     out = json.loads(server.refresh_market_data("2026-06-20"))
     assert out["bars"] == 1
     assert out["refreshed"] == 1
+
+
+def test_refresh_includes_daily_end_bar(monkeypatch):
+    """The source contract is half-open [start, end); to fetch daily_end's own
+    bar the tool must call the source with end = daily_end + 1 day. Otherwise
+    every refresh lands one trading day short (the live data-staleness bug)."""
+    class _RecSrc:
+        seen = {}
+        def get_daily_bars(self, symbols, start, end):
+            _RecSrc.seen = {"start": start, "end": end}
+            return {}
+    monkeypatch.setattr(server, "get_data_source", lambda: _RecSrc(), raising=False)
+    monkeypatch.setattr(server, "_universe_symbols", lambda b: ["AAA"], raising=False)
+
+    class _Repo:
+        def save_price_bars(self, bars): pass
+        def latest_price_date(self, s, tf="1Day"): return "2026-06-22T00:00:00+00:00"
+    monkeypatch.setattr(server, "get_repo", lambda: _Repo())
+    monkeypatch.setattr(server, "get_broker", lambda: object())
+
+    server.refresh_market_data("2026-06-22")
+    # daily_end's own bar must be inside the half-open window -> exclusive end is the next day
+    assert _RecSrc.seen["end"] == "2026-06-23"

@@ -2603,7 +2603,11 @@ def refresh_market_data(daily_end: str = "", lookback_days: int = 400) -> str:
             symbols.append("SPY")
         end = daily_end or (date.today() - timedelta(days=1)).isoformat()
         start = (date.fromisoformat(end) - timedelta(days=lookback_days)).isoformat()
-        data = get_data_source().get_daily_bars(symbols, start, end)
+        # The source contract is half-open [start, end); to include end's own bar
+        # we fetch through the following day, otherwise every refresh is one
+        # trading day short (live data-staleness bug).
+        fetch_end = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+        data = get_data_source().get_daily_bars(symbols, start, fetch_end)
         bars = 0
         for _s, blist in data.items():
             if blist:
