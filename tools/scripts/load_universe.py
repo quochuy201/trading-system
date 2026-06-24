@@ -52,6 +52,15 @@ def _default_daily_end() -> str:
     return (date.today() - timedelta(days=1)).isoformat()
 
 
+def _exclusive_end(daily_end: str) -> str:
+    """Source bars are half-open [start, end); +1 day so daily_end's own bar loads.
+
+    Without this the full-history load is one trading day short — the same
+    off-by-one fixed in server.refresh_market_data.
+    """
+    return (date.fromisoformat(daily_end) + timedelta(days=1)).isoformat()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-symbols", type=int, default=400)
@@ -131,7 +140,7 @@ def main() -> int:
     for i in range(0, len(to_load), args.batch):
         chunk = to_load[i:i + args.batch]
         try:
-            bars_map = src.get_daily_bars(chunk, args.daily_start, args.daily_end)
+            bars_map = src.get_daily_bars(chunk, args.daily_start, _exclusive_end(args.daily_end))
         except Exception as e:
             print(f"  history batch {i//args.batch}: FAILED {e}")
             continue

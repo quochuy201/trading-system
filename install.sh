@@ -25,6 +25,46 @@ done
 log() { echo "[install] $*"; }
 run() { if [ "$DRY_RUN" = true ]; then echo "[dry-run] $*"; else "$@"; fi; }
 
+# Deploy the no-agent cron helper scripts into $1 with ABSOLUTE repo paths.
+# Hermes resolves a bare `--script NAME.sh` relative to the owning profile's
+# scripts/ dir, so these must live in each profile dir (not just the shared
+# $HERMES_HOME/scripts) or every cron run fails "Script not found" and the
+# daily data refresh silently never executes.
+write_cron_scripts() {
+    local dest="$1"
+    if [ "$DRY_RUN" = true ]; then
+        echo "[dry-run] write cron scripts to $dest/ (kanban-tick, data-refresh, iv-capture)"
+        return
+    fi
+    mkdir -p "$dest"
+    cat > "$dest/trading-kanban-tick.sh" <<'TICK'
+#!/usr/bin/env bash
+# Dispatch ready trading tasks (scheduled monitor/eod tasks + retries).
+# Silent when nothing to do (cron --no-agent: empty stdout = no delivery).
+out=$(hermes kanban dispatch --board trading --max 3 --json 2>/dev/null)
+spawned=$(printf '%s' "$out" | python3 -c 'import json,sys
+try: print(len(json.load(sys.stdin).get("spawned", [])))
+except Exception: print(0)' 2>/dev/null)
+[ "${spawned:-0}" -gt 0 ] && echo "dispatched $spawned trading task(s)"
+exit 0
+TICK
+    cat > "$dest/trading-data-refresh.sh" <<REFRESH
+#!/usr/bin/env bash
+# Pre-market daily refresh of the universe's adjusted daily bars (single writer).
+set -euo pipefail
+cd "$REPO_DIR/tools"
+exec uv run python -c "from server import refresh_market_data; print(refresh_market_data(''))"
+REFRESH
+    cat > "$dest/trading-iv-capture.sh" <<IVCAP
+#!/usr/bin/env bash
+# Daily IV-rank accrual capture across the universe.
+set -euo pipefail
+cd "$REPO_DIR/tools"
+exec uv run python -c "from server import capture_iv_universe; print(capture_iv_universe(''))"
+IVCAP
+    chmod +x "$dest"/trading-kanban-tick.sh "$dest"/trading-data-refresh.sh "$dest"/trading-iv-capture.sh
+}
+
 install_hermes() {
     # Kanban multi-profile layout (v2): one lean orchestrator + six worker
     # profiles. Each worker loads ONLY its skill and a role-scoped MCP tool
@@ -42,6 +82,9 @@ install_hermes() {
         run mkdir -p "$PROFILE_DIR"
         run cp "$REPO_DIR/hermes/profiles/$role/SOUL.md" "$PROFILE_DIR/SOUL.md"
         run cp "$REPO_DIR/OPERATING_MANUAL.md" "$PROFILE_DIR/OPERATING_MANUAL.md"
+        # Cron scripts resolve from the owning profile's scripts/ dir; deploy to
+        # every profile so a no-`-p` cron finds them regardless of default profile.
+        write_cron_scripts "$PROFILE_DIR/scripts"
 
         if [ "$role" != "orchestrator" ]; then
             # one skill per worker (merge-copy: trailing /. avoids nesting)
@@ -71,27 +114,15 @@ install_hermes() {
         fi
     done
 
-    # Shared kanban board + dispatcher ticker script
+    # Shared kanban board + dispatcher ticker script (shared copy for manual runs;
+    # the per-profile copies above are what the crons actually resolve).
     if [ "$DRY_RUN" = true ]; then
         echo "[dry-run] hermes kanban init && boards create trading"
-        echo "[dry-run] install ~/.hermes/scripts/trading-kanban-tick.sh"
     else
         hermes kanban init >/dev/null 2>&1 || true
         hermes kanban boards create trading >/dev/null 2>&1 || true
-        mkdir -p "$HERMES_HOME/scripts"
-        cat > "$HERMES_HOME/scripts/trading-kanban-tick.sh" <<'TICK'
-#!/usr/bin/env bash
-# Dispatch ready trading tasks (scheduled monitor/eod tasks + retries).
-# Silent when nothing to do (cron --no-agent: empty stdout = no delivery).
-out=$(hermes kanban dispatch --board trading --max 3 --json 2>/dev/null)
-spawned=$(printf '%s' "$out" | python3 -c 'import json,sys
-try: print(len(json.load(sys.stdin).get("spawned", [])))
-except Exception: print(0)' 2>/dev/null)
-[ "${spawned:-0}" -gt 0 ] && echo "dispatched $spawned trading task(s)"
-exit 0
-TICK
-        chmod +x "$HERMES_HOME/scripts/trading-kanban-tick.sh"
     fi
+    write_cron_scripts "$HERMES_HOME/scripts"
 
     log "Done. Next steps:"
     log "  1. Ensure .env at repo root has ALPACA keys (server.py loads it)"
