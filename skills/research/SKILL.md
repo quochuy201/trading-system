@@ -332,6 +332,13 @@ Call `log_decision` at these points:
 - **After selecting a candidate**: action="enter", rules_triggered=signals that qualified it, reasoning=1-sentence thesis
 - **After skipping a candidate**: action="skip", rules_triggered=why it failed, reasoning=brief explanation
 
+**Log every candidate (mandatory for the funnel):** call `log_decision` for
+EACH candidate the scanner returned — `action="enter"` for every pick (with
+rules_triggered + one-line thesis) AND `action="skip"` for every rejection
+(with the specific veto in rules_triggered). Do not summarize only in prose:
+the funnel and EOD review reconstruct the day from these logged decisions, so a
+narrated-but-unlogged enter/skip is invisible. One `log_decision` per candidate.
+
 ## Operator Reporting (MANDATORY)
 
 For EVERY candidate you decide to enter, call `notify_analysis` after the

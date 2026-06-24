@@ -21,7 +21,7 @@ def _tools_for(groups):
 
 
 def test_unset_exposes_everything():
-    assert len(_tools_for("")) == 57
+    assert len(_tools_for("")) == 58
 
 
 def test_reporting_tools_scoped_to_role():
@@ -56,6 +56,12 @@ def test_risk_owns_kill_switch():
     tools = _tools_for("risk")
     assert {"activate_kill_switch", "clear_kill_switch"} <= tools
     assert "place_order" not in tools
+
+
+def test_eod_has_funnel():
+    tools = _tools_for("eod")
+    assert "get_daily_funnel" in tools and "generate_performance_report" in tools
+    assert "get_daily_funnel" not in _tools_for("trader")
 
 
 def test_common_always_present():

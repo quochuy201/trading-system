@@ -501,3 +501,22 @@ class Repository:
             (symbol,),
         ).fetchone()
         return row["cnt"] if row else 0
+
+    def save_scan_funnel(self, row: dict) -> None:
+        """Persist one scan-funnel record (mechanical scan stats for a run)."""
+        self.conn.execute(
+            """INSERT INTO scan_funnel
+            (date, timestamp, scan_type, universe_size, loaded, scanned, passed,
+             passed_m, passed_r, data_stale, as_of, candidates)
+            VALUES (:date, :timestamp, :scan_type, :universe_size, :loaded, :scanned,
+             :passed, :passed_m, :passed_r, :data_stale, :as_of, :candidates)""",
+            row,
+        )
+        self.conn.commit()
+
+    def query_scan_funnel(self, date: str) -> list[dict]:
+        """All scan-funnel records for a date (newest first)."""
+        rows = self.conn.execute(
+            "SELECT * FROM scan_funnel WHERE date = ? ORDER BY timestamp DESC", (date,)
+        ).fetchall()
+        return [dict(r) for r in rows]

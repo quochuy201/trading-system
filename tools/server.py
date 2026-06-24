@@ -1209,6 +1209,7 @@ def generate_performance_report(
             "by_type": comp["by_type"],
         },
     }
+    metrics["funnel"] = get_daily_funnel(end_date)
 
     # Save to DB
     report = PerformanceReport(
@@ -1247,6 +1248,53 @@ def get_compliance_score(start_date: str = "", end_date: str = "", sop_version: 
         "by_type": comp["by_type"],
     })
 
+
+
+@mcp.tool()
+def get_daily_funnel(date: str = "") -> str:
+    """Assemble the full decision funnel for a date — even on zero-trade days.
+
+    When to use: EOD review, or any time you must answer "why did/didn't it trade?"
+    Joins the mechanical scan record with the agent's enter/skip verdicts and the
+    orders actually placed. Sample: get_daily_funnel("2026-06-22").
+    Output: {"date","scan":{...},"verdicts":{"entered","skipped",...},"orders","why_zero"}
+    """
+    _track_tool("get_daily_funnel")
+    from datetime import date as _date
+    try:
+        repo = get_repo()
+        d = date or _date.today().isoformat()
+        scans = repo.query_scan_funnel(d)
+        scan = scans[0] if scans else {}
+        # Decisions/orders store full ISO timestamps (e.g. "<d>T14:30:00"); use an
+        # inclusive end-of-day bound so same-day entries are not excluded by a bare
+        # "timestamp <= <d>" comparison.
+        end_dt = f"{d}T23:59:59.999999"
+        decisions = repo.query_decisions(start_date=d, end_date=end_dt, limit=2000)
+        ledger = repo.query_ledger(start_date=d, end_date=end_dt, limit=2000)
+        enters = [x for x in decisions if (x.get("action") or "") == "enter"]
+        skips = [x for x in decisions if (x.get("action") or "") == "skip"]
+        n_orders = len([x for x in ledger if (x.get("action") or "") in ("buy", "sell")])
+        passed = scan.get("passed", 0)
+        if scan.get("data_stale"):
+            why = f"DATA_STALE (as_of {scan.get('as_of')}) — scan ran on stale data"
+        elif not scan:
+            why = "no scan recorded for this date (cycle did not run)"
+        elif passed == 0:
+            why = f"0 passed mechanical gates of {scan.get('scanned', 0)} scanned — no setups"
+        elif not enters:
+            why = f"{passed} passed mechanical, 0 entered — agent skipped all (see skip_list)"
+        else:
+            why = f"{passed} passed, {len(enters)} entered, {n_orders} order(s) placed"
+        return json.dumps({
+            "date": d, "scan": scan,
+            "verdicts": {"entered": len(enters), "skipped": len(skips),
+                         "enter_list": [{"symbol": x.get("symbol"), "why": x.get("reasoning")} for x in enters],
+                         "skip_list": [{"symbol": x.get("symbol"), "why": x.get("reasoning")} for x in skips]},
+            "orders": n_orders, "why_zero": why,
+        }, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"funnel assembly failed: {e}"})
 
 
 def export_decisions(
@@ -1351,6 +1399,31 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
         for sym, data in trading["by_symbol"].items():
             lines.append(f"| {sym} | {data['trades']} | {data['win_rate']:.1%} | ${data['total_pnl']:.2f} |")
         lines.append("")
+
+    import json as _json
+    funnel_raw = metrics.get("funnel")
+    if funnel_raw:
+        try:
+            fn = _json.loads(funnel_raw) if isinstance(funnel_raw, str) else funnel_raw
+        except Exception:
+            fn = {}
+        sc = fn.get("scan", {}) or {}
+        v = fn.get("verdicts", {}) or {}
+        lines += [
+            "",
+            "## Scan Funnel",
+            "",
+            "| Stage | Value |",
+            "|-------|-------|",
+            f"| Scanned | {sc.get('scanned', 0)} |",
+            f"| Passed mechanical | {sc.get('passed', 0)} (M {sc.get('passed_m', 0)} / R {sc.get('passed_r', 0)}) |",
+            f"| Data as-of | {sc.get('as_of', 'n/a')}{' (STALE)' if sc.get('data_stale') else ''} |",
+            f"| Entered | {v.get('entered', 0)} |",
+            f"| Skipped | {v.get('skipped', 0)} |",
+            f"| Orders placed | {fn.get('orders', 0)} |",
+            "",
+            f"**Why no trades:** {fn.get('why_zero', 'n/a')}",
+        ]
 
     lines.append(f"*Generated: {report.generated_at.isoformat()}*")
 
@@ -2362,6 +2435,27 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
     fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
     stale_flag = is_stale(fresh["freshest"], scan_date)
 
+    # --- funnel telemetry (mechanical; never breaks the scan) ---
+    try:
+        from datetime import datetime as _dt
+        import json as _json
+        repo.save_scan_funnel({
+            "date": scan_date,
+            "timestamp": _dt.utcnow().isoformat(),
+            "scan_type": "4layer",
+            "universe_size": len(symbol_list),
+            "loaded": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "passed": len(candidates),
+            "passed_m": 0,  # 4layer scan doesn't have engine flags
+            "passed_r": 0,  # 4layer scan doesn't have engine flags
+            "data_stale": 1 if stale_flag else 0,
+            "as_of": fresh["freshest"],
+            "candidates": _json.dumps([{"symbol": c["symbol"]} for c in candidates]),
+        })
+    except Exception:
+        pass  # telemetry must never break the scan
+
     return json.dumps({
         "candidates": candidates,
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
@@ -2452,6 +2546,30 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     scan_date = end.strftime("%Y-%m-%d")
     fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
     stale_flag = is_stale(fresh["freshest"], scan_date)
+
+    # --- funnel telemetry (mechanical; never breaks the scan) ---
+    try:
+        from datetime import datetime as _dt
+        import json as _json
+        repo.save_scan_funnel({
+            "date": scan_date,
+            "timestamp": _dt.utcnow().isoformat(),
+            "scan_type": "swing",
+            "universe_size": len(symbol_list),
+            "loaded": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "passed": len(candidates),
+            "passed_m": sum(1 for c in candidates if c.get("engine_m_pass")),
+            "passed_r": sum(1 for c in candidates if c.get("engine_r_pass")),
+            "data_stale": 1 if stale_flag else 0,
+            "as_of": fresh["freshest"],
+            "candidates": _json.dumps([
+                {"symbol": c["symbol"],
+                 "m": bool(c.get("engine_m_pass")), "r": bool(c.get("engine_r_pass"))}
+                for c in candidates]),
+        })
+    except Exception:
+        pass  # telemetry must never break the scan
 
     # Staleness fields reflect the whole DB's latest bar date (live-oriented) and are
     # informational only — not clock-bounded to backtest's current_time.
@@ -2577,7 +2695,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
     "eod": {
         "query_decisions", "query_transaction_ledger",
         "generate_performance_report", "get_compliance_score",
-        "get_portfolio_state", "get_positions",
+        "get_portfolio_state", "get_positions", "get_daily_funnel",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",

@@ -242,6 +242,22 @@ CREATE TABLE IF NOT EXISTS iv_history (
     source TEXT NOT NULL,
     PRIMARY KEY (symbol, date)
 );
+
+CREATE TABLE IF NOT EXISTS scan_funnel (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    scan_type TEXT NOT NULL,
+    universe_size INTEGER,
+    loaded INTEGER,
+    scanned INTEGER,
+    passed INTEGER,
+    passed_m INTEGER,
+    passed_r INTEGER,
+    data_stale INTEGER,
+    as_of TEXT,
+    candidates TEXT
+);
 """
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent / "trading.db"
