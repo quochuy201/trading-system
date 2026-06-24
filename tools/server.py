@@ -2362,6 +2362,27 @@ def scan_for_candidates(symbols: str = "", lookback_days: int = 120) -> str:
     fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
     stale_flag = is_stale(fresh["freshest"], scan_date)
 
+    # --- funnel telemetry (mechanical; never breaks the scan) ---
+    try:
+        from datetime import datetime as _dt
+        import json as _json
+        repo.save_scan_funnel({
+            "date": scan_date,
+            "timestamp": _dt.utcnow().isoformat(),
+            "scan_type": "4layer",
+            "universe_size": len(symbol_list),
+            "loaded": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "passed": len(candidates),
+            "passed_m": 0,  # 4layer scan doesn't have engine flags
+            "passed_r": 0,  # 4layer scan doesn't have engine flags
+            "data_stale": 1 if stale_flag else 0,
+            "as_of": fresh["freshest"],
+            "candidates": _json.dumps([{"symbol": c["symbol"]} for c in candidates]),
+        })
+    except Exception:
+        pass  # telemetry must never break the scan
+
     return json.dumps({
         "candidates": candidates,
         "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
@@ -2452,6 +2473,30 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     scan_date = end.strftime("%Y-%m-%d")
     fresh = freshness_report(repo, [s for s in symbol_list if s != "SPY"])
     stale_flag = is_stale(fresh["freshest"], scan_date)
+
+    # --- funnel telemetry (mechanical; never breaks the scan) ---
+    try:
+        from datetime import datetime as _dt
+        import json as _json
+        repo.save_scan_funnel({
+            "date": scan_date,
+            "timestamp": _dt.utcnow().isoformat(),
+            "scan_type": "swing",
+            "universe_size": len(symbol_list),
+            "loaded": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "scanned": len(stock_data) - (1 if "SPY" in stock_data else 0),
+            "passed": len(candidates),
+            "passed_m": sum(1 for c in candidates if c.get("engine_m_pass")),
+            "passed_r": sum(1 for c in candidates if c.get("engine_r_pass")),
+            "data_stale": 1 if stale_flag else 0,
+            "as_of": fresh["freshest"],
+            "candidates": _json.dumps([
+                {"symbol": c["symbol"],
+                 "m": bool(c.get("engine_m_pass")), "r": bool(c.get("engine_r_pass"))}
+                for c in candidates]),
+        })
+    except Exception:
+        pass  # telemetry must never break the scan
 
     # Staleness fields reflect the whole DB's latest bar date (live-oriented) and are
     # informational only — not clock-bounded to backtest's current_time.
