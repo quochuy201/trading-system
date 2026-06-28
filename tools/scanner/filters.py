@@ -20,6 +20,8 @@ veto (R-G7), earnings checks, and the final enter/skip decision.
 import pandas as pd
 import ta
 
+from scanner.tuning import apply_tuning, is_symbol_excluded, load_tuning_config
+
 
 def scan_universe(stock_data: dict[str, pd.DataFrame], spy_data: pd.DataFrame | None = None) -> list[dict]:
     """Run the 4-layer scanner on a dict of DataFrames.
@@ -176,7 +178,20 @@ def scan_universe_swing(stock_data: dict[str, pd.DataFrame],
     Needs >= 160 daily bars for SMA150/ROC50; shorter histories are skipped.
     Ranking (per SOP): engine M by roc50 desc, engine R by drop_3d desc —
     the agent ranks; this function just measures.
+
+    Tuning: reads tuning_config.json for threshold overrides and exclusion
+    lists (stale candidates the LLM already rejected). Excluded symbols are
+    silently dropped.
     """
+    # Load tuning config — EOD agent updates this after each session
+    tuning = load_tuning_config()
+    exclude_list = set(tuning.get("exclude_symbols", []))
+
+    # Apply threshold overrides to SWING_V1
+    global SWING_V1
+    if tuning.get("threshold_overrides"):
+        SWING_V1 = apply_tuning(SWING_V1)
+
     spy_ret_10d = 0.0
     if spy_data is not None and len(spy_data) >= 10:
         spy_ret_10d = (spy_data["close"].iloc[-1] / spy_data["close"].iloc[-10] - 1) * 100
@@ -184,6 +199,9 @@ def scan_universe_swing(stock_data: dict[str, pd.DataFrame],
     out = []
     for sym, df in stock_data.items():
         if sym == "SPY" or len(df) < 160:
+            continue
+        # Skip excluded symbols (LLM previously rejected, no new catalyst)
+        if sym in exclude_list:
             continue
         m = _swing_metrics(sym, df, spy_ret_10d)
         if m["engine_m_pass"] or m["engine_r_pass"]:

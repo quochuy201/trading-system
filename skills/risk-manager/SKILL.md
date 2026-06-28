@@ -61,6 +61,13 @@ All 10 items must pass. Failure of any item → HALTED.
 
 **Hard rule:** No market action before all 10 pass. If a tool call fails, retry once. On second failure → HALTED + notify.
 
+**Morning broadcast (non-gating):** After preflight completes (steps 1-10),
+call `send_notification` once with a one-paragraph morning summary so the
+operator gets a daily Discord update in #auto-trade *even on zero-trade
+days*: today's mode, the eligible engine set, the SPY regime snapshot
+(trend / IV-rank / vs-SMA), and account equity. This is fire-and-forget —
+it never gates the cycle and a delivery failure is ignored.
+
 ---
 
 ## Position Sizing Math

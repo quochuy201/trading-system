@@ -41,24 +41,31 @@ write_cron_scripts() {
 #!/usr/bin/env bash
 # Dispatch ready trading tasks (scheduled monitor/eod tasks + retries).
 # Silent when nothing to do (cron --no-agent: empty stdout = no delivery).
+# Cron runs with a minimal PATH that omits ~/.local/bin and homebrew, so
+# `uv`/`hermes` resolve to "command not found" (exit 127) unless we add them.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 out=$(hermes kanban dispatch --board trading --max 3 --json 2>/dev/null)
 spawned=$(printf '%s' "$out" | python3 -c 'import json,sys
 try: print(len(json.load(sys.stdin).get("spawned", [])))
 except Exception: print(0)' 2>/dev/null)
-[ "${spawned:-0}" -gt 0 ] && echo "dispatched $spawned trading task(s)"
+[ "${spawned:-0}" -gt 0 ] && echo "dispatched $spand trading task(s)"
 exit 0
 TICK
     cat > "$dest/trading-data-refresh.sh" <<REFRESH
 #!/usr/bin/env bash
 # Pre-market daily refresh of the universe's adjusted daily bars (single writer).
+# Cron's minimal PATH omits ~/.local/bin, so a bare \`uv\` exits 127; prepend it.
 set -euo pipefail
+export PATH="\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH"
 cd "$REPO_DIR/tools"
 exec uv run python -c "from server import refresh_market_data; print(refresh_market_data(''))"
 REFRESH
     cat > "$dest/trading-iv-capture.sh" <<IVCAP
 #!/usr/bin/env bash
 # Daily IV-rank accrual capture across the universe.
+# Cron's minimal PATH omits ~/.local/bin, so a bare \`uv\` exits 127; prepend it.
 set -euo pipefail
+export PATH="\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH"
 cd "$REPO_DIR/tools"
 exec uv run python -c "from server import capture_iv_universe; print(capture_iv_universe(''))"
 IVCAP
@@ -66,70 +73,113 @@ IVCAP
 }
 
 install_hermes() {
-    # Kanban multi-profile layout (v2): one lean orchestrator + six worker
-    # profiles. Each worker loads ONLY its skill and a role-scoped MCP tool
-    # set (TRADING_TOOL_GROUPS gates registration in tools/server.py) — this
-    # replaces the monolithic profile whose all-skills/all-tools startup was
-    # slow and which never had its MCP server registered (mcp.json is not
-    # read by Hermes; servers must be added via `hermes mcp add`).
+    # Single profile design with asset‑asset‑class separation.
     local HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-    local ROLES="orchestrator research trader monitor risk eod backtest"
 
-    for role in $ROLES; do
-        local PROFILE="trading-$role"
-        local PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE"
-        log "Installing profile $PROFILE"
-        run mkdir -p "$PROFILE_DIR"
-        run cp "$REPO_DIR/hermes/profiles/$role/SOUL.md" "$PROFILE_DIR/SOUL.md"
-        run cp "$REPO_DIR/OPERATING_MANUAL.md" "$PROFILE_DIR/OPERATING_MANUAL.md"
-        # Cron scripts resolve from the owning profile's scripts/ dir; deploy to
-        # every profile so a no-`-p` cron finds them regardless of default profile.
-        write_cron_scripts "$PROFILE_DIR/scripts"
+    # 1. Create the single trading profile directory.
+    local PROFILE_DIR="${HERMES_HOME}/profiles/trading"
+    log "Creating profile trading at ${PROFILE_DIR}"
+    run mkdir -p "${PROFILE_DIR}"
 
-        if [ "$role" != "orchestrator" ]; then
-            # one skill per worker (merge-copy: trailing /. avoids nesting)
-            local SKILL_SRC_NAME="$role"
-            [ "$role" = "risk" ] && SKILL_SRC_NAME="risk-manager"
-            [ "$role" = "eod" ] && SKILL_SRC_NAME="eod-review"
-            run mkdir -p "$PROFILE_DIR/skills/$SKILL_SRC_NAME"
-            run cp -R "$REPO_DIR/skills/$SKILL_SRC_NAME/." "$PROFILE_DIR/skills/$SKILL_SRC_NAME/"
-            # research/trader/monitor/risk consult SOPs; eod does not
-            if [ "$role" != "eod" ]; then
-                run mkdir -p "$PROFILE_DIR/sops"
-                run cp -R "$REPO_DIR/sops/." "$PROFILE_DIR/sops/"
-            fi
-            # role-scoped MCP registration (idempotent: remove then add).
-            # HERMES_PROFILE targets the profile; the launcher script avoids
-            # `--args` (argparse rejects dash-prefixed values like --directory).
-            local GROUP="$role"
-            if [ "$DRY_RUN" = true ]; then
-                echo "[dry-run] HERMES_PROFILE=$PROFILE hermes mcp add trading-tools (TRADING_TOOL_GROUPS=$GROUP)"
-            else
-                hermes -p "$PROFILE" mcp remove trading-tools >/dev/null 2>&1 || true
-                # `mcp add` interactively asks "Enable all N tools?" — answer yes
-                printf 'y\n' | hermes -p "$PROFILE" mcp add trading-tools \
-                    --command "$REPO_DIR/tools/run_mcp.sh" \
-                    --env "TRADING_TOOL_GROUPS=$GROUP"
-            fi
-        fi
+    # 2. Populate profile from deploy/.
+    run cp "${REPO_DIR}/deploy/profile.yaml" "${PROFILE_DIR}/config.yaml"
+    run cp "${REPO_DIR}/deploy/SOUL.md" "${PROFILE_DIR}/SOUL.md"
+    run cp "${REPO_DIR}/OPERATING_MANUAL.md" "${PROFILE_DIR}/OPERATING_MANUAL.md"
+    run hermes profile default trading >/dev/null 2>&1 || true
+
+    # 3. Copy all scripts (workers load only what their task specifies).
+    run mkdir -p "${PROFILE_DIR}/scripts"
+    # Copy cron scripts from deploy/cron/
+    for script in launch-equity.sh launch-options.sh trading-data-refresh.sh trading-iv-capture.sh monitor-sentinel.sh eod.sh; do
+        run cp "${REPO_DIR}/deploy/cron/$script" "${PROFILE_DIR}/scripts/$script"
+        run chmod +x "${PROFILE_DIR}/scripts/$script"
     done
+    # Copy preflight.sh from deploy/
+    run cp "${REPO_DIR}/deploy/preflight.sh" "${PROFILE_DIR}/scripts/preflight.sh"
+    run chmod +x "${PROFILE_DIR}/scripts/preflight.sh"
 
-    # Shared kanban board + dispatcher ticker script (shared copy for manual runs;
-    # the per-profile copies above are what the crons actually resolve).
-    if [ "$DRY_RUN" = true ]; then
-        echo "[dry-run] hermes kanban init && boards create trading"
+    # 4. Copy all SOPs.
+    run mkdir -p "${PROFILE_DIR}/sops"
+    run cp -R "${REPO_DIR}/sops/." "${PROFILE_DIR}/sops/"
+
+    # 5. Deploy cron scripts to shared scripts/.
+    run mkdir -p "${HERMES_HOME}/scripts"
+    # Copy cron scripts from deploy/cron/
+    for script in launch-equity.sh launch-options.sh trading-data-refresh.sh trading-iv-capture.sh monitor-sentinel.sh eod.sh; do
+        run cp "${REPO_DIR}/deploy/cron/$script" "${HERMES_HOME}/scripts/$script"
+        run chmod +x "${HERMES_HOME}/scripts/$script"
+    done
+    # Copy preflight.sh from deploy/
+    run cp "${REPO_DIR}/deploy/preflight.sh" "${HERMES_HOME}/scripts/preflight.sh"
+    run chmod +x "${HERMES_HOME}/scripts/preflight.sh"
+
+    # 6. Register MCP server (all tools exposed).
+    log "Registering MCP server (all tools) for profile trading"
+    run hermes -p trading mcp remove trading-tools >/dev/null 2>&1 || true
+    # No TRADING_TOOL_GROUPS env var -> every tool exposed.
+    printf 'y\n' | run hermes -p trading mcp add trading-tools \
+        --command "${REPO_DIR}/tools/run_mcp.sh"
+
+    # 7. Ensure kanban boards exist.
+    log "Ensuring kanban boards equity and options exist"
+    run hermes kanban boards create equity >/dev/null 2>&1 || true
+    run hermes kanban boards create options >/dev/null 2>&1 || true
+
+    # 8. Install cron jobs from deploy/runs/*.yaml.
+    #    Helper: install a cron job.
+    #    Usage: install_cron <name> <schedule> <script_name>
+    #    where script_name is the bare script name (without path) that exists in ~/.hermes/scripts/
+    install_cron() {
+        local name="$1"
+        local schedule="$2"
+        local script="$3"
+        if [ "${DRY_RUN}" = true ]; then
+            echo "[dry-run] hermes cron create '${schedule}' --name '${name}' --script '${script}' --no-agent"
+        else
+            # Remove existing job with same name (idempotent)
+            hermes cron delete "${name}" >/dev/null 2>&1 || true
+            hermes cron create "${schedule}" --name "${name}" --script "${script}" --no-agent
+        fi
+    }
+
+    # 9. Asset‑specific morning crons (run preflight then launch).
+    #    Equity: 6:35 AM PT
+    install_cron "trading-equity-morning" "35 6 * * 1-5" "launch-equity.sh"
+    #    Options: 6:40 AM PT
+    install_cron "trading-options-morning" "40 6 * * 1-5" "launch-options.sh"
+
+    # 10. Shared‑service crons.
+    #    Data refresh: 6:15 AM PT
+    install_cron "trading-data-refresh" "15 6 * * 1-5" "trading-data-refresh.sh"
+    #    IV capture: 1:05 PM PT
+    install_cron "trading-iv-capture" "5 13 * * 1-5" "trading-iv-capture.sh"
+    #    Monitor sentinel: every minute during market hours
+    install_cron "trading-monitor-sentinel" "* 6-13 * * 1-5" "monitor-sentinel.sh"
+    #    EOD review: 1:15 PM PT
+    install_cron "trading-eod" "15 13 * * 1-5" "eod.sh"
+
+    # 11. (Optional) Start/restart the gateway so the dispatcher is active.
+    if [ "${DRY_RUN}" = true ]; then
+        echo "[dry-run] hermes gateway start"
     else
-        hermes kanban init >/dev/null 2>&1 || true
-        hermes kanban boards create trading >/dev/null 2>&1 || true
+        hermes gateway start >/dev/null 2>&1 || true
     fi
-    write_cron_scripts "$HERMES_HOME/scripts"
 
-    log "Done. Next steps:"
-    log "  1. Ensure .env at repo root has ALPACA keys (server.py loads it)"
-    log "  2. Register cron jobs (see cron/README-kanban.md):"
-    log "       hermes cron create '35 9 * * 1-5' --name trading-morning ..."
-    log "  3. Smoke test a worker: hermes -p trading-research -z 'list your tools'"
-    log "  4. Morning cycle manually: hermes -p trading-orchestrator chat"
+    # 12. Run preflight and show status.
+    log "Running preflight check..."
+    if run "${PROFILE_DIR}/scripts/preflight.sh"; then
+        log "✅ Passed – system ready."
+    else
+        log "❌ Failed – see above for remediation."
+    fi
+
+    # 13. Remove legacy profiles (after new profile is fully configured).
+    log "Removing legacy profiles..."
+    for legacy in system orchestrator researcher trader monitor risk eod backtest; do
+        local PROFILE="trading-${legacy}"
+        log "Removing legacy profile $PROFILE"
+        run hermes profile delete "$PROFILE" || true
+    done
 }
 
 install_kermes() {

@@ -1,0 +1,31 @@
+# Hermes profile configuration - single source of truth
+# This file is used by install.sh to configure the single trading profile
+
+model: deepseek-ai/deepseek-v4-flash  # Primary model
+fallback_model: deepseek-ai/deepseek-v3  # Fallback for rate limits/overload
+
+# MCP tools configuration
+mcp_tools:
+  trading-tools:  # Group name for trading-specific tools
+    - analysis/*  # Technical analysis tools
+    - broker/*    # Broker/adapter tools
+    - persistence/*  # Database/persistence tools
+    - notifications/*  # Notification tools
+
+# Discord configuration (machine-local via .env)
+discord:
+  enabled: true
+  # channel_id will be set from DISCORD_CHANNEL_ID in .env
+  # bot_token will be set from DISCORD_BOT_TOKEN in .env
+
+# API Server configuration
+api_server:
+  enabled: true  # Set to false to disable if not needed
+  api_server_key: ""  # Set via API_SERVER_KEY in .env
+
+# Timezone for cron expressions
+timezone: America/Los_Angeles  # PT timezone
+
+# Global settings
+max_concurrent_agents: 4
+default_retry_attempts: 3

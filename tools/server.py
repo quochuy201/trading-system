@@ -770,6 +770,7 @@ def check_portfolio_risk(symbol: str, quantity: int, entry_price: float) -> str:
     """Validate a proposed trade against portfolio risk limits before execution.
 
     When to use: Trader agent must call this before every trade. Checks concentration limits (max % in one symbol), total exposure, and max number of positions.
+    Limits are read from tuning_config.json if EOD has set overrides; otherwise SOP defaults apply.
 
     Sample input: check_portfolio_risk("NVDA", 10, 220.0)
 
@@ -784,13 +785,27 @@ def check_portfolio_risk(symbol: str, quantity: int, entry_price: float) -> str:
     """
     _track_tool("check_portfolio_risk")
     from risk.checks import check_portfolio_risk as _check
-    result = _check(get_broker(), symbol, quantity, entry_price)
+    from scanner.tuning import get_risk_limit_overrides
+
+    # Read tuning config overrides (EOD feedback bridge)
+    overrides = get_risk_limit_overrides()
+    max_conc = overrides.get("max_concentration_pct", None)
+    max_pos = overrides.get("max_open_positions", None)
+
+    kwargs = {}
+    if max_conc is not None:
+        kwargs["max_concentration_pct"] = float(max_conc)
+    if max_pos is not None:
+        kwargs["max_open_positions"] = int(max_pos)
+
+    result = _check(get_broker(), symbol, quantity, entry_price, **kwargs)
     return json.dumps(result)
 
 
 @mcp.tool()
 def check_daily_limits() -> str:
     """Check if the daily loss limit has been breached. Default limit: 3% of portfolio value.
+    Limit is read from tuning_config.json if EOD has set overrides; otherwise SOP default applies.
 
     When to use: Orchestrator checks this before starting new trades. If failed, no new trades should be placed for the rest of the day.
 
@@ -805,7 +820,17 @@ def check_daily_limits() -> str:
     """
     _track_tool("check_daily_limits")
     from risk.checks import check_daily_limits as _check
-    result = _check(get_broker())
+    from scanner.tuning import get_risk_limit_overrides
+
+    # Read tuning config overrides (EOD feedback bridge)
+    overrides = get_risk_limit_overrides()
+    limit_pct = overrides.get("daily_loss_limit_pct", None)
+
+    kwargs = {}
+    if limit_pct is not None:
+        kwargs["daily_loss_limit_pct"] = float(limit_pct)
+
+    result = _check(get_broker(), **kwargs)
     return json.dumps(result)
 
 
@@ -2584,6 +2609,114 @@ def scan_swing_candidates(symbols: str = "", lookback_days: int = 320) -> str:
     })
 
 
+# --- Tuning Config Tools (Feedback Bridge) ---
+
+
+@mcp.tool()
+def generate_tuning_config(
+    exclude_symbols: str = "",
+    exclude_reasons: str = "",
+    threshold_overrides: str = "",
+    risk_limit_overrides: str = "",
+    strategy_blacklist: str = "",
+    notes: str = "",
+    generated_by: str = "eod-review",
+) -> str:
+    """Generate a new scanner tuning config — the EOD-to-morning feedback bridge.
+
+    When to use: EOD Review agent calls this after each session to tune the
+    scanner for tomorrow. Adjusts thresholds, excludes stale symbols the LLM
+    already rejected, tightens/loosens risk limits based on trailing performance.
+
+    All string params accept JSON. Omit to preserve existing values.
+
+    Sample input:
+    generate_tuning_config(
+        exclude_symbols='["AAPL","MSFT"]',
+        exclude_reasons='{"AAPL":"rejected at Layer 3: no catalyst (3 days)","MSFT":"rejected: stale news"}',
+        threshold_overrides='{"m_rs10_min":2.5,"m_roc50_min":12.0}',
+        risk_limit_overrides='{"daily_loss_limit_pct":2.0,"max_open_positions":3}',
+        notes="Tightened after 3-loss streak in neutral regime. Auto-revert after 3 winning days."
+    )
+
+    Expected output:
+    {"status":"saved","version":"2026-06-27T21:00:00Z","exclude_count":2,"override_count":2}
+    """
+    import json as _json
+
+    def _parse_json(val: str, default):
+        if not val.strip():
+            return default
+        try:
+            return _json.loads(val)
+        except _json.JSONDecodeError:
+            return default
+
+    exclude_syms = _parse_json(exclude_symbols, [])
+    exclude_reas = _parse_json(exclude_reasons, {})
+    thresh_ovr = _parse_json(threshold_overrides, {})
+    risk_ovr = _parse_json(risk_limit_overrides, {})
+    strat_bl = _parse_json(strategy_blacklist, [])
+
+    from scanner.tuning import generate_tuning_config as _gen
+    result = _gen(
+        exclude_symbols=exclude_syms if exclude_symbols.strip() else None,
+        exclude_reasons=exclude_reas if exclude_reasons.strip() else None,
+        threshold_overrides=thresh_ovr if threshold_overrides.strip() else None,
+        risk_limit_overrides=risk_ovr if risk_limit_overrides.strip() else None,
+        strategy_blacklist=strat_bl if strategy_blacklist.strip() else None,
+        notes=notes,
+        generated_by=generated_by,
+    )
+    return _json.dumps({
+        "status": "saved",
+        "version": result["version"],
+        "exclude_count": len(result.get("exclude_symbols", [])),
+        "override_count": len(result.get("threshold_overrides", {})),
+    })
+
+
+@mcp.tool()
+def get_tuning_config() -> str:
+    """Read the current scanner tuning config (the EOD-to-morning feedback bridge).
+
+    When to use: Scanner reads this before scanning. Orchestrator/Research can
+    query to understand what the system learned from yesterday.
+
+    Sample input: (no arguments)
+
+    Expected output:
+    {"version":"2026-06-27T21:00:00Z","generated_by":"eod-review",
+     "exclude_symbols":["AAPL","MSFT"],
+     "threshold_overrides":{"m_rs10_min":2.5},
+     "risk_limit_overrides":{"daily_loss_limit_pct":2.0},
+     "notes":"Tightened after 3-loss streak in neutral regime."}
+    """
+    from scanner.tuning import get_tuning_config as _get
+    return json.dumps(_get())
+
+
+@mcp.tool()
+def reset_tuning_config() -> str:
+    """Reset the scanner tuning config to defaults (clear all overrides).
+
+    When to use: Manual override when performance improves and tight thresholds
+    should be removed. Also used when switching regimes (e.g., back to bull market).
+
+    Sample input: (no arguments)
+
+    Expected output: {"status":"reset","version":"","exclude_count":0,"override_count":0}
+    """
+    from scanner.tuning import reset_tuning_config as _reset
+    result = _reset()
+    return json.dumps({
+        "status": "reset",
+        "version": result["version"],
+        "exclude_count": 0,
+        "override_count": 0,
+    })
+
+
 @mcp.tool()
 def refresh_market_data(daily_end: str = "", lookback_days: int = 400) -> str:
     """Refresh the universe's daily bars from the data source (single writer).
@@ -2700,6 +2833,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "query_decisions", "query_transaction_ledger",
         "generate_performance_report", "get_compliance_score",
         "get_portfolio_state", "get_positions", "get_daily_funnel",
+        "generate_tuning_config", "get_tuning_config",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",

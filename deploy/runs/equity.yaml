@@ -1,0 +1,25 @@
+# Equity run configuration
+# Defines how the equity trading run is executed
+
+asset: equity
+board: equity      # Kanban board for equity trades
+profile: trading   # Uses the single trading profile (future: trading-equity)
+
+# Schedule (PT timezone)
+schedule:
+  morning: "35 6 * * 1-5"   # 6:35 AM PT weekdays
+  # Note: Other shared services (data-refresh, iv-capture, monitor, eod) are in _shared.yaml
+
+# Asset-specific configuration
+sops: sops/equity          # Equity SOP files
+scanner_profile: equity    # Scanner configuration profile
+
+# Phases to run in the morning workflow
+# Note: monitor and EOD are handled by shared services
+phases: [risk, research, trade]
+
+# Asset-specific risk budget (overrides config.yaml defaults)
+risk_budget:
+  max_risk_per_trade_pct: 1.5
+  max_open_positions: 8
+  daily_loss_limit_pct: 4.0

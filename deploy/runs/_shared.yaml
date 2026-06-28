@@ -1,0 +1,31 @@
+# Shared portfolio services
+# These run independent of asset-specific boards
+
+shared_services:
+  # Daily universe data refresh
+  trading-data-refresh:
+    schedule: "15 6 * * 1-5"   # 6:15 AM PT weekdays
+    script: trading-data-refresh.sh
+    description: "Refresh daily bar data for universe"
+    no_agent: true              # Mechanical script, no LLM agent needed
+
+  # Options IV capture and ranking
+  trading-iv-capture:
+    schedule: "5 13 * * 1-5"   # 1:05 PM PT weekdays
+    script: trading-iv-capture.sh
+    description: "Capture and calculate IV rank for options universe"
+    no_agent: true              # Mechanical script
+
+  # Position monitoring sentinel (mechanical, wakes LLM monitor on triggers)
+  trading-monitor-sentinel:
+    schedule: "* 6-13 * * 1-5"  # Every minute during market hours
+    # This will be implemented as a cron that calls the monitor sentinel script
+    description: "Monitor positions for triggers (stops, targets, etc.)"
+    no_agent: true
+
+  # End-of-day portfolio review
+  trading-eod:
+    schedule: "15 13 * * 1-5"   # 1:15 PM PT weekdays
+    # This will be a kanban task on a portfolio board or run as --no-agent
+    description: "Perform end-of-day review, generate compliance score and journal"
+    # Note: Could be boardless or use a portfolio-wide board

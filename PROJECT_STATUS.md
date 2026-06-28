@@ -4,9 +4,53 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-23 · Branch: `main` · Tests: 331 passing, 0 failures · **Paper trading ENABLED**
+Last updated: 2026-06-27 · Branch: `main` · Tests: 331 passing, 0 failures · **Paper trading ENABLED**
 
 ---
+
+## ⏩ 2026-06-27 — Feedback bridge: EOD-to-scanner tuning config
+
+**The gap:** Scanner thresholds hardcoded in `SWING_V1`. LLM agents made decisions but those never fed back to tune the scanner. Every day was a groundhog-day scan — same thresholds, same stale candidates, no learning.
+
+**What was built:** A `tuning_config.json` feedback bridge — the EOD agent writes it after each session; the scanner reads it before every scan:
+
+| File | What it does |
+|------|-------------|
+| `tools/scanner/tuning.py` | Read/write tuning config, apply threshold overrides, exclusion checks, risk limit overrides |
+| `tools/scanner/tuning_config.json` | Default empty config (zero overrides = SOP defaults) |
+| `tools/scanner/filters.py` | Updated `scan_universe_swing()` to read tuning config — applies threshold overrides and skips excluded symbols |
+| `tools/server.py` | 3 new MCP tools: `generate_tuning_config`, `get_tuning_config`, `reset_tuning_config`. Risk tools (`check_portfolio_risk`, `check_daily_limits`) now read risk limit overrides from tuning config |
+| `skills/eod-review/SKILL.md` | New Step 6 — rules for when to exclude symbols, tighten/thresholds, adjust risk limits, and auto-revert |
+
+**How it works:**
+```
+EOD Agent (after session)
+    │
+    ├─→ generate_tuning_config(exclude_symbols=[stale], thresholds={tighter}, risk_limits={lower})
+    │       └─→ writes tuning_config.json
+    │
+Morning Scanner (before scan)
+    │
+    ├─→ load_tuning_config()
+    ├─→ apply_tuning(SWING_V1)  → adjusted thresholds
+    ├─→ skip excluded symbols    → stale-candidate suppression
+    └─→ scan with tuned params
+```
+
+**EOD rules:**
+- Exclude symbols rejected 2+ consecutive days at Layer 3/5 (stale catalyst / no R:R)
+- Tighten thresholds 20-30% after 3+ consecutive losses in same regime
+- Tighten risk limits progressively: 3% drawdown → 2% daily, 5% drawdown → 1.5% + max 3 positions
+- Friday: full review — clear exclusions with new catalyst, reset if performance recovered 5+ days
+- Auto-revert conditions documented in config notes
+
+**Tests:** All 52 scanner + risk + audit tests pass. Tuning module tested with exclusion, override, and reset scenarios.
+
+---
+
+## ⏩ 2026-06-27 — Hermes deployment redesign (single profile)
+
+Consolidated 8 legacy Hermes profiles (trading-system, -orchestrator, -research, -trader, -monitor, -risk, -eod, -backtest) into a single `trading` profile while preserving asset‑class separation via kanban boards (equity/options). Introduced a preflight health gate (`deploy/preflight.sh`) that runs before each trading cycle and aborts on failure (model auth, Alpaca connectivity, data freshness, kill‑switch, notification delivery). Morning workflows per asset are now cron‑driven: equity at 6:35 AM PT, options at 6:40 AM PT — each runs preflight then creates the risk → research → trade kanban graph for that asset. Shared services (data refresh, IV capture, monitor sentinel, EOD) run via dedicated cron jobs reading from `deploy/runs/_shared.yaml`. Provider switching reduced to a single change in `deploy/profile.yaml` (model + fallback_model). The repository is cleaned: `deploy/` is the single source of truth; stale profiles removed. All 331 existing tests continue to pass.
 
 ## ⏩ 2026-06-23 — Scan-funnel observability (Plan 2) + data-refresh pipeline FIXED
 

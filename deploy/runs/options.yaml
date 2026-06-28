@@ -1,0 +1,23 @@
+# Options run configuration
+# Defines how the options trading run is executed
+
+asset: options
+board: options     # Kanban board for options trades
+profile: trading   # Uses the single trading profile (future: trading-options)
+
+# Schedule (PT timezone) - staggered 5 minutes after equity
+schedule:
+  morning: "40 6 * * 1-5"   # 6:40 AM PT weekdays
+
+# Asset-specific configuration
+sops: sops/options         # Options SOP files
+scanner_profile: options   # Scanner configuration profile
+
+# Phases to run in the morning workflow
+phases: [risk, research, trade]
+
+# Asset-specific risk budget (more conservative for options)
+risk_budget:
+  max_risk_per_trade_pct: 2.0
+  max_open_positions: 5
+  daily_loss_limit_pct: 5.0

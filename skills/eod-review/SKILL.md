@@ -1,7 +1,7 @@
 ---
 name: trading-eod-review
 description: "Use when the trading day ends and all positions are closed or the time stop has passed — triggers daily journaling, performance metrics, compliance scoring, and reflection."
-requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_daily_funnel, get_portfolio_state, send_notification, log_decision]
+requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_daily_funnel, get_portfolio_state, send_notification, log_decision, generate_tuning_config, get_tuning_config, reset_tuning_config]
 ---
 
 # EOD Review Agent
@@ -118,6 +118,60 @@ never reported without this reason.
 1. `log_decision(agent="orchestrator", action="eod_review", ...)` — record the review
 2. `generate_performance_report(start_date=today, end_date=today, export_format="markdown")` — persist report
 3. `send_notification(daily_summary, "info")` — Slack summary
+
+### Step 6: Generate Scanner Tuning Config (FEEDBACK BRIDGE)
+
+**This is the EOD-to-morning feedback loop.** The scanner reads this config
+tomorrow morning to adapt its behavior based on what the LLM learned today.
+
+Call `generate_tuning_config()` with these rules:
+
+#### 6a. Exclusion list (stale-candidate suppression)
+
+For each symbol the Research agent rejected today at Layer 3 (catalyst) or
+Layer 5 (R:R), check if it was rejected on 2+ consecutive days:
+
+- If rejected 2+ consecutive days AND no new catalyst — add to exclude_symbols
+- If rejected once — DO NOT exclude (could be a one-off)
+- Set exclude_reasons with a short explanation (e.g., "rejected at Layer 3: no catalyst (3 days)")
+
+#### 6b. Threshold overrides (regime-adaptive)
+
+Based on today's results and the reflection at Step 4:
+
+- **After 3+ consecutive losses in the same regime:** Tighten the most relevant
+  threshold by 20-30% (e.g., raise m_rs10_min from 2.0 to 2.5, raise m_roc50_min
+  from 10.0 to 12.0)
+- **After 5+ consecutive wins:** Consider loosening back toward defaults
+- **In DEFENSIVE mode:** Tighten all engine thresholds by 25%
+- **In HALTED mode:** No threshold changes (scanner shouldn't run anyway)
+- **In NORMAL mode after 3 winning days:** Revert half the tightening
+
+Valid threshold keys (others are silently ignored):
+`m_rs10_min`, `m_roc50_min`, `m_chase_atr_mult`, `m_pullback_rsi3_max`,
+`r_drop3_min`, `r_rsi3_max`, `m_atr_pct_min`, `r_atr_pct_min`
+
+#### 6c. Risk limit overrides
+
+Based on the weekly rolling metrics:
+
+- If 5-day drawdown >= 3%: `{"daily_loss_limit_pct": 2.0}`
+- If 5-day drawdown >= 5%: `{"daily_loss_limit_pct": 1.5, "max_open_positions": 3}`
+- If 20-day drawdown >= 8%: `{"daily_loss_limit_pct": 1.0, "max_open_positions": 2}`
+- If back to peak equity after drawdown: clear overrides (empty dict)
+
+#### 6d. Notes
+
+Write a one-line note explaining what changed and why. Include auto-revert
+conditions: e.g., "Tightened after 3-loss streak in neutral regime. Auto-revert
+after 3 consecutive winning days."
+
+#### 6e. Friday: Full review
+
+On Fridays, additionally:
+- Review all excluded symbols — remove any that have new catalyst/news
+- Check if overrides are still appropriate vs trailing 20-day performance
+- If performance has recovered for 5+ days, call `reset_tuning_config()`
 
 ---
 

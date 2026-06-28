@@ -1,5 +1,5 @@
 # Trading System Configuration
-model: claude-sonnet-4-20250514
+model: deepseek-chat
 temperature: 0
 max_turns: 30
 
