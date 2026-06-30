@@ -119,6 +119,70 @@ never reported without this reason.
 2. `generate_performance_report(start_date=today, end_date=today, export_format="markdown")` — persist report
 3. `send_notification(daily_summary, "info")` — Slack summary
 
+### Step 5.5: Pattern & Insight Capture (LEARNING LAYER)
+
+**This step persists insights across days so the system learns.** It produces two outputs:
+
+#### 5.5a. Gate Bottleneck Report
+
+From the scan funnel (`get_daily_funnel(today)`), analyze WHAT killed candidates:
+
+```
+For each engine (M, R):
+  - How many candidates passed mechanical scan?
+  - How many were dropped by routing (regime ineligible)?
+  - How many were dropped by LLM DD (which layer)?
+  - How many were entered?
+
+For each gate that blocked candidates:
+  - Which gate? (M-G4, R-G5, Layer 3 catalyst, etc.)
+  - How many candidates did it block today?
+  - How many CONSECUTIVE days has this gate blocked ALL candidates?
+  - What was the closest miss? (symbol, actual value vs threshold)
+```
+
+**Record this in the journal** under a `### Gate Bottleneck Analysis` section EVERY DAY — even if no gates are bottlenecked. This creates a daily record so the system can spot patterns:
+
+```
+### Gate Bottleneck Analysis — 2026-06-29
+- Engine R: 0 candidates. R-G5 blocked all 12. RSI3 max allowed: 10. Closest miss: IBKR (RSI3=26.1, drop_3d=4.81%). 
+  R-G5 has blocked ALL Engine R candidates for 3+ consecutive days. Threshold is binding.
+- Engine M: 10 candidates passed mechanical, but all 10 were UNREVIEWED (routing said R-ONLY).
+  If regime shifts to uptrend, these 10 would have been viable.
+- Review coverage: 2/12 candidates reviewed (17%). 10 momentum setups never evaluated.
+```
+
+#### 5.5b. Closest-Miss Tracking
+
+For each engine, record the TOP 3 closest misses (stocks that nearly passed the mechanical gates). Include:
+
+```
+| Symbol | Engine | Failing Gate | Actual Value | Threshold | Gap |
+|--------|--------|-------------|--------------|-----------|-----|
+| IBKR   | R      | R-G5 (RSI3) | 26.1         | < 10      | 16.1 |
+| TSM    | R      | R-G5 (RSI3) | 37.6         | < 10      | 27.6 |
+| TXN    | R      | R-G5 (RSI3) | 53.6         | < 10      | 43.6 |
+```
+
+This table lives in the journal AND is stored via `log_decision(action="closest_misses", ...)` so it can be queried across days.
+
+#### 5.5c. Regime-Pattern Correlation
+
+At the end of each journal, add a running observation:
+
+```
+### Regime-Pattern Correlation
+- Current regime: choppy (SPY flat/near SMA50, VIX 21.6)
+- Engine M: 10 candidates passed mechanical. Unreviewed because routing blocks M in chop.
+  → If market shifts to trending, these names are actionable immediately.
+- Engine R: 0 candidates. R-G5 (RSI3 < 10) is binding in this regime.
+  → In choppy markets with VIX > 20, RSI3 may never reach < 10. Threshold may need regime-conditional value.
+- Days since last Engine R entry: 5+. Days since last Engine M entry: 5+.
+- Total zero-trade days this week: 1. This month: 3.
+```
+
+**Purpose:** When a human reads the weekly summary, they see not just "today was zero trades" but "R-G5 has been binding for 5 days, here are the 3 stocks that would have been candidates if RSI3 threshold were 20 instead of 10, and here's the regime context that explains why."
+
 ### Step 6: Generate Scanner Tuning Config (FEEDBACK BRIDGE)
 
 **This is the EOD-to-morning feedback loop.** The scanner reads this config
