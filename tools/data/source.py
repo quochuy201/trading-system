@@ -44,20 +44,37 @@ class YFinanceSource(MarketDataSource):
         return rows
 
     def get_daily_bars(self, symbols: list[str], start: str, end: str) -> dict[str, list[dict]]:
+        import time
         import yfinance as yf
         out: dict[str, list[dict]] = {}
         if not symbols:
             return out
-        df = yf.download(symbols, start=start, end=end, auto_adjust=True,
-                         progress=False, group_by="ticker", threads=True)
-        for s in symbols:
-            try:
-                sub = df[s]
-            except KeyError:
+
+        # yfinance yf.download() with 400+ symbols hits internal SQLite
+        # cache contention (OperationalError + false "delisted" reports).
+        # Chunk into batches of 25 with retries.
+        chunk_size = 25
+        for i in range(0, len(symbols), chunk_size):
+            chunk = symbols[i:i + chunk_size]
+            for attempt in range(3):
+                try:
+                    df = yf.download(chunk, start=start, end=end,
+                                     auto_adjust=True, progress=False,
+                                     group_by="ticker", threads=False)
+                    for s in chunk:
+                        try:
+                            sub = df[s]
+                        except KeyError:
+                            continue
+                        sub = sub.dropna(how="all")
+                        if not sub.empty:
+                            out[s] = self._normalize_bars(sub, s)
+                    break  # chunk succeeded
+                except Exception:
+                    time.sleep(2 ** attempt)
+            else:
+                # All retries exhausted — skip chunk, continue with next
                 continue
-            sub = sub.dropna(how="all")
-            if not sub.empty:
-                out[s] = self._normalize_bars(sub, s)
         return out
 
     def get_last_price(self, symbol: str) -> float | None:

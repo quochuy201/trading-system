@@ -30,8 +30,14 @@ broker:
   slippage_pct: 0.05
   fee_per_trade: 0.0
 
-# Scanner universe — stocks the agent scans daily for candidates
-# The agent reads this list at scan time. Override per-request with specific tickers.
+# Scanner universe — SUPERSEDED, do not scan from this list.
+# The live scan universe is tools/universe_backtest.json (~400 names, built by
+# scripts/load_universe.py from price/ADV gates) and is resolved in code by
+# _universe_symbols(); see its docstring — "shared by live + backtest so both
+# scan the same names". Call scan_swing_candidates() with NO symbols argument.
+# Passing this hand-picked list instead cuts the universe 400 -> 67; that
+# happened on 2026-07-06/07/10 (scan_funnel.universe_size = 67).
+# Kept only as the legacy seed list.
 scanner:
   universe:
     - AAPL
@@ -120,7 +126,14 @@ strategies:
       sop: v1.0.0
     - id: equity/swing
       market: equity
-      sop: v1.3.0   # exit round: ATR-scaled R target; v1.2.0+v1.3.0 forward-validation pending
+      sop: v1.6.0   # head of the delta chain — read v1.0.0 (base, both engines M+R)
+                    # then apply v1.1.0..v1.6.0 in order.
+                    # Was v1.3.0 since v1.3.0 shipped (2026-06-10); v1.4.0-v1.6.0
+                    # landed 06-10/06-11 without it being updated. This file was
+                    # never deployed to Hermes, so the agent had no source of truth
+                    # and picked a version per trade — trade_plans records v1.0.0,
+                    # v1.3.0 and v1.6.0 across 8 plans in two weeks. Bumped 2026-08-02.
+                    # Nothing verifies this pin matches the newest file in sops/.
   disabled:
     - id: equity/intraday-momentum
       market: equity

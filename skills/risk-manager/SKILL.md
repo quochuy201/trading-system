@@ -56,6 +56,26 @@ All 10 items must pass. Failure of any item → HALTED.
         d. log_decision(action="strategy_eligibility",
              rules_triggered=[matched §1 rows], reasoning=<regime summary>)
 [ ] 9. Confirm market is open     → halt on early close / holiday
+
+        **Method (no MCP clock tool available — use calendar reasoning):**
+        a. Try `get_market_data("SPY")` — if it returns a price with
+           today's date, the market is/was open today.
+        b. If no price data for today, check `references/nyse-holiday-calendar.md`
+           in this skill directory for known holidays and the "observed on" rules.
+        c. Weekend rule: NYSE never trades Saturday or Sunday. If local time in
+           America/New_York is Sat/Sun → closed.
+        d. Known holiday rule: e.g. Jul 4 on Saturday → observed Friday Jul 3
+           (NYSE rule: Saturday holidays observed on the preceding Friday; Sunday
+           holidays on the following Monday).
+        e. Early close rule: day before Thanksgiving (close 13:00 ET), day after
+           Thanksgiving (close 13:00 ET), Christmas Eve (close 13:00 ET).
+           Early close counts as OPEN for preflight — skip only research/scan
+           steps if after the close time, but monitor still runs.
+        f. If market is closed → set mode from preflight checks, then SKIP
+           research + trade execution steps. Monitor runs normally (pending
+           exit orders need tracking). Notify operator.
+        g. If Alpaca clock endpoint becomes available via MCP tools in the
+           future, prefer that over calendar reasoning (authoritative source).
 [ ] 10. log_decision(action="preflight_complete", ...)
 ```
 
@@ -100,7 +120,7 @@ kelly_pct    = win_rate - (loss_rate / (avg_win / avg_loss))
 size_cap_pct = max(0, min(R_pct, 0.25 × kelly_pct))
 ```
 
-If `size_cap_pct < R_pct`, use `size_cap_pct` for the day. This prevents hot-streak-inflated sizing before mean reversion.
+If `size_cap_pct < R_pct`, use `size_cap_pct` for the day.
 
 ### Expectancy Gate
 
@@ -117,7 +137,7 @@ expected_daily_pnl$ = expectancy_per_trade$ × expected_trades_per_day
 | expected_daily_pnl$ >= income_target | NORMAL allowed |
 | expected_daily_pnl$ >= 0.5 × income_target | NORMAL allowed, flag in summary |
 | expected_daily_pnl$ < 0.5 × income_target | Force DEFENSIVE |
-| expectancy_per_trade$ <= 0 over 20 trades | Force HALTED. Stop trading until human review. |
+| expectancy_per_trade$ <= 0 over 20 trades | Force HALTED |
 
 ---
 
@@ -148,7 +168,7 @@ expected_daily_pnl$ = expectancy_per_trade$ × expected_trades_per_day
 |---------|--------|
 | 5-day drawdown from peak >= 6% | HALTED for the week |
 | 20-day drawdown from peak >= 10% | HALTED indefinitely |
-| Single-day loss >= 2 × DLL_pct (override breach) | HALTED indefinitely. Forensic review. |
+| Single-day loss >= 2 × DLL_pct | HALTED indefinitely. Forensic review. |
 
 **The agent cannot lift its own circuit breaker.** Only a human can call `clear_kill_switch()`.
 
@@ -156,13 +176,11 @@ expected_daily_pnl$ = expectancy_per_trade$ × expected_trades_per_day
 
 ## Crash Protection (Systemic Risk Rules)
 
-These rules protect against market-wide selloffs that invalidate stock-specific catalysts.
-
 ### Rule 1: Sector Concentration Limit
 
-**Max 1 position per correlated sector.** If you already hold a tech/semiconductor stock, don't enter another one regardless of how good the catalyst looks.
+**Max 1 position per correlated sector.**
 
-Sector groups (correlated):
+Sector groups:
 - **Tech/AI/Semis:** NVDA, AMD, LRCX, AMAT, MU, AVGO, QCOM, ON, SMCI, MRVL, KLAC, INTC, ARM
 - **Tech/Cloud/Software:** AAPL, MSFT, GOOGL, AMZN, META, CRM, ADBE, NFLX, SNOW, DDOG, NET, CRWD, PLTR, SHOP
 - **Finance:** JPM, GS, MS, BAC, V, MA, AXP, C
@@ -172,94 +190,64 @@ Sector groups (correlated):
 - **Industrial/Defense:** CAT, BA, GE, DE, RTX, LMT
 - **Crypto/Speculative:** COIN, MARA, RIOT, RIVN
 
-Why: On Feb 4, 2026, holding LRCX + GOOGL + RTX (3 tech/AI positions) resulted in 3× loss when AMD's earnings shock dragged all tech. Max 1 per sector limits damage to 1× loss.
-
-### Rule 2: Range Expansion Warning (Crash Day Detection)
-
-Compute SPY's True Range vs its 20-day ATR. If today's range is expanding abnormally:
+### Rule 2: Range Expansion Warning
 
 ```
-SPY_TR_today / SPY_ATR_20 > 1.5 → DEFENSIVE mode (half size, tighten stops)
-SPY_TR_today / SPY_ATR_20 > 2.0 → HALTED (no new entries, tighten all stops to breakeven)
+SPY_TR_today / SPY_ATR_20 > 1.5 → DEFENSIVE (half size, tighten stops)
+SPY_TR_today / SPY_ATR_20 > 2.0 → HALTED (no new entries, tighten all to breakeven)
 ```
-
-Check this INTRADAY: if by midday SPY's range already exceeds 1.5× ATR, the day is abnormal.
 
 ### Rule 3: "Good News, Bad Price" Sector Kill
 
-If a sector leader reports good news (earnings beat, upgrade) BUT the stock drops >5%:
-- Kill ALL entries in that sector for 48 hours
-- This signals extreme positioning/froth in the sector
-- Example: AMD beat earnings Feb 4 but dropped -17% → kill ALL semi/AI entries for 2 days
+Sector leader reports good news BUT stock drops >5% → kill ALL entries in that sector for 48 hours.
 
 ### Rule 4: Sector Rotation Divergence
 
-If tech (QQQ) is down >1.5% AND defensive sectors (DIA/XLP) are UP on the same day:
-- Do NOT enter tech/growth positions
-- Consider entering defensive/value positions instead
-- This signals institutional rotation out of risk assets
+QQQ down >1.5% AND DIA/XLP up on same day → do NOT enter tech/growth positions.
 
 ### Rule 5: Tighten Stops on Market Weakness
 
-If SPY drops >1% intraday while you hold positions:
-- Move all profitable positions to breakeven stop (protect gains)
-- Do NOT move losing positions (they already have stops)
-- Log: "market weakness → stops tightened"
-
-This limits damage on crash continuation days (Feb 4 → Feb 5 → Feb 6 was 3 days of selling).
+SPY drops >1% intraday → move profitable positions to breakeven. Log: "market weakness → stops tightened".
 
 ---
 
 ## Output Format
 
-When computing risk state, report:
-
 ```
 ## Risk Assessment
 
 ### Mode: [NORMAL / DEFENSIVE / HALTED]
-Reason: [why this mode — cite which checks determined it]
+Reason: [why this mode]
 
 ### Eligible Strategies
-- Session market scope: [equity | options]
 - Regime: vix=[x] spy_tr_atr=[x] spy_vs_sma50_pct=[x]% trend=[up/down/flat] iv_rank_spy=[x]
-- Eligible: [list of strategy ids that are ON] (or "none — STOP")
-- Per strategy: [id] → ON/OFF ([which §1 row fired])
+- Eligible: [list of ON strategy ids]
 
 ### Account State
-- Equity: $[X]
-- Daily P&L: $[X] ([X]%)
-- Daily loss budget remaining: $[X]
-- Open positions: [N] / [max]
-- Day-trade count: [N] (PDT status: [clear/approaching/restricted])
+- Equity: $[X] · Daily P&L: $[X] ([X]%)
+- Open positions: [N] / [max] · Day-trade count: [N]
 
-### Sizing Parameters
-- Risk per trade: [X]% ($[X])
-- Quarter-Kelly cap: [X]% (based on rolling 30-day stats)
-- Effective risk: min(R_pct, kelly_cap) = [X]%
-- Max position value: $[X]
+### Sizing
+- Risk per trade: [X]% ($[X]) · Effective risk: min(R_pct, kelly_cap) = [X]%
 
 ### Circuit Breaker Status
-- Consecutive losses today: [N]
-- 5-day drawdown: [X]% (limit: 6%)
-- 20-day drawdown: [X]% (limit: 10%)
-- Compliance (last session): [X]%
+- 5-day drawdown: [X]% · 20-day drawdown: [X]% · Compliance: [X]%
 
 ### Expectancy
-- Rolling 30-day expectancy: $[X]/trade
-- Expected daily P&L: $[X]
-- Income target: $[X]/day
-- Gate status: [PASS / WARNING / FAIL]
+- Rolling 30-day: $[X]/trade · Gate: [PASS / WARNING / FAIL]
 ```
 
 ---
 
 ## Rules
 
-1. **Mode is computed, not chosen.** The agent reads state and applies the rules above. It cannot override.
+1. **Mode is computed, not chosen.** The agent reads state and applies the rules above.
 2. **Conservative always wins.** If two rules conflict, apply the more restrictive one.
 3. **Preflight is non-negotiable.** No trading action before all 10 items pass.
-4. **Quarter-Kelly is a ceiling.** Never size above it even if the account can afford more.
+4. **Quarter-Kelly is a ceiling.** Never size above it.
 5. **Circuit breakers are one-way.** Only humans can clear HALTED state.
 6. **Log everything.** Every mode transition, every preflight result, every sizing decision.
-7. **Zero expectancy = stop trading.** This is the most important rule. Negative expectancy + more trades = faster ruin.
+7. **Zero expectancy = stop trading.**
+
+## Linked Files
+- `references/nyse-holiday-calendar.md` — NYSE holiday schedule and "observed on" rules for autonomous market-open verification.

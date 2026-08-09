@@ -42,7 +42,8 @@
       "Bash(ps -eo pid,ppid,start_time,cmd)",
       "Bash(ps -o pid,ppid,lstart,command)",
       "WebFetch(domain:hermes-agent.nousresearch.com)",
-      "Bash(./install.sh hermes *)"
+      "Bash(./install.sh hermes *)",
+      "Bash(chmod +x *)"
     ]
   }
 }

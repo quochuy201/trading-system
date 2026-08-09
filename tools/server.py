@@ -921,16 +921,18 @@ def get_trade_plan(plan_id: str) -> str:
 
 
 def _broadcast(text: str) -> dict:
-    """Fan a pre-formatted message out to every configured channel (Slack + Discord).
+    """Fan a pre-formatted message out to every configured channel (Slack + Discord + Telegram).
 
-    Fire-and-forget: each channel that lacks a webhook is silently skipped; a
+    Fire-and-forget: each channel that lacks credentials is silently skipped; a
     failure on one channel never affects the other or the caller.
     """
     from notifications.slack import send_slack_message
     from notifications.discord import send_discord_message
+    from notifications.telegram import send_telegram_message
     return {
         "slack": send_slack_message(text),
         "discord": send_discord_message(text),
+        "telegram": send_telegram_message(text),
     }
 
 

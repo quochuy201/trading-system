@@ -4,7 +4,159 @@
 Any AI/engineer (this machine, another machine, Hermes) reads this first.
 Update it as part of finishing each unit of work — like committing code.
 
-Last updated: 2026-06-27 · Branch: `main` · Tests: 331 passing, 0 failures · **Paper trading ENABLED**
+> **Forward-looking product plan lives in [`docs/product/`](docs/product/README.md).**
+> This file is the engineering *changelog* (what shipped). For the roadmap, per-feature
+> specs/designs/plans, and the architecture map, start at
+> [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
+
+Last updated: **2026-08-05** · Branch: `main` · Tests: **331 passing** (verified — see 07-27 entry) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ⛔ **~1 month of work is uncommitted — see 07-27 entry**
+
+---
+
+## ⏩ 2026-08-02 — Hermes 4-day trading outage: invalid Alpaca creds in the runtime `.env` — FIXED
+
+**Symptom:** zero trades Jul 27–31 (Mon–Fri). Cron was healthy the whole time — all five jobs ran with `last_status: ok`.
+
+**Root cause.** The Jul 26 folder cleanup deleted `~/.hermes/profiles/trading/project/.env`. Jul 27's data-refresh failed (`{"error": "refresh failed: 'ALPACA_API_KEY'"}`); the Jul 28 repair recreated the file **with an invalid key pair** (secret 20 chars vs. the real 44). `server.py:15` reads that file and only that file, so every broker call 401'd.
+
+```
+$ # GET /v2/account with each candidate key pair
+project/.env          : HTTP 401 Unauthorized -> {"message": "unauthorized."}
+profiles/trading/.env : HTTP 200 OK  equity=104706.55  status=ACTIVE
+```
+
+**Two credential stores, only one validated.** Hermes confirmed the operator's key was correct — but it validated `profiles/trading/.env`, used by the gateway/agent layer. The MCP server is a separate subprocess and gets nothing from it: `config.yaml:633-636` registers `trading-tools` with a `command:` and **no `env:` block**.
+
+```
+$ ps eww 42630 | tr ' ' '\n' | grep -c "^ALPACA"
+0
+```
+
+**Timeline (log + filesystem):** `project/.env` birth `2026-07-28 06:26:41` → MCP restart `06:27:11` → first `Retry 1/10: {"message": "unauthorized."}` at `06:27:15` → **508** occurrences through Jul 31.
+
+**Effect.** The agent hit the 401 at preflight, declared `HALTED`, and skipped research/scan/trade every day:
+
+```
+$ sqlite3 trading.db "select max(date) from scan_funnel; select max(timestamp) from transaction_ledger;"
+2026-07-22                       -- no scan at all Jul 27-31
+2026-07-22T15:11:28.828994       -- last order: PANW buy
+```
+
+**Why it stayed invisible for four days.** `trading-data-refresh` reported green every morning (`{"refreshed": 401, "bars": 110675, "aligned": true}`) because `TRADING_DATA_SOURCE` is unset → `server.py:231` defaults to **yfinance**, which never touches Alpaca. A green data pipeline masked a dead broker. `preflight.sh` could not have caught it either — it calls `hermes broker ping`, `hermes kill-switch status`, `hermes data check-freshness`, all of which **exit 2 (unknown command)**, and it is wired into no live cron (`preflight.log` last written Jun 27).
+
+**Fix — files changed:** `~/.hermes/profiles/trading/project/.env` only (regenerated from the verified sources: Alpaca + Telegram from `profiles/trading/.env`, `DISCORD_WEBHOOK_URL` from the repo `.env`; old file kept as `.env.bak.20260802-broken`). Stale MCP server PID 42630 killed so the next spawn reloads it. **No repo code changed.**
+
+**Verified after fix:**
+
+```
+$ cd ~/.hermes/profiles/trading/project/tools && .venv/bin/python -c "import server, json; ..."
+get_account -> {'equity': 104706.55, 'cash': 97074.46, 'buying_power': 409667.69}
+kill_switch -> {'active': False}
+positions   -> [PANW 23 @ 334.35, now 331.83, -0.75%]
+$ hermes -p trading mcp test trading-tools     # handshake OK, all tools registered
+$ grep -c unauthorized mcp-stderr.log  # since the 2026-08-02 15:58:16 restart
+0
+```
+
+### Same session — pre-Monday readiness pass (3 further fixes)
+
+**1. Missing trading day pulled.** Universe bars stopped at Thu Jul 30; Fri Jul 31 was absent for all 400 symbols. Benign by design — `refresh_market_data` defaults `end` to *yesterday*, so Friday's own bar only lands on the next run. Ran it manually: `{"refreshed": 401, "bars": 110274, "as_of": "2026-07-31", "aligned": true}`. ⚠️ **Gap:** the staleness gate is `max_age_days=5` (`data/validate.py:26`), so a silently-failed refresh keeps reporting `data_stale: false` for four more days — the same shape as the June drought. The morning cycle has no check that the refresh actually advanced the date.
+
+**2. `config.yaml` was never deployed — routing gate could not veto disabled strategies.** `grep -rln "^strategies:" ~/.hermes/profiles/trading/` → **no matches**. The risk-manager skill step 8b says *"Read `config.yaml strategies.enabled`"*, and the routing SOP requires a strategy be **both** enabled in config **and** ON in §1. Only half was deployed. Monday's regime matches row 3 (uptrend, `sma50=+0.38%`, `trend=up`) which says `equity/intraday: ON` — and `equity/intraday-momentum` is in the repo's `disabled:` list. Nothing at runtime would have vetoed it. **Fixed:** copied to `~/.hermes/profiles/trading/project/config.yaml` (the morning job's `workdir`); repo and runtime now sha-identical.
+
+**3. There has never been an authoritative SOP version — the agent improvised one per trade.** Deploying the config exposed `equity/swing → sop: v1.3.0` while recent runs cited v1.6.0. Investigating from the **runtime** (git is not a reliable source here — the working tree is far ahead of HEAD and has been uncommitted for weeks):
+
+```
+$ sqlite3 trading.db "select plan_id, sop_version, created_at from trade_plans order by created_at desc"
+PANW-20260722-swing  v1.3.0   2026-07-22   ← currently open position
+hwm-m-20260716       v1.6.0   2026-07-16
+dxcm-m-20260716      v1.6.0   2026-07-16
+ibkr-m-20260714      v1.6.0   2026-07-14
+okta-m-20260713      v1.6.0   2026-07-13
+aal-r-20260709       v1.6.0   2026-07-09
+panw-m-20260708      v1.0.0   2026-07-08
+mara-r-20260706      v1.3.0   2026-07-06
+```
+
+**Three different versions across 8 plans in two weeks.** `transaction_ledger.sop_version` is empty on all 28 rows. Because `config.yaml` was never deployed, the agent had **no source of truth** and inferred a version per trade from surrounding context. The only version hint in the deployed agent context is `skills/trading-monitor/SKILL.md:88` (names v1.6.0 for the Engine R stop). The two morning runs that "cite v1.3.0" (Jul 28, Jul 30) are simply reporting the open PANW plan's recorded `sop_version` — not a routing decision.
+
+Filesystem evidence (not commits): all seven swing SOPs were written **2026-06-09 → 06-11**; `config.yaml` was untouched from then until 2026-08-02, and its on-disk content matched HEAD (today's diff is the only delta). So `sop: v1.3.0` has been the written value since v1.3.0 shipped, and v1.4.0/v1.5.0/v1.6.0 landed without it being updated.
+
+**Fixed:** pin bumped to `v1.6.0` in repo + runtime. This is the first time an authoritative pin actually reaches the agent, so Monday's version selection becomes deterministic instead of improvised. Engines M/R are unaffected — both live inside the swing SOP and are gated by routing (`ON`/`R-ONLY`/`M-ONLY`), not by the version. The open PANW position was opened under v1.3.0 but is **Engine M**, and v1.6.0's only change is the *Engine R* stop, so its stop ($288.99 = 2.5×ATR10) is unchanged.
+
+**Root cause:** nothing verifies that a recorded version corresponds to anything real — not `config.yaml`'s pin against the newest file in `sops/<id>/`, and not `trade_plans.sop_version` against the version actually in force. Both are cheap assertions.
+
+⚠️ **Correction to an earlier claim in this entry's drafting:** I initially attributed the stale pin to a specific Jun 11 commit chain and stated `9e20129` was the last commit to touch `config.yaml`. That was wrong — `0ec0d34` (2026-06-27) is more recent — and the commit-history framing was invalid anyway, since the repo is uncommitted and HEAD does not represent the working tree. The account above is rebuilt from the DB, file mtimes, and Hermes run logs. **Swing SOP versions are a delta chain, not alternatives** — only `v1.0.0.md` is a complete spec (7,386 B, `## Engine M` line 20 / `## Engine R` line 74); every later file is a one-change patch (`v1.6.0.md` = 65 lines, contains only the Engine R stop change, no entry criteria). A pin therefore selects *how far down the chain to read*. Bumped to `v1.6.0` in repo + runtime. Engines M/R are unaffected — both live inside the swing SOP and are gated by routing (`ON` / `R-ONLY` / `M-ONLY`), not by the version.
+
+**Files changed:** `config.yaml` (repo — scanner.universe superseded-comment + swing pin v1.3.0→v1.6.0), `~/.hermes/profiles/trading/project/config.yaml` (new, deployed copy), `~/.hermes/profiles/trading/project/tools/trading.db` (Jul 31 bars).
+
+⚠️ **`scanner.universe` in `config.yaml` is a trap** — the hand-picked 66-name list + SPY = **67**, and `scan_funnel.universe_size` is 67 on 2026-07-06/07/10 where it is 401 on every other day. The live universe is `tools/universe_backtest.json` resolved by `_universe_symbols()` ("shared by live + backtest so both scan the same names"). Annotated as superseded rather than deleted; deleting it is the real fix.
+
+**Monday readiness (verified 2026-08-02):** gateway under launchd · 5 crons queued for Aug 3 · broker auth OK · kill switch off · daily limits pass · compliance **1.0** (582 decisions, 0 violations) → mode NORMAL · tuning config has **no** threshold/risk overrides (only ROST + AAPL excluded) · market opens Mon 09:30 ET · scan **400 → 19 candidates**, not stale. Health-check script written (not yet installed as preflight).
+
+**Still open before this is trustworthy:** `place_order` has not been exercised since the credential fix (read paths all verified; no order has traversed the repaired path). `vix` is permanently `null` — the skill calls `get_market_regime("SPY")` and `server.py:277` (`if vix_symbol:`) skips the fetch, so routing row 1's `vix > 30` crash guard is **dead logic** and only `spy_tr_atr > 2.0` protects. Fills still not written back, so any Monday trade remains R-unmeasurable.
+
+**Side findings:** notification tools were dead from the same cause (the MCP process carries no `DISCORD_*`/`TELEGRAM_*` vars; `notifications/discord.py:21`, `telegram.py:22-23`) — now provisioned in the same file. `server.py:21` uses `os.environ.setdefault`, so **the environment beats the file**: if Hermes ever injects an empty `ALPACA_API_KEY=` (the empty-guard pattern the worker profiles use for `DISCORD_BOT_TOKEN`), the correct file would be silently ignored. Duplicate `trading-iv-capture` cron jobs exist (one paused holding a stale timeout error, one active and healthy). Jul 24 and Jul 27 have no morning-run output at all.
+
+---
+
+## ⏩ 2026-07-27 — Verification pass: suite confirmed green; uncommitted-tree risk logged
+
+**No code changed.** Closing the one open `UNVERIFIED` marker from the 07-25 header, and widening the git warning.
+
+**Test count RESOLVED — 331 passing, 0 failures.** The 07-25 header flagged `grep -c "def test_"` = 326 as a possible discrepancy; the suite was simply never run. It was run:
+
+```
+$ cd tools && uv run --extra dev pytest tests/ -q
+331 passed, 10 warnings in 9.58s
+```
+
+The grep undercounts (class-based tests / parametrization); **331 was correct, the ⚠️ was not.** Green includes the uncommitted working-tree changes — `test_tool_groups.py` asserts 61 tools and passes, so the Telegram additions are coherent.
+
+⛔ **The working tree is a month of unversioned work — widen the 07-25 warning.** `git ls-files` → **0** for BOTH `docs/product` and `setup`, while their predecessors (`deploy/`, `docs/specs/`, `docs/plans/`, `cron/`, `SOUL.md`, `mcp.json`, `distribution.yaml`) are **deleted-but-uncommitted**. `git status --porcelain | wc -l` → 120; `main` is **97 commits ahead of `origin/main`**. So the entire deployment tree that `deployment` (build-queue #0) must fix exists only as untracked files with no backup — nothing to diff, nothing to revert to.
+
+⚠️ **Do not blind-commit `skills/`.** `skills/eod-review/SKILL.md` is 420 → **68 lines** and `skills/monitor/SKILL.md` → 129 in the working tree (−780 across the two); committed Step 5.5 "Pattern & Insight Capture" is now a stub "Bottleneck Report". Both files are dated **Jul 7–9, older than commit `4cef139`** which added Step 5.5 — so committing as-is would silently revert the EOD learning layer. Provenance unresolved; decide before staging.
+
+Also uncommitted and worth keeping: yfinance 25-symbol chunking + retry (`tools/data/source.py`), Telegram notifications (`tools/notifications/telegram.py` + `server.py` `_broadcast`), live EOD state in `tools/scanner/tuning_config.json`.
+
+**`CLAUDE.md` stratum-B rewrite — 5 documentation defects closed.** The file had accreted since May and contradicted the code in five places; the 07-25 pass fixed the top of the file and left the bottom stale. Everything below `## Commands` was rebuilt against verified code state, and the 07-25 content (the two owner rules + dev pipeline, lines 1–85) was preserved verbatim.
+
+| Defect | Was | Now |
+|---|---|---|
+| Self-contradiction | §5 cited `next_backtest_bar`; Key Invariants said that name was stale (`grep -rn` → 0 matches) | `advance_to_next_day` (`:2085`) / `step_bar` (`:2132`) |
+| Wrong launch command | `cd tools && uv run server.py` — the invocation `505daaf` fixed *away* from | `tools/run_mcp.sh`, with the stdio-handshake reason |
+| Wrong SOP paths | `sops/<strategy-name>/v*.md` — matched nothing on disk | `sops/<asset-class>/<strategy>/v*.md` + `sops/_routing/` |
+| Routing undocumented | `grep -n "routing\|regime" CLAUDE.md` → **0 hits**, though `sops/_routing/v1.1.0.md` + `get_market_regime` (`:237`) are shipped | new **Strategy Routing** section incl. the three fail-safe semantics |
+| Obsolete architecture | "Strategy Engine → AI Agent → Execution" diagram, unflagged, superseded by Pattern C | deleted; pointer to BUILD-PLAN §1.5 |
+
+Also added a shipped-but-undocumented **Observability** section (`scan_funnel` `db.py:246`, `get_daily_funnel` `:1281`, tuning bridge `:2618`/`:2682`/`:2702`), the `TRADING_TOOL_GROUPS` gating, and the full optional-env list. The copied build queue was replaced with a pointer to BUILD-PLAN §4.7 — a duplicated queue drifts, and it already had. All 12 code citations in the rewrite were re-verified against `server.py` line-by-line. 282 → 323 lines.
+
+**Files changed:** `PROJECT_STATUS.md` (header + this entry), `CLAUDE.md` (everything below `## Commands`, plus the build-queue line at §How-to-develop). No code, no `docs/product` edits.
+
+---
+
+## ⏩ 2026-07-25 — Design pass: 5 features specced, D1–D7 ratified, 2 critical bugs found
+
+**Planning/design only — no code shipped.** Master plan: [`docs/product/BUILD-PLAN.md`](docs/product/BUILD-PLAN.md).
+
+**Decisions ratified (D1–D7)** — detail in BUILD-PLAN §2:
+- **D1** gate ships Tier 1–3 (12 math/portfolio rules); Tier-4 catalyst grounding deferred to pipeline contracts.
+- **D2** risk config = `risk_limits.dev/live.yaml`, % of equity, git-versioned, one `TRADING_ENV` switch **bound to broker mode**, fail-safe to dev. Automation writes only `tuning_config.json`, never the risk files.
+- **D3** canonical `MarketDataSource` + capability-flagged adapters; yfinance = daily/backtest only; **live monitoring always uses the execution broker's feed**.
+- **D4** scanner rebuild (z-scored factors) **deprioritized**; research continues (`research/R1-scanner-redesign.md` §S4).
+- **D5** go-live = measured ladder (gate live + D7 pass + ≥100 closed trades, positive expectancy in R, >1 regime + paper≈backtest ±15–20%), then ramp at min size.
+- **D6** REFRAMED — XSP dropped; the fix is **capital-aware selection** (rank by return-on-capital across equity/options in one scan).
+- **D7** edge validation adopted: must beat buy-and-hold **and** a single-agent baseline, net of costs, OOS, across bull + bear.
+
+**Architecture locked** (BUILD-PLAN §1.5): pipeline = fixed stages, strategy families = config; **one execution choke point** (exactly one function reaches the broker); vocabulary fixed ("alpha model" retired → *scanner*, *research*, *signal-scoring stage*, *strategy family*, *governance gate*).
+
+**Features designed** (`docs/product/features/<slug>/{spec,design,plan}.md`): `deployment`, `go-live-metrics`, `governance-gate`, `data-source-adapters`. Still to design: `capital-aware-selection`.
+
+**Build queue:** `deployment` (blocker) → `go-live-metrics` → `governance-gate` → `data-source-adapters` → `capital-aware-selection`.
+
+**Process:** independent adversarial review found ~30 defects (6 critical) in the above docs — **4 remain open** (C2 partial, C3 impossible join, C4 dead gate rules, H4 inverted boundary tests). `governance-gate` **cannot enter building** until closed. Two owner-enforced rules added to `CLAUDE.md` (evidence-or-UNVERIFIED; name every file changed).
+
+⚠️ **`docs/product/**` is NOT in git** (`git ls-files docs/product` → 0). Commit before relying on diffs or revert.
 
 ---
 
@@ -60,7 +212,7 @@ Two units of work, both merged to `main`; suite 323 → **331 passing**.
 - `scan_funnel` table (`persistence/db.py`) written **mechanically** by both scan tools every run (agent-independent — complete even when the agent under-logs verdicts, e.g. the 6-narrated/2-logged gap).
 - `get_daily_funnel(date)` MCP tool (in the `eod` tool group) joins the scan record with `decisions` (enter/skip) + `transaction_ledger` (orders) into a `why_zero` line. Uses an inclusive end-of-day timestamp bound — decisions store full ISO timestamps, so a bare-date `<=` would drop the whole day (caught in review, not in the plan).
 - Daily report renders a `## Scan Funnel` table + a **Why no trades** line.
-- Skills: EOD must record `why_zero` on any 0-trade day; research must `log_decision` for EVERY candidate. Plan: `docs/superpowers/plans/2026-06-22-scan-funnel-observability.md`.
+- Skills: EOD must record `why_zero` on any 0-trade day; research must `log_decision` for EVERY candidate. Plan: `docs/_archive/superpowers/plans/2026-06-22-scan-funnel-observability.md`.
 
 **Data-staleness ROOT-CAUSED + FIXED (merge `c6e9b06`).** The recurring "scan drought / no candidates" was **stale data, not thresholds.** Two independent bugs:
 1. **Refresh cron never ran.** `trading-data-refresh` fired daily 06:15 but failed every run with `Script not found` — Hermes resolves a no-`-p` cron's bare `--script` from the *profile* scripts dir (`~/.hermes/profiles/trading-research/scripts/`), but `install.sh` only deployed to the shared `~/.hermes/scripts/` and never deployed data-refresh/iv-capture at all. FIXED: `install.sh` now writes all three cron scripts (absolute paths) into every profile dir + the shared dir. Verified: `hermes cron run` → "Ran now: succeeded."
@@ -74,7 +226,7 @@ Two units of work, both merged to `main`; suite 323 → **331 passing**.
 
 ## ⏩ 2026-06-21 — Data foundations rebuilt + trading ENABLED (big session)
 
-Full diagnosis → fix → deploy. Specs in `docs/superpowers/specs/2026-06-20-*` and `2026-06-21-*`; plans in `docs/superpowers/plans/2026-06-21-*`; per-task ledger in `.superpowers/sdd/progress.md`.
+Full diagnosis → fix → deploy. Specs in `docs/_archive/superpowers/specs/2026-06-20-*` and `2026-06-21-*`; plans in `docs/_archive/superpowers/plans/2026-06-21-*`; per-task ledger in `docs/_archive/superpowers/sdd/progress.md`.
 
 **Root cause of "no valid trade" (evidence-based):** not one bug. (A) live research skill made a **fresh-news catalyst MANDATORY**, killing the mechanically-validated edge; (B) "live" data was a hand-cranked backtest loader (no refresh automation); (C) zero funnel observability; (D) version/param drift; (E) AI scratch pollution; (F) **data materially incorrect** — raw/unadjusted (split cliffs: ORLY 15:1, IBKR 4:1), IEX-only quotes (wrong "current price"), and a two-importer patchwork (12 fresh / 390 stale / 8 frozen).
 
@@ -88,13 +240,13 @@ Full diagnosis → fix → deploy. Specs in `docs/superpowers/specs/2026-06-20-*
 - **Crons registered** (PT, host PDT): trading-morning 6:35 (orchestrator), data-refresh 6:15, kanban-tick */5 6-13, iv-capture 13:05. Stale duplicate morning cron removed.
 - **Preflight green:** kill switch off, paper account ($97k cash/$397k BP), SPY uptrend (swing eligible), 11 candidates, data not stale (guard tolerance 3→5 days for holiday weekends).
 
-**Known follow-ups:** equity Plan 2 (scan-funnel telemetry/observability) + Plan 3 (first-trade hardening) deferred — trading was enabled WITHOUT the funnel (paper + `notify_analysis` Discord pre-trade + risk gates mitigate). Repo scratch archived to gitignored `_archive/`. Deferred Minors in the SDD ledger.
+**Known follow-ups:** equity Plan 2 (scan-funnel telemetry/observability) + Plan 3 (first-trade hardening) deferred — trading was enabled WITHOUT the funnel (paper + `notify_analysis` Discord pre-trade + risk gates mitigate). Repo scratch archived to gitignored `docs/_archive/`. Deferred Minors in the SDD ledger.
 
 ---
 
 ## ⏩ Morning Cycle — 2026-06-19 (6:35 PDT / pre-market)
 
-**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.5.0 + updates, references/trading-morning-cycle-examples.md now materialized):**
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.5.0 + updates, docs/_archive/references-root/trading-morning-cycle-examples.md now materialized):**
 
 - Ran `date` (PDT confirmed @06:36), `hermes profile list` (trading-system+trading-research running; others functional), `hermes -p <worker> mcp list` (trading-tools 'all' enabled), `hermes kanban --board trading diagnostics` (clean; unblocked stale t_9e9b3efc risk from 06-18 due to kanban-worker vs domain-skill gating), cron list verified (3 active jobs incl. morning + 5min tick).
 - Created/verified 06-19 task graph on `trading` board via sequential `hermes kanban --board trading create ... --skill <domain-skill> --parent ... --json` (specific skills trading-risk-manager/trading-research/etc. to resolve persistent MCP gating per pitfalls; risk starts immediately, proper children/parents):
@@ -130,7 +282,7 @@ All OPERATING_MANUAL invariants preserved (kill switch inactive, limits ok, comp
 
 ## ⏩ Morning Cycle — 2026-06-18 (6:35 PDT / pre-market)
 
-**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.4.0, references/trading-morning-cycle-examples.md):**
+**Daily kanban-orchestrator run (per SOUL.md, kanban-orchestrator skill v3.4.0, docs/_archive/references-root/trading-morning-cycle-examples.md):**
 
 - Ran `date` (PDT confirmed), `hermes profile list` (trading-system running as distribution, trading-research running, others stopped but workers functional), `hermes kanban --board trading diagnostics` (unblocked stale t_5ee6ce4b EOD task from 06-16 due to prior tool gating; now resolved via reclaim/unblock).
 - No crons listed — recreated trading-morning (on trading-system, PT schedule, kanban-orchestrator skill, workdir=project) + trading-kanban-tick (--script, market hours).
@@ -620,6 +772,16 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 
 ---
 ## Known bugs & gaps
+
+- 🔴 **CRITICAL — `./install.sh hermes` is broken; the repo cannot reach the Hermes runtime.** The root `install.sh` reads from `${REPO_DIR}/deploy/…`, but **`deploy/` does not exist at the repo root** — those assets live at **`setup/deploy/`** (`profile.yaml`, `SOUL.md`, `preflight.sh`, `cron/`, `runs/`, `mcp.json`, plus a second `install.sh`). With `set -euo pipefail` (line 2) the script **aborts at line 85**, before MCP registration, kanban setup, and cron install. The command is the one documented in `CLAUDE.md`. **Consequence:** repo changes never deploy; Hermes keeps running the last successfully-installed copy while the repo moves on. This is the mechanical root cause of the deployment divergence below. Fix = path correction **plus post-install verification** (assert tools reachable, skills present, crons registered) — the failure was silent, which is the real defect. Found 2026-07-25.
+
+- 🔴 **CRITICAL — no installer installs the runtime payload; the live system is hand-assembled.** Beyond the path bug above, all three installers **never copy `tools/`, never copy `skills/`, and never provision `.env`** (`grep -n '\.env\|tools/\.' install.sh setup/install.sh setup/deploy/install.sh` → no matches). Worse, the halves that *do* run wire the runtime back into the dev checkout: `install.sh:121` registers the MCP server as `--command "${REPO_DIR}/tools/run_mcp.sh"`, and the generated cron scripts `cd "$REPO_DIR/tools"` (`:60,:69`). The three scripts also disagree on the repo root — `./install.sh` → repo root, `setup/deploy/install.sh` → `setup/`, and **`setup/install.sh` has `REPO_DIR=""` (line 4)** — so one `$REPO_DIR` is used for two roots at different depths and each script breaks on a complementary half. **Consequence:** everything live under `profiles/trading/` (`project/tools/`, the five `trading-*` skills, `project/.env`, the rewritten cron scripts) was assembled by hand — which is exactly how a bad `.env` got in and cost four trading days (see 08-02 entry). **Mitigating:** the Python is already fully relocatable — zero absolute paths in any `.py`/`.sh`/`.yaml`; everything anchors to `Path(__file__)` (`server.py:15`, `persistence/db.py:263`, `server.py:1350,1380`, `scanner/tuning.py:20`) — and the hand-made copy is currently in sync (`server.py` sha `d460e49d…` identical, all 5 skills and the whole `sops/` tree identical). **Agreed fix (2026-08-02):** `install.sh` copies the payload into `~/.hermes/profiles/trading/project/` and provisions `.env`; keep `tools/..` anchoring so dev resolves to `<repo>/tools/..` and live to `project/tools/..` by location alone. Belongs to `deployment` (build-queue #0). Found 2026-08-02.
+
+- 🔴 **CRITICAL — deployment divergence: options tooling is built, tested, and unreachable.** The repo has `AlpacaOptionsSource` (`tools/data/options_source.py`) + five MCP tools — `get_options_chain` (`server.py:1465`), `get_options_market_data` (:1514), `calc_iv_rank` (:1573), `get_put_skew` (:1697), `calc_expected_move` (:1766) — all smoke-tested live on Alpaca paper (see Phase 2/3 below). But the **running `options-trader` skill exists only in the Hermes deployment** (`Hermes/skills/options-trader/`), has **no counterpart in this repo**, and references **zero** of those tools (verified `grep -c` = 0). Its IVR gate therefore falls back to web search → stale/contradictory reads → **34 consecutive zero-trade sessions** and 6 escalations for an options feed **that already exists**. The XSP escalation (33×) also originates from this untracked skill. **The FlashAlpha feed purchase is unnecessary.** Guard = reachability test (`data-source-adapters` Task 7); full skill reconciliation = `deployment`. Found 2026-07-25.
+
+- 🔴 **CRITICAL — order fills are never written back to the DB (trade outcomes unmeasurable).** `trade_transactions` rows are written at order-submit with `status` = `pending_new`/`accepted` (order *acknowledgements*) and are **never updated after execution**: **13 of 22 rows have `price = 0.0`**, and there are no `filled_qty` / `filled_avg_price` / `filled_at` fields. Consequence: **only 1 of 22 recorded trades is R-computable**; `performance_metrics`, `journal_entries`, `portfolio_snapshots` are all **0 rows**. Expectancy/win-rate cannot be computed, so **paper trading currently produces NO measurable evidence** — the go-live clock (D5) and edge validation (D7) are both blocked, and this cannot be reconstructed retroactively. Also missing: commissions/fees (needed for net-of-cost results) and an unambiguous round-trip/position identity (see the FLR `plan_id` with buy 311 → sell 311 → sell 267 → buy 267). Schema is otherwise sound — `trade_plans` does capture `stop_loss`/`take_profit`/entry, so R is computable in principle. Fix = feature `go-live-metrics` (docs/product/BUILD-PLAN.md, Wave 0). Found 2026-07-25 by direct DB audit.
+
+- 🟠 **`skills/monitor/SKILL.md` contradicts itself on the trailing-stop rule (stale pre-v1.2.0 profile).** The engine-aware table is correct — `:90` "Engine M · Trailing | >= +1R: trail 2xATR10 below highest close | Engine R: NEVER trail" — matching swing SOP v1.2.0 (trail armed at +1R, breakeven step removed) and v1.6.0. But **Step 5 further down the same file states a conflicting generic rule**: `:107` "If unrealized profit >= 1R: move stop to breakeven (entry price)" and `:108` "If unrealized profit >= 1.5R: start trailing at 1.5x ATR below the highest high reached." That is the **v1.1.0 profile** (BE @+1R, trail armed @+1.5R) — the exact stale profile that was already found hardcoded in `week_runner.py` and fixed 2026-06-11 (see `sops/equity/swing/v1.5.0.md:47-51`); the same drift survives in the skill. Three separate divergences: breakeven step (removed in v1.2.0 vs. still present), arming threshold (+1R vs +1.5R), trail width (2×ATR10 vs 1.5×ATR), plus *highest close* vs *highest high*. Step 5 also carries no engine guard, so it reads as applying to Engine R, which must **never** trail. **Consequence:** the LLM monitor gets two incompatible instructions in one file; whichever it anchors on decides real exits. **Fix (next enhancement round):** delete or engine-scope the Step 5 generic rule so the engine table at `:88-92` is the single source. Found 2026-08-05.
 
 - ~~9 stale tests in test_harness.py~~ — **FIXED 2026-06-09**: rewritten against the v3 API; suite 221 pass / 0 fail.
 - ~~`place_multileg_order` qty hardcoded to 1~~ — **FIXED 2026-06-09**: `qty` param plumbed tool→adapter→alpaca; validated ≥ 1. NOTE: live order with qty > 1 not yet exercised on paper (only qty=1 spread has been placed for real).

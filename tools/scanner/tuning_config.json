@@ -1,11 +1,17 @@
 {
-  "version": "",
-  "generated_by": "",
-  "generated_at": "",
-  "exclude_symbols": [],
-  "exclude_reason": {},
+  "version": "2026-06-30T01:42:55.931717+00:00",
+  "generated_by": "eod-review",
+  "generated_at": "2026-06-30T01:42:55.931740+00:00",
+  "exclude_symbols": [
+    "ROST",
+    "AAPL"
+  ],
+  "exclude_reason": {
+    "ROST": "Engine R rejected 2+ consecutive runs (June 28 dry-run, June 29 live): 5+ day continuing decline violates sharp-washout premise of mean-reversion. Stock hit new lows ($210.59). Exclude until daily close reversal confirms bounce.",
+    "AAPL": "Engine R: washout entry window expired (bounced +2.7% past entry limit of $277.22 by session time). Exclude until fresh 3+% 3-day washout pattern develops."
+  },
   "threshold_overrides": {},
   "risk_limit_overrides": {},
   "strategy_blacklist": [],
-  "notes": ""
+  "notes": "2026-06-29 (Mon) EOD: Zero-trade day. 400 scanned, 12 passed (10M/2R), 0 entered. Agent reviewed only 2 of 12 candidates (ROST+AAPL Engine R) \u2014 both correctly skipped. 10 Engine M candidates unreviewed (resource limitation, not scan issue). No threshold or risk changes needed \u2014 no trades, no losses, correct discipline on reviewed items. CAUTIOUS mode in down-trending market (SPY -1.02% vs SMA50, TR_ATR 1.16). Auto-revert ROST exclusion on confirmed daily close reversal. Auto-revert AAPL exclusion on fresh 3%+ washout above SMA150."
 }

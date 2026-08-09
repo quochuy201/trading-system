@@ -67,8 +67,6 @@ Signals:
 
 Action: Enter at market open. Don't wait. Strong catalysts drive immediate sustained moves that never pull back to entry.
 
-Example: COP Feb 6 — three analysts raised PT on same day ($115/$133/$114). Entered at open $103.87. Never pulled back. Hit target +2.0R in 8 days.
-
 ### MODERATE CATALYST → Watch first 2 hours, enter on strength
 
 Signals:
@@ -79,8 +77,6 @@ Signals:
 Action: Put on watchlist. Watch first 2 hourly bars:
 - If stock holds above open AND shows green bar with volume → ENTER
 - If stock fades below open in first 2 hours → SKIP today, revisit tomorrow
-
-Example: A single "Analyst raises PT" is real but not overwhelming. Wait to see if the market agrees before committing.
 
 ### WEAK / LATE CATALYST → Skip entirely
 
@@ -93,11 +89,9 @@ Signals:
 
 Action: Do not enter. No watchlist. Move on.
 
-Example: NVDA Feb 26 — "JP Morgan Raises PT" but stock already ran from $176 to $196 (+11%) in prior days. The PT raise followed the move. Price was 4.8% above SMA20. Entered and immediately crashed -$10. Should have been classified as LATE catalyst → skip.
-
 ### NO CATALYST = NO ENTRY
 
-If the Research agent's DD finds NO fresh catalyst (no earnings, no analyst action, no news event), the stock is a "technical-only setup." **Do not enter technical-only setups.** They have a >50% failure rate in backtesting (e.g., RTX Feb 23 — scanner-valid, first-hour confirmed, but no catalyst → stopped out -1R within 2 days).
+If the Research agent's DD finds NO fresh catalyst (no earnings, no analyst action, no news event), the stock is a "technical-only setup." **Do not enter technical-only setups.**
 
 A "catalyst" means a specific, datable event that changed the stock's outlook:
 - Earnings beat/miss in the last 5 trading days
@@ -106,12 +100,6 @@ A "catalyst" means a specific, datable event that changed the stock's outlook:
 - Sector-wide event (oil price spike for energy, chip demand for semis)
 
 "Stock is above SMA20 and RSI is 60" is NOT a catalyst. That's a technical setup. Skip it.
-
-### Why this matters:
-
-Feb 2026 tested mechanically — "wait for pullback to SMA20" missed COP (+$2,000 winner because it never pulled back) and still lost on NVDA (pulled back THROUGH support). The pullback approach doesn't work because strong catalyst stocks don't pull back.
-
-The correct approach: judge catalyst STRENGTH, not price distance from support. Enter strong catalysts NOW, skip weak ones entirely. And REQUIRE a catalyst — technical setups without news drivers have inferior odds.
 
 ### Step 3: Calculate Position Size (Conviction-Scaled)
 
@@ -125,14 +113,10 @@ The catalyst score determines BOTH the target R:R AND the risk per trade:
 
 Call `calc_position_size(account_value, risk_pct, entry_price, stop_loss)`
 
-Use the risk_pct from the table above based on catalyst score.
-
 **Position size formula:**
 ```
 qty = min(risk_budget / risk_per_share, available_cash / entry_price)
 ```
-
-The risk % controls exposure. No separate concentration cap needed — available cash and max positions (5) naturally diversify.
 
 ### Step 4: Build the Trade Plan
 
@@ -141,15 +125,24 @@ Construct the plan with:
 - **Stop loss**: Below invalidation level (1.5×ATR below entry)
 - **Take profit**: Based on catalyst score (2:1 / 2.5:1 / 3:1 — see Step 3)
 - **Trailing stop**: After +1R profit, trail below highest close:
-  - Stocks with ATR% > 3%: trail at 2×ATR (volatile, need room)
-  - Stocks with ATR% ≤ 3%: trail at 1.5×ATR (tighter for calmer stocks)
-- **Time stop**: 15 trading days max hold (swing trades that don't move are dead money)
+  - Stocks with ATR% > 3%: trail at 2×ATR
+  - Stocks with ATR% ≤ 3%: trail at 1.5×ATR
+- **Time stop**: 15 trading days max hold
 
 ### Step 5: Execute
 
 1. Call `save_trade_plan(plan)` — persist the plan BEFORE placing orders
+
+   **⚠️ CRITICAL — save_trade_plan field names:**
+   - The tool accepts fields from the plan JSON schema. `entry_limit_price` (for limit orders) is valid; **`entry_price` is NOT** — it errors with `unexpected keyword argument 'entry_price'`. The entry fill price belongs in `save_transaction`, not the plan.
+   - **ALL fields must be populated** for the monitor agent to work. Minimum complete plan:
+     ```json
+     {"plan_id":"sym-strat-date","symbol":"XXX","side":"buy","strategy":"equity/swing","sop_version":"vX.Y.Z","quantity":438,"entry_order_type":"limit","entry_limit_price":16.13,"stop_loss":14.96,"take_profit":16.78,"rationale":"..."}
+     ```
+     If `take_profit` is `0.0` or `time_stop`/`trailing_stop` are unset, the monitor agent cannot assess target hits or time-outs — the exit profile becomes guesswork. Always set every field, even when null.
+
 2. Call `place_order(symbol, side, order_type, quantity, ...)` — entry order
-3. Record the transaction: `save_transaction(tx)`
+3. Record: `save_transaction(tx)` with `plan_id` linked
 4. If entry fills, place protective stop-loss order
 5. Record stop-loss transaction
 
@@ -159,7 +152,7 @@ Construct the plan with:
 
 | Condition | Order Type |
 |-----------|-----------|
-| Score >= 80 AND volume ratio > 2x | Market order (strong momentum, don't miss) |
+| Score >= 80 AND volume ratio > 2x | Market order |
 | Price at support level | Limit at support |
 | Price between support and entry zone | Limit at midpoint |
 | Price above entry zone | **DO NOT ENTER** — missed the move |
@@ -170,15 +163,13 @@ Construct the plan with:
 
 | Order Type | Partial Fill Action |
 |-----------|-------------------|
-| Entry (buy) | Accept partial. Adjust stop-loss quantity to match filled qty. |
-| Stop-loss | **RETRY until completely filled.** This is critical — never leave unprotected shares. |
+| Entry (buy) | Accept partial. Adjust stop-loss qty to match filled qty. |
+| Stop-loss | **RETRY until completely filled.** Never leave unprotected shares. |
 | Take-profit | Accept partial. Trail remainder. |
 
 ---
 
 ## Risk Gates (Hard Stops)
-
-These are NON-NEGOTIABLE. No override, no exceptions:
 
 | Gate | Check | Fail Action |
 |------|-------|-------------|
@@ -223,16 +214,15 @@ After execution, report:
 
 ## Operator Reporting (MANDATORY)
 
-Immediately AFTER each entry order fills, call `notify_buy` so the operator
-sees the buy in real time:
+Immediately AFTER each entry order fills, call `notify_buy`:
 
 ```
 notify_buy(symbol, quantity, fill_price, plan_id)
 ```
 
 - Call once per filled entry, using the actual fill price and the saved plan_id.
-- Reporting only — fire-and-forget; never gate or retry execution on it.
-- Rejected/unfilled candidates do NOT get a notify_buy.
+- Fire-and-forget — never gate or retry execution on it.
+- Rejected/unfilled entries do NOT get a notify_buy.
 
 ---
 
@@ -242,7 +232,7 @@ notify_buy(symbol, quantity, fill_price, plan_id)
 2. **Never chase.** If price has moved past the entry zone, skip it.
 3. **Always save the plan first.** Persist before placing orders (crash recovery).
 4. **Stop-loss is sacred.** Always place a protective stop immediately after entry fills.
-5. **One trade at a time.** Complete the full sequence (plan → enter → stop) before starting the next.
+5. **One trade at a time.** Complete plan → enter → stop before starting the next.
 6. **Log everything.** Every order, every fill, every rejection — all recorded.
 7. **When in doubt, don't trade.** Missed opportunities cost nothing. Bad trades cost money.
 
@@ -259,13 +249,13 @@ positions. Work through the steps below in order.
 Research must have supplied:
 - Symbol, engine (A or B), structure type, grade (B+ / A / A+)
 - Phase 1 vol routing (IVR zone, SPY regime)
-- Phase 3 score (≥ 70; reject anything below 70 without sizing)
+- Phase 3 score (≥ 70; reject anything below 70)
 
 If any of these is absent, send back to Research. Do not guess.
 
 ### Step O-2: Select structure, strikes, and expiry
 
-Apply `sops/options/vol-edge/v1.0.0.md` Phase 2 rules. Key selection rules are:
+Apply `sops/options/vol-edge/v1.0.0.md` Phase 2 rules.
 
 **Structure from vol signal × regime (Engine A):**
 
@@ -275,9 +265,8 @@ Apply `sops/options/vol-edge/v1.0.0.md` Phase 2 rules. Key selection rules are:
 | IVR > 75 (rich) | DOWNTREND | Bear call spread |
 | IVR < 25 (cheap) | UPTREND or DOWNTREND | Debit vertical |
 
-**Engine B structures:** momentum debit spread (RS63-driven continuation) or single-leg long
-(IVR < 50 only; prefer debit spread when IVR ≥ 50). Requires a confirmed continuation setup —
-see SOP Phase 2 for the three accepted setups.
+**Engine B:** momentum debit spread (RS63-driven continuation) or single-leg long
+(IVR < 50 only; prefer debit spread when IVR ≥ 50). Requires a confirmed continuation setup.
 
 **Strike selection:**
 - Credit spread short strike: **0.20–0.25 delta**; move to **0.15 delta** when IVR > 90.
@@ -292,7 +281,7 @@ see SOP Phase 2 for the three accepted setups.
 | Standard | $10k–$25k | $5 |
 | Pro | $25k+ | $5+ |
 
-**DTE windows** (never open a position that already violates these):
+**DTE windows** (never open a position that violates these):
 
 | Structure | DTE window | Hard floor |
 |---|---|---|
@@ -301,43 +290,37 @@ see SOP Phase 2 for the three accepted setups.
 | Momentum debit spreads (Engine B) | 60–90 DTE | — |
 | Single-leg longs (Engine B) | 60–120 DTE | — |
 
-For full parameter tables and earnings-vs-expiry rules, see SOP Phase 2.
+For full parameters and earnings-vs-expiry rules, see SOP Phase 2.
 
 ### Step O-3: Run entry gates (mandatory before sizing or order placement)
 
-All Phase 5 hard gates must pass. A single failure → **skip today**, log `action="gate_fail"`
-with the rule ID.
+All Phase 5 hard gates must pass. A single failure → **skip today**, log `action="gate_fail"` with the rule ID.
 
 | Gate | Rule ID |
 |---|---|
 | SPY regime agrees with trade direction | `HARD_SPY_REGIME` |
-| Stock's own EMA20/SMA50 aligns with structure | `HARD_STOCK_REGIME` |
-| Engine A: IVR in correct zone · Engine B: continuation setup confirmed | `HARD_IVR_ZONE` / `HARD_CONTINUATION` |
-| Confirmed earnings entirely outside expiry window (skip if earnings date unknown) | `HARD_EARNINGS_CLEAR` |
+| Stock's EMA20/SMA50 aligns with structure | `HARD_STOCK_REGIME` |
+| Engine A: IVR in zone · Engine B: continuation confirmed | `HARD_IVR_ZONE` / `HARD_CONTINUATION` |
+| Earnings entirely outside expiry window (skip if unknown) | `HARD_EARNINGS_CLEAR` |
 | Current time ≥ 9:45 ET | `HARD_TIME_GATE` |
-| Net spread bid-ask ≤ 20% of mid (single-leg: option bid-ask ≤ 20% of mid) | `HARD_SPREAD_WIDTH` |
-| Portfolio heat after this trade ≤ 6% of live equity | `HARD_HEAT_CAP` |
-| Single-leg sub-bucket heat ≤ 3% of live equity (single-leg entries only) | `HARD_SINGLELEG_LEASH` |
+| Net spread bid-ask ≤ 20% of mid | `HARD_SPREAD_WIDTH` |
+| Portfolio heat ≤ 6% of live equity | `HARD_HEAT_CAP` |
+| Single-leg sub-bucket ≤ 3% | `HARD_SINGLELEG_LEASH` |
 
-Soft-gate failures (`SOFT_IVHV_CONFIRM`, `SOFT_PUTSKEW`, `SOFT_OPTION_VOLUME`, `SOFT_SOCIAL`)
-do not cancel the trade — they trigger a one-step conviction reduction: A+ → A risk_pct,
-A → B+ risk_pct. Log with `action="gate_fail"` and the size adjustment.
+Soft-gate failures (`SOFT_IVHV_CONFIRM`, `SOFT_PUTSKEW`, `SOFT_OPTION_VOLUME`, `SOFT_SOCIAL`) do not cancel — they reduce conviction one step: A+ → A risk_pct, A → B+ risk_pct.
 
 ### Step O-4: Size the position (conviction-scaled)
 
-Read **live equity `E` from `get_account` at order time** — never use a cached value.
+Read **live equity `E` from `get_account` at order time**.
 
 ```
-risk_dollars      = E * risk_pct                       # E = live equity from get_account
-
+risk_dollars      = E * risk_pct
 max_loss_per_unit = (spread_width - credit) * 100      # credit spreads
-                  = debit_paid * 100                   # debit spreads / single-leg
-
-contracts         = floor(risk_dollars / max_loss_per_unit)   # must be >= 1, else SKIP
+                  = debit_paid * 100                    # debit / single-leg
+contracts         = floor(risk_dollars / max_loss_per_unit)
 ```
 
-If `contracts < 1` after the floor: **SKIP**. Log `rules_triggered: ["SIZE_TOO_SMALL"]`.
-Do not round up; a sub-1-contract result means the account is below the practical minimum.
+If `contracts < 1`: **SKIP**, log `SIZE_TOO_SMALL`.
 
 **Conviction `risk_pct` by grade:**
 
@@ -345,49 +328,21 @@ Do not round up; a sub-1-contract result means the account is below the practica
 |---|---|---|
 | B+ | 70–79 | ~1.5% |
 | A | 80–89 | ~3% |
-| A+ | 90–100 | Up to full heat headroom (no fixed cap) |
+| A+ | 90–100 | Up to heat headroom |
 
-"Full heat headroom" for an A+ trade means whatever remains between current portfolio heat
-and the 6% cap. If existing positions already consume 4% heat, max available is 2%.
-
-**Backstops — HELD, non-negotiable:**
-
-- **6% portfolio heat cap:** `sum(max_loss_per_unit × contracts for all open positions) / E ≤ 6%`
-- **Single-leg sub-leash — 3%:** total open max-loss across single-leg positions only ≤ 3% of equity
-- **Manual circuit breakers (`OPERATING_MANUAL.md §4`):**
-  - Realized P&L ≤ −3% in one day → HALT, close all, activate kill switch
-  - Drawdown from peak ≥ −6% in 5 trading days → HALT for the week
-  - Drawdown from peak ≥ −10% in any rolling 20 days → HALT indefinitely
-- **Kelly cap (`OPERATING_MANUAL.md §3.4`):** `size_cap_pct = max(0, min(risk_pct, 0.25 × kelly_pct))`
-  Use `size_cap_pct` as the effective `risk_pct` when it is smaller than the conviction target.
-
-Full sizing-framework rationale in SOP Phase 4 and `OPERATING_MANUAL.md §3`.
+**Backstops (non-negotiable):**
+- **6% portfolio heat cap:** `total_max_loss / E ≤ 6%`
+- **Single-leg leash:** max 3% of equity in single-leg max-loss
+- **Manual circuit breakers (`OPERATING_MANUAL.md §4`):** DLL → HALT, drawdown → HALT
+- **Kelly cap:** `size_cap_pct = max(0, min(risk_pct, 0.25 × kelly_pct))`
 
 ### Step O-5: Place the order
 
-**Multi-leg spreads (bull put, bear call, debit vertical, momentum debit spread):**
+**Multi-leg spreads:** single limit order at net mid. Credit spreads start $0.05–$0.10 above mid; debit spreads start at mid. Partial fill → cancel remaining legs immediately (never leave an unbalanced leg).
 
-- Pass the `contracts` count from Step O-4 as the order's `qty` (number of spreads).
-  Never leave it defaulted — a sizing decision that isn't in the order didn't happen.
-- Place as a **single limit order at the net mid price — NEVER use market orders on spreads.**
-  The bid-ask gap makes market fills unacceptable.
-- **Credit spreads:** start $0.05–$0.10 better than mid (collect slightly more than mid).
-  If unfilled after 5 minutes, relax to mid. Do not go below mid.
-- **Debit spreads:** start at mid. If unfilled after 5 minutes, relax to $0.05–$0.10 above mid.
-  Do not chase beyond $0.10 over mid — if still unfilled, cancel and reassess liquidity.
-- **Partial fill:** cancel the remaining legs immediately. A partial fill on a spread converts
-  defined-risk into undefined-risk — do not hold an unbalanced leg.
+**Single-leg longs:** limit at or near mid. Not filled after 10 min → cancel and reassess.
 
-**Single-leg longs:**
-
-- Place a **limit order at or near the mid.** Adjust by one tick if the market is moving;
-  do not chase by more than $0.05 above ask.
-- If unfilled after 10 minutes: cancel and reassess whether the thesis still holds.
-
-**On fill — log immediately** via `log_decision(action="enter", ...)` with all
-`OPERATING_MANUAL.md §6` base fields plus the options-specific fields required by SOP Phase 7:
-`iv_rank`, `iv_hv`, `delta`, `theta`, `vega`, `structure`, `engine`, `max_profit`, `max_loss`,
-`breakeven`, `dte`. Set `exit_reason` reserved field to `null`.
+**On fill — log** via `log_decision(action="enter", ...)` with all base fields plus options fields: `iv_rank`, `iv_hv`, `delta`, `theta`, `vega`, `structure`, `engine`, `max_profit`, `max_loss`, `breakeven`, `dte`. Set `exit_reason` to `null`.
 
 ---
 
@@ -396,39 +351,31 @@ Full sizing-framework rationale in SOP Phase 4 and `OPERATING_MANUAL.md §3`.
 ### Equities (Day Trade)
 - Market hours only (9:30-16:00 ET)
 - No entries after 11:30 AM ET (per SOP)
-- All positions must close by 3:45 PM ET
+- All positions close by 3:45 PM ET
 
 ### Swing Trade (Equities)
-- Follow `sops/equity/swing/` for engine-specific entry/exit rules and parameters
-- **Entry levels**: 
+- Follow `sops/equity/swing/` for engine-specific entry/exit rules
+- Entry levels:
   - Engine M: next-open market order (skip if gap up >5% or down >3%)
-  - Engine R: limit order at 0.5×ATR10% below previous close (day-only)
-- **Exit levels**: Consult current SOP for engine-specific profit targets and stop losses
-  - Engine M: Profit target_NONE_ (trail 2×ATR10 below highest close after +1R)
-  - Engine R: Profit target = volatility-regime-adjusted resting intrabar limit (see SOP)
-  - Both engines: Stop loss = 2.5×ATR10 below fill (close-based)
-- **Position sizing**: Follow conviction-scaled sizing from Step 3 of Trade Planning Process
-- **Regime awareness**: Adjust conviction based on market regime from Risk Manager
+  - Engine R: limit at 0.5×ATR10% below previous close (day-only)
+- Exits per current SOP (trail/scale-out/target/stop)
+- **Position sizing**: conviction-scaled from Step 3
+- **Regime awareness**: adjust conviction per Risk Manager
 
 ### Options
-- See "Options Execution — Vol-Edge SOP" section above for the full flow.
-- This SOP is a **swing strategy** — positions are held overnight; no mechanical end-of-day
-  flatten. The Monitor agent runs an exit check at 15:30 ET (see SOP Phase 6).
+- See Vol-Edge SOP section above. Swing strategy — overnight holds; no EOD flatten.
+- Monitor runs exit check at 15:30 ET (SOP Phase 6).
 
 ### Crypto
-- 24/7 market — check liquidity before large orders
-- Size 50% smaller than equities (higher volatility)
-- Use limit orders — spreads can be wide
+- 24/7 — check liquidity before large orders. Size 50% smaller. Use limit orders.
 
 ### Prediction Markets
-- Limit orders at your target probability price
-- Scale in: 1/3 position initially, add if price improves
-- Never > 10% of prediction bankroll on one contract
+- Limit at target probability. Scale in: 1/3 initially. Never > 10% of bankroll.
 
+---
 
 ## Decision Logging
 
-Call `log_decision` at these points:
-- **Before placing an entry order**: action="enter", rules_triggered=entry signals, reasoning=thesis, market_context=current price/RSI/volume
-- **When adjusting stops**: action="adjust", rules_triggered=why, reasoning=new level and rationale
-- **When skipping a trade (risk rejected)**: action="skip", rules_triggered=which risk check failed
+- **Before entry order**: action="enter", rules_triggered=signals, reasoning=thesis, market_context=price/RSI/volume
+- **Stop adjustments**: action="adjust", rules_triggered=why, reasoning=new level
+- **Skipped trade (risk rejected)**: action="skip", rules_triggered=which gate failed

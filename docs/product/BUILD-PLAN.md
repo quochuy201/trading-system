@@ -1,0 +1,451 @@
+# Trading System — Master Build Plan
+
+**One reconciled plan: what we build, in what order, and what's blocking each wave.**
+Consolidates `ROADMAP.md` (12 features + research queue R1–R5), the vault agenda
+(`Hermes-Brain/05-Projects/trading-system-agenda.md`), the confirmed Pattern C
+architecture, and the governance-gate design corpus into a single buildable sequence.
+
+**Author:** Claude (reconciliation pass) · **Date:** 2026-07-25 · **Status:** ✅ **RATIFIED — D1–D7 all decided (2026-07-25). Wave 0 is ready to build.**
+**Rule respected:** this is a *backlog + sequencing* artifact, not per-feature formal design. Each feature still gets its spec→design→plan before it's built (see §5). Nothing here invents design detail that wasn't already in the source docs.
+
+---
+
+## 0. How to read this doc
+
+Three status buckets, kept strictly separate so we never rebuild the last mistake:
+
+- ✅ **DECIDED** — ratified by the owner or grounded in a logged decision. Buildable once its wave opens.
+- ⚠️ **NEEDS RATIFICATION** — real fork with a recommendation. One sign-off pass (§2) unblocks it.
+- ⛔ **QUARANTINED** — written by a previous agent *without discussion* (per the agenda's CONTAMINATED list). Do **not** treat as decided. Re-derive in the feature's design phase.
+
+---
+
+## 1. Confirmed foundation (✅ DECIDED — do not relitigate)
+
+These are locked from the Jul 11–19 discussions. Everything below builds on them.
+
+- **Pattern C** — `Phase 1a (Python: scanner/risk/regime/episodic/market-data) → 1b (LLM+tools: news/X/sentiment enrichment) → 2 (assemble TradingBrief) → 3 (LLM: ONE decision call, brief→TradePlan) → 4 (Gate validates) → 5 (Python broker executes if APPROVED)`.
+- **Safety thesis** — *LLM reasons; deterministic code gates; deterministic code executes.* Box the LLM in layers 3–4; Perception (1), Risk (5), Audit (6) are code.
+- **Engine M/R → strategy families** (M momentum, R reversion, + future), expressed as **config, not a plugin framework** — the pluggable abstraction is deferred until a 3rd strategy needs it (see §1.5).
+- **Binary-gate scanner → z-scored cross-sectional factor ranking**.
+- **Tool contracts** — `ToolContract` ABC + `ToolResult` + auto-discovery registry → thin `server.py`.
+- **DB stays SQLite in dev** (D-R1.1, logged 2026-07-09), swappable behind the Repository pattern; DuckDB/columnar deferred until proven profitable.
+- **Roles & process** — Claude Code writes spec→design→plan→build; Hermes operates/logs/analyzes/feeds back. `OPERATING_MANUAL.md` is the constitution and wins on conflict.
+
+---
+
+## 1.5 Consolidated model & vocabulary (✅ locked 2026-07-25)
+
+The whole trick to not confusing ourselves — and not over-engineering — is keeping **two kinds of things separate**:
+
+**A) The pipeline = fixed stages (the container).** Built once, identical for every strategy:
+
+```
+Scan → Score → Decide → Size → Gate → Execute → Monitor
+```
+
+**B) Strategy families = pluggable content (the rules).** M, R, vol-edge. They do **not** add stages — they fill in the blanks *inside* stages (which factors, entry, exit, sizing, eligibility, gate_rules).
+
+The **governance gate** is the guardrail every strategy's output must pass, regardless of which strategy produced it.
+
+> **strategies are the content · the pipeline is the container · the gate is the guardrail**
+
+**Component → stage map (our real modules):**
+
+| Component | Role | Stage |
+|---|---|---|
+| **Scanner** (`tools/scanner/filters.py`) | quantitative scoring — factors, mechanical | Scan + Score |
+| **Research** (`skills/research/SKILL.md`) | qualitative enrichment (news/sentiment) → feeds the decision | Score → Decide |
+| **Capital-aware sizing** (new, small, deterministic) | filter to affordable, rank by return-on-capital, size fixed-fractional | Size |
+| **Governance gate** (`tools/governance/`) | deterministic risk check before the broker | Gate |
+| **Strategy family** (SOP + a small config record) | the *rules*: factors/weights, entry, exit, sizing, eligibility, gate_rules | cuts **across** stages |
+
+Scanner + Research together = the **signal-scoring stage**.
+
+**Vocabulary (locked — use these exact terms; never "alpha model"):**
+
+- **scanner** — the mechanical quantitative scorer.
+- **research** — the LLM qualitative enrichment + DD.
+- **signal-scoring stage** — scanner + research together (produces ranked candidates).
+- **strategy family** — a full playbook (M, R, vol-edge); config, not a stage.
+- **governance gate** — the deterministic risk guardrail.
+- **alpha** — reserved for edge / excess-return only, **never** a component. The term "alpha model" is **retired** (it was overloaded across the docs — signal stage vs strategy family).
+
+**⭐ INVARIANT — ONE execution choke point.** Exactly **one function reaches the broker**. Order kinds differ by *parameters*, not by *function*: helpers build a typed `OrderRequest` (1 leg = equity, N legs = spread), one `execute_order()` runs `validate → kill switch → gate → broker → record`. MCP tool names/signatures stay ergonomic for the agent (many tools), but they are **thin wrappers over one path**. Vendor branching lives *below* the choke point, in the broker adapter.
+
+*Why:* today three routes reach the broker (`place_order`, `place_multileg_order`, `activate_kill_switch`'s close-all) — guarding each is fragile, and a fourth can appear silently. **"Every door is guarded" is weaker than "there is only one door."** Enforced by a test asserting `broker.place_*` is called from exactly one module. Emergency liquidation stays possible via an explicit, logged `intent=LIQUIDATE` — declaring an exemption instead of hiding in a separate code path.
+
+**Verdict (lean — do NOT over-engineer):**
+
+1. Keep the pipeline **thin and fixed**; it mostly exists already as the agents (research / trader / monitor / risk). Make stage boundaries explicit — don't rebuild.
+2. Only **two genuinely new pieces** are worth building: the **governance gate** (Wave 0) and a **small capital-aware sizing/selection step** (Wave 2). Everything else is refactor.
+3. Express strategies as **config** (SOP + a small `StrategyConfig` record), not a class hierarchy. M and R are two config entries.
+4. **Do NOT build the pluggable-strategy registry/abstraction until a 3rd strategy needs it** (YAGNI). Two strategies = a config file, not a framework. This is the main over-engineering trap — hold the line.
+
+---
+
+## 2. Decisions that gate the build (⚠️ ratify these in ONE pass)
+
+These are the *only* things standing between "plan" and "start building." Each has my recommendation; your job is to confirm, edit, or reject. (These are grounded in the clean design docs — they are **not** the agenda's quarantined "5 open questions.")
+
+| ID | Decision | Options | Recommendation |
+|----|----------|---------|----------------|
+| **D1** | **Governance-gate rule set** — build the full 17-rule v2 design, or ship a math-only P0 subset first? | (a) all 17 incl. Tier-4 source-verification; (b) Tier 1–3 math/portfolio rules now (10 rules), Tier-4 catalyst-grounding after pipeline contracts exist | ✅ **DECIDED (b)** — ship the math/portfolio gate first (immediate safety win); add Tier-4 when Wave 1's `TradingBrief` lands. |
+| **D2** | **Risk config — where limits live + how dev/live switch** | one file vs env-selected files; layered store vs simple | ✅ **DECIDED** — environment-selected config: `risk_limits.dev.yaml` + `risk_limits.live.yaml`, values as **% of equity** (account-size-invariant), **git-versioned** (no custom versioning). One env switch (`TRADING_ENV`) **bound to broker mode** so limits + money-target can't desync; **fail-safe to dev**. Hard limits are human-owned; automation writes only `tuning_config.json` and **never** the risk files (that's how "safety only-tightens" is enforced — by ownership, not a rule engine). No layered resolver/overlays — deliberately lean. |
+| **D3** | **Data source** — provider + smooth-switch design | keep yfinance / add Alpaca / abstract for swappability | ✅ **DECIDED** — canonical `MarketDataSource` interface + per-provider **adapters** (capability-flagged), env-selected: **yfinance = daily/backtest only**, **Alpaca = daily + intraday + quotes for live/monitoring**; paid feeds deferred. LLM authors adapters at **build-time**, never in the runtime data path. **Monitoring runs on Alpaca (data/execution consistency), free IEX to start, paid SIP deferred.** Full detail → **D3 design notes** below §2. |
+| **D4** | **Scanner rebuild timing** (binary gates → z-scored factors) | now / Wave 2 / defer | ✅ **DECIDED** — **build deprioritized to *after* data foundation (S1/S3) + edge validation (D7)**: the binary scanner works, it's not a safety fix or go-live blocker, and z-scoring on biased/stale data is garbage-in. **Research starts now** (R1 doc, S4 track) so the design is ready. Lean scope when built: **4–6 economically-justified factors, OOS-validated — not a 14-factor optimizer**. Capital-aware selection is separable and ships earlier. |
+| **D5** | **Go-live horizon** — when do we trade real capital? | date-based / feel-based / **measured gate** | ✅ **DECIDED — a measured ladder, not a date.** ALL must hold: (1) governance gate enforced in code (Wave 0); (2) **D7** edge validation passed; (3) **≥100 closed trades** with **positive expectancy in R**, spanning >1 regime (30 = noise; 100 = minimum where edge shows; 200 = convincing); (4) paper within **~15–20%** of backtest metrics (divergence ⇒ the backtest lied); (5) **then ramp** — live at minimum size for ~30 trades, scale only if live matches paper. **⚠️ BLOCKED: we cannot currently measure any of this** — see "Go-live measurement" below. |
+| **D6** | **Options candidate identification** — REPLACES the old "authorize XSP" framing | authorize XSP / unify scanning / defer | ✅ **DECIDED — XSP DROPPED entirely** (see below), fix is **unified cross-asset candidate identification**: options candidates are found in the **same scan/search phase** as equity and index, not via a separate bolt-on path. Root cause of the 34-session drought = **buying power applied as a late veto instead of a selection input** → fix = `capital-aware-selection` ranking by return-on-capital across *all* asset classes. **Options-data feed = the one genuine prerequisite** (can't compute `credit/BPR` without live option prices). Evidence: [[2026-07-25-Capital-Aware-Selection-Research]]. |
+| **D7** | **Edge-validation gate** — prove edge before expanding strategies / going live? | adopt as a hard gate / skip | ✅ **DECIDED — adopt as a hard gate.** Controlled OOS experiment, identical data/dates across arms: the full system must beat **(a) buy-and-hold** and **(b) a single-agent baseline**, **net of transaction costs**, across **≥1 bull and ≥1 bear/regime-shift window**. Judge on **risk-adjusted** return (Sharpe/Sortino + max drawdown) and **expectancy in R** — not raw return. Arm (b) is the coordination-breakeven test: if 1 agent matches 5 net of cost, the multi-agent overhead isn't earning its keep. Turns the literature's skepticism (StockBench; KDD long-run) into a checkpoint, not a hope. **Blocked by `backtest-engine`** (needs cost model + benchmark/single-agent arms) **and `go-live-metrics`** (needs R per closed trade). Gates **Wave 3** + go-live (D5); does **not** block Waves 0–2. Deeper design deferred to that phase. Source: [[2026-07-25-Direction-Validation-Research]]. |
+
+---
+
+### D6 — Unified cross-asset candidate identification (✅ decided 2026-07-25)
+
+**⛔ XSP is DROPPED from the plan — do not reintroduce it as a "fix."** Recorded so the 33×-escalated proposal doesn't resurface:
+
+- XSP does **not** improve candidate *selection* — it only changes what's affordable.
+- XSP is **~the same size as SPY** (both ≈1/10th SPX), so SPY→XSP buys almost no sizing advantage, and **SPY is far more liquid** (XSP is thin — our own 07-15 note flagged fill quality). Its only real merits are secondary (cash-settled/European = no early assignment; Section 1256 60/40 tax).
+- Critically, adopting XSP would have been a **strategy change in disguise**: "repeatedly sell vol on ONE index underlying" instead of "scan many names for mispriced vol." That's a *different* strategy (index-vol harvesting), not a repair of the existing one. **If we ever want index-vol, it enters as its own strategy family in Wave 3 — never as a patch.**
+
+**The actual design:** **one scan/search phase covering equity + options + index together.** Options candidates are identified in the same phase as everything else, not through a separate parallel path (which is what made the options track diverge and starve).
+
+```
+ONE scan/search phase
+   ├─ universe → factors/signals            (shared)
+   ├─ per candidate: which strategy families are eligible?   ← strategy routing
+   │     e.g. AAPL → equity-swing-M | options-vol-edge (if IVR/liquidity qualify)
+   ├─ price each eligible (candidate × strategy) pair        ← cost / BPR
+   └─ capital-aware ranking by return-on-capital ACROSS asset classes
+         → best AFFORDABLE opportunity wins, equity or options
+```
+
+**Why this fixes the drought properly:** the account stops being forced to choose *within* an asset class. On a $10k account a cheap equity swing may simply out-rank an unaffordable options spread — and that's the correct answer, arrived at by the same metric (return per dollar of buying power) rather than by two disconnected pipelines each starving separately.
+
+**Consistent with the Jun-27 owner direction** ("system scans and analyzes tickers, identifies which strategies suit which ticker — equity or option — proposes a trade strategy for each"). Implementation lands across `capital-aware-selection` (ranking) + `strategy-routing` (eligibility) — **not a new subsystem**.
+
+**🔴 CORRECTION (2026-07-25) — the options data feed is NOT missing. It is built and unwired.**
+
+Verified in code: `AlpacaOptionsSource` (`tools/data/options_source.py`) plus **five MCP tools** — `get_options_chain` (`server.py:1465`), `get_options_market_data` (:1514), `calc_iv_rank` (:1573), `get_put_skew` (:1697), `calc_expected_move` (:1766) — all smoke-tested live on Alpaca paper per `PROJECT_STATUS.md`.
+
+**The consumer can't reach them.** The running `options-trader` skill exists **only in the Hermes deployment** (`Hermes/skills/options-trader/`), has **no counterpart in this repo**, and references **zero** of those tools (verified `grep -c` = 0). Its IVR gate therefore falls back to web search → stale/contradictory reads → the 34-session drought and 6 escalations for a feed that already exists.
+
+```
+REPO            AlpacaOptionsSource + 5 MCP tools  ──✗──  no options agent
+HERMES DEPLOY   options-trader skill (IVR gate)    ──✗──  no options tools
+```
+
+**So:** the **FlashAlpha escalation is unnecessary**; the real defect is **deployment divergence**. Handled by `data-source-adapters` Task 7 (a reachability test — *capability that exists but is unreachable must fail a test, not a quarter of trading sessions*), with the broader repo-vs-Hermes skill reconciliation deferred to `deployment` (parked).
+
+---
+
+### D3 — Data-source design notes (✅ decided; detail for the design phase)
+
+**Decision:** a canonical `MarketDataSource` interface + one thin **adapter per provider** (anti-corruption layer). Downstream — scanner, monitor, backtest — sees only our canonical `Bar`/`Quote` types, never a provider's raw response. Swapping providers = write one new adapter + flip `TRADING_ENV`; nothing else changes. (Seam already started: `MarketDataSource` ABC + factory.)
+
+**Two data roles — the organizing principle (different sources by design):**
+
+- **Research / historical** (premarket scan, backtest) — **provider-independent**; pick for quality/cost (yfinance now, paid vendor later). Does NOT need to match the execution venue.
+- **Live / monitoring** (open positions, stops, exits, current price) — **must come from the execution broker's own feed**, because those marks are what our positions, fills, stops, and P&L are computed against. This feed **follows the broker**: Alpaca today; switch brokers later → monitoring switches with it automatically, no separate decision. Maps to existing abstractions: **broker adapter owns live marks**, **`MarketDataSource` owns historical bars**. In backtest the "broker" is the **`SimulationBroker` replaying history** → monitoring reads from it → same principle, zero special-casing.
+- Timeframe note: yfinance is **daily-only** (fine for the research role), so it can never serve the live/monitoring role regardless of venue.
+
+**Provider facts (verified vs Alpaca docs, 2026-07):**
+
+- Alpaca serves **1-min → 12-month bars + live quotes/trades for *any* symbol**. Free tier = **IEX** feed (partial volume); recent full-volume **SIP** needs the paid Algo Trader Plus plan. Rate limits on bulk pulls → keep the **nightly-ETL-to-local-store** pattern we already use.
+- **Full universe = Alpaca Assets API** (master tradable list). The **movers/screener** endpoint is only a dynamic *subset* (top gainers/most-active) — a bonus for dynamic candidates (R1-S2), **not** the only access. (Corrects the "Alpaca only gives top movers" impression.)
+
+**Design rules (keep it lean):**
+
+- Interface models **what WE need** (`get_daily_bars`, `get_intraday_bars`, `get_last_quote`, `get_universe`, maybe `get_movers`) — NOT a model of every provider's API (that bloats to the union of all APIs and fails). Extend only when a real provider forces it.
+- **Capability flags** per adapter (yfinance = daily only; Alpaca = all). The system picks the right adapter for the phase.
+- **Env-bound** (same `TRADING_ENV` switch as broker + risk config): dev/backtest → yfinance/cached; live/monitoring → Alpaca. Paid feeds (SIP / Polygon / Databento) deferred until profitable.
+
+**LLM role — same principle as the gate:** **build-time only.** Claude Code authors/maps each adapter + tests from the provider's docs. **NEVER in the runtime data path** — data fetch/normalization is deterministic, tested code; a hallucinated field mapping = a wrong price = a wrong trade. LLM builds the adapters; code runs them. Reject any "LLM adapts to any API at runtime" idea — that's the trap the adapter pattern exists to avoid.
+
+**RESOLVED (2026-07-25):** **the live/monitoring feed is always the execution broker's own data** (Alpaca today; whatever broker we trade through tomorrow — it follows the broker, no separate choice) → **data/execution consistency**: positions, fills, and watched prices come from one venue, so there's no "price I saw ≠ price I filled at" gap that manufactures phantom exits. For Alpaca specifically: **start on the free IEX feed** (fine for price/stop/target/exit checks — the level is the level); **defer paid SIP** until volume accuracy (RVOL) actually demands it. Options monitoring needs a separate options-quote tier (OPRA) — same "start free, upgrade only if needed" rule; flag at the options-monitoring design.
+
+---
+
+### Go-live measurement — data assessment (2026-07-25) ⚠️ THE CLOCK IS NOT RUNNING
+
+**Audit of `tools/trading.db` (actual query, not inspection of schema):**
+
+| Check | Result |
+|---|---|
+| Transaction rows | 22 |
+| Rows with `price = 0.0` (**no fill price**) | **13 of 22** |
+| Plan IDs with both entry + exit (round trips) | 7 |
+| **...of those, R-computable (valid prices + stop)** | **1** |
+| `performance_metrics` / `journal_entries` / `portfolio_snapshots` | **0 rows each** |
+
+**Verdict: NOT enough — and it's not a sample-size problem, it's a capture bug.** We are effectively at **~1 measurable trade, not 22**. Worse: **the counter isn't running** — continuing to paper trade as-is adds *zero* measurable trades, because fills are never recorded. Every week unfixed is a week of unmeasurable trading. This makes it **more urgent than its size suggests**.
+
+**What's already right (don't redesign):** `trade_plans` captures `stop_loss`, `take_profit`, `entry_limit_price`, `strategy`, `sop_version`, rationale → **R is computable in principle**, and every transaction links to a plan (0 orphans). The schema is sound.
+
+**The four defects:**
+
+1. **Fill prices never recorded** — statuses are `pending_new`/`accepted` (order *acknowledgements*, not fills); nothing writes back after execution. **The critical one** — without a fill price there is no P&L and no R, ever, retroactively.
+2. **No fill-completion fields** — no `filled_qty` / `filled_avg_price` / `filled_at`; can't even tell filled vs partial vs cancelled.
+3. **No commissions/fees** — D7 requires results *net of costs*; currently impossible (and cost-neglect can flip a result's sign).
+4. **Ambiguous round-trip identity** — e.g. FLR on one `plan_id`: buy 311 → sell 311 → sell 267 → buy 267 (mismatched qty, buy after sell). No explicit position/round-trip key.
+
+Plus the **aggregation layer never ran** — `performance_metrics` is empty, so nothing computes/stores metrics even when data exists.
+
+**→ Feature `go-live-metrics` (see Wave 0 — deliberately EARLY, it's cheap and gates all evidence):**
+
+1. On fill, **write back** `filled_qty` / `filled_avg_price` / `filled_at` (poll broker or use its fill stream). ← the one that matters
+2. Add **commissions/fees** field (required for D7 net-of-cost).
+3. Add **round-trip / position identity** so entries+exits pair unambiguously.
+4. Compute **R per closed trade**; populate `performance_metrics` (**add an expectancy-in-R column**) via the EOD job.
+5. **Go-live scorecard** — one command prints progress against the D5 ladder: `trades 1/100 · expectancy +0.1R · paper-vs-backtest −12% · gate ✅`.
+
+**Design principle for capture:** record **immutable facts at the moment they happen** (planned stop at entry, actual fill price at fill, fees as charged) — never plan to reconstruct them later. R depends on the stop *as planned at entry*; if it isn't captured then, the trade is permanently unmeasurable.
+
+---
+
+## 3. The build waves (dependency-ordered)
+
+Each wave is shippable and leaves the system working. A wave opens only when its predecessor's blocking items are done.
+
+### Wave 0 — Safety foundation (P0) · *gated by D1, D2*
+
+The one change every source calls #1: move the constitution from advisory markdown into an unbypassable code gate.
+
+| Feature | Slug | Layer | Status of design | Notes |
+|---------|------|-------|------------------|-------|
+| **Deterministic Governance Gate** | `governance-gate` | 5 Risk | ✅ designed (D1 scope: 12 rules) | Pure-function gate inside `place_order` at the kill-switch choke point. Verdict = APPROVED/REDUCED/REJECTED/PENDING. Fail-safe: any error → REJECTED. Exits bypass. |
+| **Typed Action Contract** (gate input) | `action-contract` | 4 Action | folds into gate design | The `TradePlan` the gate consumes (extends `tools/models.py:54`). First slice of pipeline contracts. |
+| **`risk_limits.yaml` + audit table** | — | 5 Risk / 6 Audit | ⚠️ pending D2 | Single limit source + `governance_decisions` table with `brief_hash`/`plan_hash` (seeds Wave 4 hash-chain). |
+
+| **Go-live metrics / trade-outcome capture** | `go-live-metrics` | 6 Audit | **Fill write-back** (`filled_qty`/`filled_avg_price`/`filled_at`) + **commissions/fees** + **round-trip identity** + **R per closed trade** → populate `performance_metrics` (add expectancy-in-R) + **go-live scorecard**. Small + cheap, but **gates ALL evidence** (D5 + D7): today only **1 of 22** trades is measurable and the counter isn't running. Build early. |
+
+**Exit criteria:** every OPERATING_MANUAL entry rule enforced in code; one unit test per rule; gate cannot be bypassed by the LLM; ships behind `GOVERNANCE_GATE_ENABLED` flag in paper. **Plus:** fills are captured with real prices + fees, and the scorecard reports D5 ladder progress. **Verification (per §4.5):** one test per rule **both directions**, golden cases, property invariants, **shadow/log-only period before enforcing**, and per-`rule_id` verdict telemetry with a **zero-approvals-over-N-sessions alert**.
+
+### Wave 1 — Pipeline contracts + memory recall (P1) · *enables Pattern C + gate Tier-4*
+
+| Feature | Slug | Layer | Notes |
+|---------|------|-------|-------|
+| **Full Pipeline Contracts** | `pipeline-contracts` | all 6 | Typed dataclasses per layer incl. `TradingBrief`; instrumentation. Unlocks gate Tier-4 (catalyst grounding). |
+| **ToolContract ABC + registry** | (contracts) | all | `ToolContract`/`ToolResult` + auto-discovery → thin `server.py`. |
+| **Working + Episodic Memory Recall** | `memory-recall` | 2 Memory | Hand past-trade summaries to Research *before* it scans; durable working-memory snapshot. |
+| **Source Binding / Anti-Hallucination** | `source-binding` | 1/3 | Require verifiable citation per catalyst — the data half of gate Tier-4. |
+| **Backtest engine** | `backtest-engine` | all | Equity engine already exists (v3 harness + `week_runner` + `param_sweep`, no-look-ahead + next-bar fills). Extend for: transaction-cost model, buy-and-hold + single-agent benchmark arms (for D7), routing through the live `place_order` path (so the gate runs inside backtests), and options coverage (strategy-agnostic engine, currently design-only). **Blocks D7.** Deeper research + design deferred to this phase. |
+
+### Wave 2 — Perception / scanner rebuild (R1–R3) · *gated by D3, D4*
+
+| Feature | Slug | Layer | Notes |
+|---------|------|-------|-------|
+| **AlpacaSource data swap** | (R1-S1) | 1 | 1 class + 1 factory branch; keep yfinance default. |
+| **14-factor z-scored scanner** | `factor-scanner` | 3 | Replaces binary gate funnel; cross-sectional ranking. (Old `design/factor-scanner-tdd.md` is a starting point, **not** ratified.) |
+| **Dynamic candidates** | (R1-S2) | 1/3 | Most-actives/RVOL screener + shortlist detail-pull, alongside the fixed universe. |
+| **Point-in-time universe** | (R1-S3) | 1 | Kill survivorship bias. |
+| **Capital-aware sizing/selection** | `capital-aware-selection` | 4 Action (Size stage) | Deterministic: filter to affordable (min 1-unit cost ≤ per-trade budget), rank by **return-on-capital** (options: `credit/BPR`; equity: expectancy per $ risked), size **fixed-fractional (% equity)**. Fixes the 34-session drought *at the source*; **XSP becomes optional** (D6). Needs the options-data feed to compute BPR. See [[2026-07-25-Capital-Aware-Selection-Research]]. |
+| **Monitor: stop panic-selling on noise** | (R2) | 3/5 | Real exit trigger vs intraday noise. |
+| **Overnight gap handling** | (R3) | 3/5 | Gap-aware hold/exit rules. |
+| **`DATABASE_URL` env hygiene** | — | 2 | ~5 lines; makes the eventual DB swap config, not code. |
+
+### Wave 3 — Strategy system (Jun-27 direction + R4) · *depends on Wave 0 gate + Wave 1 contracts*
+
+| Feature | Slug | Layer | Notes |
+|---------|------|-------|-------|
+| **Strategy families as config** | `strategy-config` | 3 | M + R as `StrategyConfig` records (factors, entry, exit, sizing, eligibility, gate_rules). **No plugin registry until a 3rd strategy needs it** (§1.5 verdict). |
+| **Per-ticker strategy routing** | `strategy-routing` | 3 | Candidate → eligible strategy (regime-aware). |
+| **Global active-strategy config** | (routing) | 3 | Owner switch: which families trade. |
+| **New strategy families** | (R4) | 3 | Beyond M/R — spec candidates first. |
+| **Deepen options/vol-edge** | (R5) | 3/4 | Credit-spread routing, IV-rank; ties to D6 unblock. |
+
+### Wave 4 — Learning / audit / advanced (P1 → P2)
+
+`mr-compliance-report` (MR-1..7 daily), `role-attribution` (P&L by agent), `tuning-governance` (limits only tighten + auto-rollback), `reasoning-timescales`, then P2: `audit-hashchain`, `deliberation-loop` (Research↔Risk negotiation), `semantic-yaml`.
+
+### ⏸ Parked — action items captured, NOT implementing now
+
+Real work, deliberately deferred. Deeper research + design happens when we reach each phase.
+
+- **Backtest engine** (`backtest-engine`) — already scoped as a Wave-1 feature; the equity engine exists (v3 harness + `week_runner` + `param_sweep`). What's deferred: transaction-cost model, buy-and-hold + single-agent benchmark arms, routing through the live `place_order` path, options coverage. **Blocks D7.** Design later.
+- ~~**Deployment / release process**~~ — **🔴 UNPARKED 2026-07-25: this is a PREREQUISITE, not a later phase.** `./install.sh hermes` (the command documented in CLAUDE.md) **is broken** — it reads `${REPO_DIR}/deploy/…` but those assets live at `setup/deploy/`; with `set -euo pipefail` it aborts at line 85, before MCP registration, kanban setup, and cron. **Nothing we design reaches the runtime until this works.** It is the mechanical root cause of the options divergence (built + tested + unreachable for 34 sessions). Scope: path fix **+ post-install verification** (assert tools reachable, skills present, crons registered) — the silent failure is the real defect. See queue #0.
+
+### ⛔ Quarantined — re-derive in design, never build as-is
+
+From the agenda's CONTAMINATED list: the 14 per-strategy gate rules, `earnings_play`/`credit_spread` strategy specifics, the `RULE_EXECUTORS` dispatch pattern, the `StrategyConfig` dataclass design, and the "5 open questions." The archived gate drafts (`docs/_archive/governance-gate-superseded/`) contain unratified rule counts and tiers — superseded by the D1-ratified 12-rule design.
+
+---
+
+## 4. Dependency graph (why this order)
+
+```
+Wave 0 (gate) ──────────────► must exist before ANY new strategy can trade safely
+     │
+     ├── needs: risk_limits.yaml (D2), TradePlan contract
+     │
+Wave 1 (pipeline contracts) ─► TradingBrief unlocks gate Tier-4 + Pattern C decision call
+     │
+     ├──► Wave 2 (scanner/perception) ── feeds better candidates INTO the brief
+     │
+     └──► Wave 3 (strategy families/routing) ── consumes brief, proposes plans, gate guards them
+                                             │
+                                        Wave 4 (audit/learning) wraps the whole loop
+```
+The through-line: **make the loop safe (0) → make the loop typed (1) → make the inputs good (2) → make the strategies plural (3) → make it self-auditing (4).**
+
+---
+
+## 4.5 Verification strategy — how we know each feature actually works
+
+**The split (never mix these):** *deterministic* components (gate, sizing math, data adapters) have a knowable correct answer per input → **test for correctness**. *Judgment* components (LLM enter/skip, strategy edge) have no per-decision ground truth → **measure statistically over a sample**.
+
+> **Test the deterministic parts for correctness, measure the judgment parts for edge — never use a test to answer an edge question, or a statistic to answer a correctness question.**
+
+### The governance gate is a rule evaluator, not a classifier
+
+So "false positive/negative" are **bugs, not tunable error rates**:
+
+| | Meaning | Cost |
+|---|---|---|
+| **False negative** | gate **approves** a trade that violates a rule | 🔴 real money at risk — the failure that costs |
+| **False positive** | gate **rejects** a valid trade | missed opportunity; chronic version = a drought |
+
+Asymmetric → **bias toward blocking**. Already encoded: any gate error → REJECTED (never fails open).
+
+### Verification ladder (weakest → strongest)
+
+1. **One unit test per rule, BOTH directions** — a case that must block *and* a case that must pass. ⚠️ Testing only the blocking side is the classic mistake: *a gate that rejects everything passes all "should block" tests.* Cheap because the gate is a pure function (no broker/network). Highest value.
+2. **Golden cases** — fixture set of realistic `TradePlan` + `TradingBrief` pairs with hand-verified verdicts (reuse the `routing-golden-cases` pattern). Doubles as regression protection.
+3. **Property-based tests** — random plans, assert always-true invariants: no approved order exceeds max positions; an exit is never blocked except kill-switch/HALTED; `REDUCED` qty ≤ requested. Catches unthought-of cases.
+4. **Shadow mode (REQUIRED before enforcing)** — ship the gate **log-only** first: compute + record verdicts, block nothing. Then ask "what *would* it have rejected, and was that right?" → measures the **false-positive rate before it can hurt**. Non-negotiable given our drought history.
+5. **Determinism / replay** — same brief + plan ⇒ same verdict, enforced via `brief_hash`/`plan_hash`; every past decision auditable and re-runnable.
+
+### The oracle problem (the trap under all of it)
+
+Tests prove the gate **correctly implements the rule we wrote** — they cannot prove **the rule is right**. A gate can flawlessly enforce a wrong limit. So: **every rule traces explicitly to an `OPERATING_MANUAL` section**; the manual (not the code) is the oracle. **Rule correctness is a review question, not a test question.**
+
+### Production telemetry — per-rule verdict distribution
+
+Log every verdict with its `rule_id`, then watch:
+
+- Rule fires **~never** → dead code, or threshold so loose it protects nothing.
+- Rule fires **on nearly everything** → almost certainly a false-positive machine.
+- **Zero approvals over N sessions → ALERT.** This is exactly the 34-session options drought: the system was "correct" per its rules while producing nothing, and *nothing alerted*. Rejection-reason distribution would have named the sizing wall on day 3, not day 34.
+
+### Judgment-side instruments (already exist; blocked on `go-live-metrics`)
+
+**Compliance score** (did the agent follow the SOP) · **scan funnel** (why did/didn't it trade) · **expectancy in R** over a sample (D5/D7). None of these work until fill capture is fixed.
+
+### ID discipline (system-wide guardrail)
+
+> **Facts get generated IDs. Derived rows get IDs derived from the facts they came from.**
+
+A random ID on derived data makes any "rebuild reproduces it exactly" invariant **unpassable**, and dangles every external reference on each rebuild (review finding F5). Rules — **and each is a test**:
+
+1. **Deterministic** — same inputs ⇒ same ID, every time, on every machine, across processes.
+2. **No ambient inputs** — never hash wall-clock time, `random`, PID, locale, or memory addresses. Facts only.
+3. **Canonicalize before hashing** — UTC ISO-8601 timestamps, fixed decimal precision (never raw float `repr`), **sorted** collections (dict/set order is not a contract).
+4. **Always delimit** — `a + "|" + b`; bare concatenation collides (`"ab"+"c" == "a"+"bc"`).
+5. **Separate identity from version** — a stable id for *what this is*, plus a `content_hash` for *what it currently contains*, so amendments are detectable without breaking references.
+
+### Per-feature requirement (applies to every feature in §3)
+
+Each feature's `plan.md` must state: its **deterministic parts + tests**, its **judgment parts + the metric** that evaluates them, and — for anything that can block execution — a **shadow-mode period before enforcement**.
+
+---
+
+## 4.7 Design queue — features promoted one by one
+
+Ratified features enter `docs/product/features/<slug>/` as `spec → design → plan`, **in this order**. One at a time; each is buildable on completion.
+
+| # | Feature | Implements | Why this position | Status |
+|---|---------|-----------|-------------------|--------|
+| **0** | **`deployment`** 🔴 | — | **UNPARKED — prerequisite.** **THREE installers exist and none can complete** — they fail on *complementary* halves because one `$REPO_DIR` is used for two roots at different depths (`<repo>/` vs `<repo>/setup/deploy/`). **Nothing built reaches the runtime until this is fixed + verified.** Path fix is minutes; **`verify.sh` (reachability, not presence) is the actual feature.** | ✅ **designed** |
+| 1 | **`go-live-metrics`** | D5 (measurement) | The evidence clock isn't running (1 of 22 trades measurable). Cheap, unblocks D5 + D7 + every future measurement. Nothing should be measured until this works. | ✅ **designed** |
+| 2 | **`governance-gate`** | **D1** (rule scope) + **D2** (risk config) | P0 safety. **D2 ships inside this feature** — `risk_limits.dev/live.yaml` (% of equity, git-versioned) + `TRADING_ENV` switch bound to broker mode + drift detector; the gate is its only consumer. Ships **shadow-first** per §4.5. **12 rules, each traced to an OPERATING_MANUAL section.** | ✅ **designed** |
+| 3 | **`data-source-adapters`** | **D3** | Canonical `MarketDataSource` + capability-flagged adapters + `AlpacaSource` (daily/intraday/quotes); monitoring reads the execution broker's feed. **Also closes the 🔴 options divergence** — the feed is built but unreachable by its consumer (see D6 correction). **Blocks #4.** | ✅ **designed** |
+| 4 | **`capital-aware-selection`** | **D6** | Fixes the drought at its source: affordability pre-filter + rank by return-on-capital across equity/options in one pass. Independent of the scanner rebuild. **Needs #3** for options BPR (equity-only can ship first). | ✅ **designed** (8 tasks) |
+| 5 | **`pipeline-contracts`** | (Pattern C) | Typed `TradingBrief`/`TradePlan` — unlocks gate Tier-4 + Pattern C's one-shot decision call. | ⬜ queued |
+| 6 | **`strategy-config`** | (Jun-27 direction) | M/R as config records (not a plugin framework). Cross-asset strategy eligibility for D6's unified scan. | ⬜ queued |
+| 7 | **`agent-learning-loop`** 🆕 | R2, R3, ROADMAP #3/#9/#12 | **Monitor quality + EOD capture + durable knowledge — how the agent actually evolves.** Consolidates five scattered items. See §4.8. | ⬜ **needs design** |
+| 7 | **`backtest-engine`** | **D7** (blocks it) | ⏸ parked — design when its phase opens. | ⏸ parked |
+| 8 | **`deployment`** | — | ⏸ parked — design once there's something built to deploy. | ⏸ parked |
+
+**Every decision maps somewhere — no orphans:**
+
+| Decision | Where its work lives |
+|---|---|
+| D1 gate rule scope | queue #2 `governance-gate` |
+| **D2 risk config** | queue #2 `governance-gate` (folded in — small, single consumer) |
+| **D3 data source** | queue #3 `data-source-adapters` |
+| **D4 scanner rebuild** | **research-only track** — `research/R1-scanner-redesign.md` §S4. **Deliberately NOT in the build queue** (deprioritized behind data foundation + D7). |
+| D5 go-live ladder | queue #1 `go-live-metrics` (measurement) + owner decision at the gate |
+| D6 cross-asset selection | queue #4 `capital-aware-selection` (+ #6 for strategy eligibility) |
+| D7 edge validation | queue #7 `backtest-engine` (parked) + #1 (R per trade) |
+
+---
+
+## 4.8 `agent-learning-loop` — monitor, EOD, and durable knowledge (🆕 needs design)
+
+**The question:** how does the agent get better over time, and where does what it learns actually live?
+
+**What already works** (don't rebuild):
+- **Tuning bridge** — EOD writes `tuning_config.json`, scanner reads it before every scan (`scanner/tuning.py`).
+- **Propose-to-human loop** — agents write to `reports/sop-changes/` and never edit `sops/` (3 real proposals, Jul 14–16).
+- **`docs/AGENT_EVOLUTION_STANDARD.md`** (216 lines) — the existing frame: frozen-model ⇒ externalized learning, four-store separation, Tier 1/2/3 trust. **Read before designing.**
+- Rich raw material: `decisions` 568 rows · `performance_reports` 55 · `scan_funnel` 25.
+
+**🔴 What's broken — the same bug class, fourth instance:**
+```
+$ sqlite3 tools/trading.db "select count(*) from journal_entries"
+0
+```
+**The EOD journal writes nothing.** Table exists, writer doesn't — identical to `fills` (13 of 22 price=0.0) and `portfolio_snapshots` (0 rows). So the reflection step produces no durable record, and *nothing accumulates* into knowledge.
+
+**Scope to design (consolidates 5 scattered items):**
+
+| Source | Item |
+|---|---|
+| **R2** | Monitor exits on noise — define a real exit trigger vs intraday noise |
+| **R3** | Overnight gap handling — gap-aware hold/exit rules |
+| ROADMAP #3 | `memory-recall` — hand past-trade summaries to Research **before** it scans |
+| ROADMAP #9 | `tuning-governance` — limits only tighten, auto-rollback, change log |
+| ROADMAP #12 | `semantic-yaml` — machine-readable strategy config the gate can read |
+| 🆕 | **Fix `journal_entries`** — EOD reflection must persist |
+
+**Design questions to answer:**
+1. **What's worth remembering?** Every decision (568 already) vs distilled lessons. Storage is cheap; *recall* is the bottleneck.
+2. **How does knowledge reach the agent?** Today it doesn't — memory exists but is never handed to Research before a scan.
+3. **What may the agent change by itself?** Bounded tuning params, yes; **risk limits, never** (RULE 3 + D2 ownership split).
+4. **How do we know learning helped?** Ties to D7 — a change is validated by expectancy, not by plausibility.
+
+**Depends on `go-live-metrics`** — you cannot learn from outcomes you don't record. Sequence it after.
+
+---
+
+## 5. Documentation pipeline (discussion → codebase)
+
+So building proceeds without re-litigating:
+
+1. **Discuss** in the vault (`Hermes-Brain/03-Learnings/` dated notes) → decision logged in `trading-system-agenda.md`.
+2. **Ratify** — owner confirms; item moves out of ⚠️/⛔ into ✅.
+3. **Promote** the ratified feature into `docs/product/features/<slug>/` as `spec.md → design.md → plan.md` (templates in `docs/product/_templates/`). *Nothing enters `features/` until step 2 — that's the discipline that was broken before.*
+4. **Build** — Claude Code executes the `plan.md` (TDD; tests green), preserving the OPERATING_MANUAL invariants.
+5. **Record** — `PROJECT_STATUS.md` changelog entry + ROADMAP status bump (`plan → building → shipped`).
+
+**⚠️ Between step 3 and 4: adversarial review.** Before a `plan.md` is executed, review the spec/design *against the code and the data*, hunting for: fabricated facts, controls that can't actually fire, and mechanisms that contradict their own stated invariants. The 2026-07-25 pass on `go-live-metrics` + `governance-gate` found 10 findings, 4 critical — including a migration that would have **manufactured execution data** and two circuit-breaker rules that **could never fire**. Treat this as a required step, not an occasional one.
+
+### One file per artifact — no version suffixes
+
+`features/<slug>/` contains **exactly `spec.md`, `design.md`, `plan.md`**. **Git is the version history** — never `design-v2.md`, `plan-v3.md`, etc. (We violated this once and ended up with 8 files for one feature; superseded drafts now live in `docs/_archive/<slug>-superseded/` for provenance only.) Same principle already applied to `risk_limits.yaml` (D2): git versions it, we don't.
+
+`ROADMAP.md` stays the master status board; this `BUILD-PLAN.md` is the sequencing rationale; the agenda is the decision ledger.
+
+---
+
+## 6. Immediate next actions
+
+**Decision pass COMPLETE — D1–D7 all ratified 2026-07-25.** Building can start.
+
+1. **`go-live-metrics` FIRST** (Wave 0) — fix fill write-back + fees + round-trip identity + R/expectancy + scorecard. **Rationale: the evidence clock is not running.** Only 1 of 22 trades is measurable, and paper trading currently accumulates *zero* usable evidence — every week unfixed is a week that can't count toward D5/D7. Small, cheap, unblocks everything.
+2. **`governance-gate`** (Wave 0) — promote to a clean `spec→design→plan`, re-derived from the **D1 math/portfolio subset** (Tier 1–3), quarantining the archived drafts’ unratified specifics. Ship **log-only/shadow first** (§4.5), then enforce.
+3. **`capital-aware-selection`** (Wave 2, but independent) — the actual fix for the 34-session drought; works on the current scanner, so it doesn't wait on the scanner rebuild.
+4. **Research track (no build):** R1 §S4 scanner/factor design (D4) continues in parallel.
+5. Keep `ROADMAP.md` statuses in sync as each item graduates; log shipped work in `PROJECT_STATUS.md`.
+
+**Parked (captured, not now):** `backtest-engine`, `deployment` — design when their phase opens.

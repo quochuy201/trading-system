@@ -21,7 +21,7 @@ def _tools_for(groups):
 
 
 def test_unset_exposes_everything():
-    assert len(_tools_for("")) == 58
+    assert len(_tools_for("")) == 61
 
 
 def test_reporting_tools_scoped_to_role():
