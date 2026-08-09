@@ -25,31 +25,47 @@ Ordered, bite-sized tasks. After each, run the named check, tick the box, note t
 - **Files:** `./install.sh` (canonical), delete `./setup/install.sh` + `./setup/deploy/install.sh`
 - **What:** keep the repo-root installer (matches the documented command in `CLAUDE.md`, D-DEP1). Remove both duplicates — **duplication is what let them drift into failing on opposite halves.** Archive them under `docs/_archive/` for provenance.
 - **Check:** exactly one `install.sh` in the repo (excluding `docs/_archive/`).
-- **Status:** ☐ todo
+- **Status:** ☑ done — `0aced42`. `find . -name install.sh -not -path '*/_archive/*'` → `./install.sh` only.
 
 ### Task 2 — Two explicit path roots
 - **Files:** `./install.sh`
 - **What:** replace the single `REPO_DIR` with **`REPO_ROOT`** (sops/skills/tools/OPERATING_MANUAL) and **`DEPLOY_DIR="$REPO_ROOT/setup/deploy"`** (profile.yaml/SOUL.md/preflight.sh/cron/runs/mcp.json). Update every reference to use the correct root.
 - **Check:** `grep` shows no bare `${REPO_DIR}` remains; each path references the correct variable.
-- **Status:** ☐ todo
+- **Status:** ☑ done — `21900d9`. `grep -n REPO_DIR install.sh` → 0 matches; `install.sh:4-5` define `REPO_ROOT` / `DEPLOY_DIR`.
 
 ### Task 3 — Up-front path validation
 - **Files:** `./install.sh`
 - **What:** `require_paths()` per design §2 — verify **all** required sources exist **before any copy**, and print **every** missing path at once (not just the first).
 - **Check:** temporarily rename a source dir ⇒ install exits non-zero, names it, and **copies nothing**; restore ⇒ passes.
-- **Status:** ☐ todo
+- **Status:** ☑ done — `3365aee` (`require_paths`, `install.sh:29-41`, called at `:96` before the first copy). Verified against an incomplete tree: **all 5** missing paths printed at once, exit 1, 0 files copied (see Task 4 evidence).
 
 ### Task 4 — Honest `--dry-run`
 - **Files:** `./install.sh`
 - **What:** `--dry-run` performs real path resolution + validation and reports exactly what would be copied/registered. **A dry run that skipped validation would have concealed this very bug.**
 - **Check:** `./install.sh hermes --dry-run` on a broken path reports the failure; on a good tree, lists every action and mutates nothing.
-- **Status:** ☐ todo
+- **Status:** ☑ done — `8a4e650`. Validation already ran under `--dry-run`; the defect found was the **reported verdict**: `run` echoed `preflight.sh` and returned 0, so every dry run printed `✅ Passed – system ready.` having verified nothing. Now prints `(not run – no verdict)`.
+
+```
+$ ./install.sh hermes --dry-run           # good tree
+... every cp/chmod/mcp add/cron create listed as [dry-run]
+[dry-run] .../preflight.sh (not run – no verdict)          exit 0
+$ find ~/.hermes/profiles/trading ~/.hermes/scripts -type f -newermt <run start>
+  (only state/gateway.heartbeat + cron/ticker_* — written by the running
+   gateway, not the installer; no install-owned file touched, no PROVENANCE.md)
+
+$ <incomplete tree>/install.sh hermes --dry-run
+MISSING: .../skills
+MISSING: .../OPERATING_MANUAL.md
+MISSING: .../setup/deploy/SOUL.md
+MISSING: .../setup/deploy/preflight.sh
+MISSING: .../setup/deploy/runs                              exit 1, 0 files copied
+```
 
 ### Task 5 — Provenance stamp
 - **Files:** `./install.sh`
 - **What:** write `git_sha` + `installed_at` + `repo_root` into the deployed profile.
 - **Check:** stamp present after install; SHA matches `git rev-parse HEAD`.
-- **Status:** ☐ todo
+- **Status:** ◑ code landed (`421572e`, `install.sh:177-192`) — **check NOT met.** Writing the stamp requires a real install, which is Task 10; `~/.hermes/profiles/trading/PROVENANCE.md` does not exist yet. Do not tick this until that run produces a stamp whose SHA matches `git rev-parse HEAD`.
 
 ### Task 6 — ⭐ `verify.sh` (checks 1–8)
 - **Files:** `setup/deploy/verify.sh` (new)
