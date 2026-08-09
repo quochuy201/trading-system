@@ -9,7 +9,38 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-08-05** · Branch: `main` · Tests: **331 passing** (verified — see 07-27 entry) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ⛔ **~1 month of work is uncommitted — see 07-27 entry**
+Last updated: **2026-08-08** · Branch: `main` (13 ahead of `origin/main`, unpushed) · Tests: **331 passing** (verified 08-08) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ✅ working tree committed (08-08 entry)
+
+---
+
+## ⏩ 2026-08-08 — Working tree committed; `telegram.py` was missing from the repo
+
+Closes the uncommitted-tree risk logged on 07-27. `git status --porcelain | wc -l` went **109 → 1** (the one remainder is `setup/deploy/mcp_probe.py`, live Task 6 work in another session).
+
+**The 87 "deletions" were two moves git never recorded, not lost work.** Every path was checked by content hash against the files on disk before anything was removed from the index:
+
+| Files | Actually went to | Evidence |
+|---|---|---|
+| 24 — `deploy/`, `cron/`, `SOUL.md`, `mcp.json`, `distribution.yaml`, `.env.EXAMPLE`, `hermes/profiles/*/SOUL.md` | `setup/deploy/**`, which was never `git add`-ed | 23 detected as renames (22 × R100, `mcp.json` R072 = added the Telegram env vars) |
+| 57 | `docs/_archive/` — **gitignored** (`.gitignore:47`), so the moves read to git as plain deletions | byte-identical copy found on disk for each |
+| 6 — `research/*.md`, `design/detailed-design.md` | `docs/product/research/`, `docs/design/` — destinations already committed | byte-identical; destinations verified tracked and clean |
+
+Root `SOUL.md` was the one true removal: **not** a copy of `deploy/SOUL.md` (they differed by 269 diff lines — it was the older "Trading System Orchestrator" prompt, superseded by the kanban-coordinator rewrite). Archived to `docs/_archive/soul-root-superseded/` for provenance.
+
+**🔴 Real bug found and fixed — `tools/notifications/telegram.py` was imported but never tracked.** `4c78ff6` pushed `server.py`'s `_broadcast()` import without the module, so `origin/main` had only `__init__/discord/slack`:
+
+```
+$ git ls-tree origin/main -- tools/notifications/
+tools/notifications/__init__.py   discord.py   slack.py     ← no telegram.py
+```
+
+The three imports (`server.py:929-931`) all precede the three sends, so on a clean clone the `ImportError` aborts `_broadcast()` **before any channel is reached — Slack and Discord fail too**, not just Telegram. Local checkouts were unaffected only because the untracked file happened to be on disk, which is why the suite stayed green. Committed in `141b48a`. The config half was already in tree (`setup/deploy/mcp.json` registers `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`).
+
+**Also:** deleted 11 orphaned `tools/.fuse_hidden*` files (32K SQLite WAL-index fragments left by a FUSE mount unlinking still-open files; `lsof` showed none held) and gitignored the pattern. Committed 7 untracked July reports and `skills/monitor/references/thesis-regime-check.md` — note **nothing links that reference**; `skills/monitor/SKILL.md` needs wiring for it to ever load.
+
+**Files:** `.gitignore`, `setup/**` (23 tracked), `tools/notifications/telegram.py`, `reports/**`, `skills/monitor/references/thesis-regime-check.md`, `docs/product/features/deployment/deployment-plan.md`, plus 62 removals. 8 commits, `ab44fd2..5dbbf9b`. Tests **331 passed** after.
+
+⚠️ **Still unpushed** — `main` is 13 ahead of `origin/main`; the `telegram.py` fix does not reach any fresh clone until it is pushed.
 
 ---
 
@@ -782,6 +813,12 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 - 🔴 **CRITICAL — order fills are never written back to the DB (trade outcomes unmeasurable).** `trade_transactions` rows are written at order-submit with `status` = `pending_new`/`accepted` (order *acknowledgements*) and are **never updated after execution**: **13 of 22 rows have `price = 0.0`**, and there are no `filled_qty` / `filled_avg_price` / `filled_at` fields. Consequence: **only 1 of 22 recorded trades is R-computable**; `performance_metrics`, `journal_entries`, `portfolio_snapshots` are all **0 rows**. Expectancy/win-rate cannot be computed, so **paper trading currently produces NO measurable evidence** — the go-live clock (D5) and edge validation (D7) are both blocked, and this cannot be reconstructed retroactively. Also missing: commissions/fees (needed for net-of-cost results) and an unambiguous round-trip/position identity (see the FLR `plan_id` with buy 311 → sell 311 → sell 267 → buy 267). Schema is otherwise sound — `trade_plans` does capture `stop_loss`/`take_profit`/entry, so R is computable in principle. Fix = feature `go-live-metrics` (docs/product/BUILD-PLAN.md, Wave 0). Found 2026-07-25 by direct DB audit.
 
 - 🟠 **`skills/monitor/SKILL.md` contradicts itself on the trailing-stop rule (stale pre-v1.2.0 profile).** The engine-aware table is correct — `:90` "Engine M · Trailing | >= +1R: trail 2xATR10 below highest close | Engine R: NEVER trail" — matching swing SOP v1.2.0 (trail armed at +1R, breakeven step removed) and v1.6.0. But **Step 5 further down the same file states a conflicting generic rule**: `:107` "If unrealized profit >= 1R: move stop to breakeven (entry price)" and `:108` "If unrealized profit >= 1.5R: start trailing at 1.5x ATR below the highest high reached." That is the **v1.1.0 profile** (BE @+1R, trail armed @+1.5R) — the exact stale profile that was already found hardcoded in `week_runner.py` and fixed 2026-06-11 (see `sops/equity/swing/v1.5.0.md:47-51`); the same drift survives in the skill. Three separate divergences: breakeven step (removed in v1.2.0 vs. still present), arming threshold (+1R vs +1.5R), trail width (2×ATR10 vs 1.5×ATR), plus *highest close* vs *highest high*. Step 5 also carries no engine guard, so it reads as applying to Engine R, which must **never** trail. **Consequence:** the LLM monitor gets two incompatible instructions in one file; whichever it anchors on decides real exits. **Fix (next enhancement round):** delete or engine-scope the Step 5 generic rule so the engine table at `:88-92` is the single source. Found 2026-08-05.
+
+- 🟠 **`skills/monitor/references/thesis-regime-check.md` is loaded by nothing.** The file is now tracked (2026-08-08) and defines the Engine M THESIS_REGIME_BREAK flag-only procedure, but `skills/monitor/SKILL.md` never references it (`grep -rn "thesis-regime-check" --include="*.md" --include="*.py" .` → only the file itself). Compare `skills/research/reference/`, which is linked from its SKILL.md. **Consequence:** the procedure exists but no agent ever reads it. Fix = add the reference link in `skills/monitor/SKILL.md`. Found 2026-08-08.
+
+- ~~`tools/notifications/telegram.py` imported but never committed~~ — **FIXED 2026-08-08** (`141b48a`): `4c78ff6` pushed `server.py:931`'s import without the module, so `git ls-tree origin/main -- tools/notifications/` returned only `__init__/discord/slack`. Because the imports precede all three sends, a clean clone lost **Slack and Discord too**. The suite never caught it — the untracked file was on disk locally.
+
+- ~~~1 month of uncommitted work / 120-entry working tree~~ — **FIXED 2026-08-08**: `git status --porcelain | wc -l` → **1**. See the 08-08 entry; the 87 apparent deletions were unrecorded moves, all content-verified before removal. Supersedes the 07-27 warning.
 
 - ~~9 stale tests in test_harness.py~~ — **FIXED 2026-06-09**: rewritten against the v3 API; suite 221 pass / 0 fail.
 - ~~`place_multileg_order` qty hardcoded to 1~~ — **FIXED 2026-06-09**: `qty` param plumbed tool→adapter→alpaca; validated ≥ 1. NOTE: live order with qty > 1 not yet exercised on paper (only qty=1 spread has been placed for real).
