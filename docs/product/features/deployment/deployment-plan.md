@@ -141,7 +141,26 @@ failed would also make every negative test green.
 - **Files:** `./install.sh`
 - **What:** run `verify.sh` as the final step; a verification failure **fails the install** (non-zero). Confirm installing twice is idempotent.
 - **Check:** clean end-to-end `./install.sh hermes` completes and verifies; second run yields identical profile state.
-- **Status:** ☐ todo
+- **Status:** ◑ wiring done, **check unmet.** `install.sh` step 14 runs `verify.sh` as the
+  last step, after every mutation (design §6 ordering), and returns 1 on failure.
+
+```
+$ bash -n install.sh                                          syntax OK
+$ ./install.sh hermes --dry-run | tail -1
+[dry-run] .../setup/deploy/verify.sh hermes (not run – no verdict)     exit 0
+```
+
+  Failure really does fail the install — `set -e` propagates a non-zero function out of
+  the `case` branch, demonstrated rather than assumed:
+
+```
+$ f() { return 1; }; case x in x) f ;; esac; echo REACHED
+exit=1        # REACHED not printed
+```
+
+  **Not yet met:** "clean end-to-end install completes and verifies" and the
+  idempotency check both require running the real installer — that is Task 10, and it
+  needs the `hermes` CLI to register MCP servers, crons and boards.
 
 ### Task 10 — Deploy the pending work + close the bugs
 - **Files:** `PROJECT_STATUS.md`, `docs/product/ROADMAP.md`, `BUILD-PLAN.md`

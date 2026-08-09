@@ -220,6 +220,21 @@ EOF
         log "Removing legacy profile $PROFILE"
         run hermes profile delete "$PROFILE" || true
     done
+
+    # 14. Verify — the last step, after every mutation, never interleaved.
+    #     An install that cannot be verified is not an install: exit non-zero so
+    #     no caller mistakes "the copies finished" for "the agent can trade".
+    if [ "${DRY_RUN}" = true ]; then
+        echo "[dry-run] ${DEPLOY_DIR}/verify.sh hermes (not run – no verdict)"
+        return 0
+    fi
+    log "Verifying the deployed profile..."
+    if "${DEPLOY_DIR}/verify.sh" hermes --hermes-home "${HERMES_HOME}" --repo-root "${REPO_ROOT}"; then
+        log "✅ Install verified."
+    else
+        log "❌ Install FAILED verification – the profile is not usable as deployed."
+        return 1
+    fi
 }
 
 install_kermes() {
