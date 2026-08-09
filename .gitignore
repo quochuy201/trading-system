@@ -16,6 +16,9 @@ __pycache__/
 
 # OS
 .DS_Store
+# FUSE leaves these behind when a still-open file is unlinked on a mounted
+# filesystem (seen as 32K SQLite WAL-index orphans under tools/).
+.fuse_hidden*
 
 # Trading data (local only)
 trading.db
