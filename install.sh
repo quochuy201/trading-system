@@ -26,6 +26,20 @@ done
 log() { echo "[install] $*"; }
 run() { if [ "$DRY_RUN" = true ]; then echo "[dry-run] $*"; else "$@"; fi; }
 
+require_paths() {
+  local missing=()
+  for p in "$REPO_ROOT/sops" "$REPO_ROOT/skills" "$REPO_ROOT/tools" \
+           "$REPO_ROOT/OPERATING_MANUAL.md" \
+           "$DEPLOY_DIR/profile.yaml" "$DEPLOY_DIR/SOUL.md" \
+           "$DEPLOY_DIR/preflight.sh" "$DEPLOY_DIR/cron" "$DEPLOY_DIR/runs"; do
+    [ -e "$p" ] || missing+=("$p")
+  done
+  if [ ${#missing[@]} -ne 0 ]; then
+    printf 'MISSING: %s\n' "${missing[@]}"
+    exit 1
+  fi
+}
+
 # Deploy the no-agent cron helper scripts into $1 with ABSOLUTE repo paths.
 # Hermes resolves a bare `--script NAME.sh` relative to the owning profile's
 # scripts/ dir, so these must live in each profile dir (not just the shared
@@ -79,6 +93,7 @@ install_hermes() {
 
     # 1. Create the single trading profile directory.
     local PROFILE_DIR="${HERMES_HOME}/profiles/trading"
+    require_paths
     log "Creating profile trading at ${PROFILE_DIR}"
     run mkdir -p "${PROFILE_DIR}"
 
