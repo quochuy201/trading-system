@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY_DIR="$REPO_ROOT/setup/deploy"
 PLATFORM="${1:-}"
 
 usage() {
@@ -57,7 +58,7 @@ TICK
 # Cron's minimal PATH omits ~/.local/bin, so a bare \`uv\` exits 127; prepend it.
 set -euo pipefail
 export PATH="\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH"
-cd "$REPO_DIR/tools"
+cd "$REPO_ROOT/tools"
 exec uv run python -c "from server import refresh_market_data; print(refresh_market_data(''))"
 REFRESH
     cat > "$dest/trading-iv-capture.sh" <<IVCAP
@@ -66,7 +67,7 @@ REFRESH
 # Cron's minimal PATH omits ~/.local/bin, so a bare \`uv\` exits 127; prepend it.
 set -euo pipefail
 export PATH="\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH"
-cd "$REPO_DIR/tools"
+cd "$REPO_ROOT/tools"
 exec uv run python -c "from server import capture_iv_universe; print(capture_iv_universe(''))"
 IVCAP
     chmod +x "$dest"/trading-kanban-tick.sh "$dest"/trading-data-refresh.sh "$dest"/trading-iv-capture.sh
@@ -82,35 +83,35 @@ install_hermes() {
     run mkdir -p "${PROFILE_DIR}"
 
     # 2. Populate profile from deploy/.
-    run cp "${REPO_DIR}/deploy/profile.yaml" "${PROFILE_DIR}/config.yaml"
-    run cp "${REPO_DIR}/deploy/SOUL.md" "${PROFILE_DIR}/SOUL.md"
-    run cp "${REPO_DIR}/OPERATING_MANUAL.md" "${PROFILE_DIR}/OPERATING_MANUAL.md"
+    run cp "${DEPLOY_DIR}/profile.yaml" "${PROFILE_DIR}/config.yaml"
+    run cp "${DEPLOY_DIR}/SOUL.md" "${PROFILE_DIR}/SOUL.md"
+    run cp "${REPO_ROOT}/OPERATING_MANUAL.md" "${PROFILE_DIR}/OPERATING_MANUAL.md"
     run hermes profile default trading >/dev/null 2>&1 || true
 
     # 3. Copy all scripts (workers load only what their task specifies).
     run mkdir -p "${PROFILE_DIR}/scripts"
     # Copy cron scripts from deploy/cron/
     for script in launch-equity.sh launch-options.sh trading-data-refresh.sh trading-iv-capture.sh monitor-sentinel.sh eod.sh; do
-        run cp "${REPO_DIR}/deploy/cron/$script" "${PROFILE_DIR}/scripts/$script"
+        run cp "${DEPLOY_DIR}/cron/$script" "${PROFILE_DIR}/scripts/$script"
         run chmod +x "${PROFILE_DIR}/scripts/$script"
     done
     # Copy preflight.sh from deploy/
-    run cp "${REPO_DIR}/deploy/preflight.sh" "${PROFILE_DIR}/scripts/preflight.sh"
+    run cp "${DEPLOY_DIR}/preflight.sh" "${PROFILE_DIR}/scripts/preflight.sh"
     run chmod +x "${PROFILE_DIR}/scripts/preflight.sh"
 
     # 4. Copy all SOPs.
     run mkdir -p "${PROFILE_DIR}/sops"
-    run cp -R "${REPO_DIR}/sops/." "${PROFILE_DIR}/sops/"
+    run cp -R "${REPO_ROOT}/sops/." "${PROFILE_DIR}/sops/"
 
     # 5. Deploy cron scripts to shared scripts/.
     run mkdir -p "${HERMES_HOME}/scripts"
     # Copy cron scripts from deploy/cron/
     for script in launch-equity.sh launch-options.sh trading-data-refresh.sh trading-iv-capture.sh monitor-sentinel.sh eod.sh; do
-        run cp "${REPO_DIR}/deploy/cron/$script" "${HERMES_HOME}/scripts/$script"
+        run cp "${DEPLOY_DIR}/cron/$script" "${HERMES_HOME}/scripts/$script"
         run chmod +x "${HERMES_HOME}/scripts/$script"
     done
     # Copy preflight.sh from deploy/
-    run cp "${REPO_DIR}/deploy/preflight.sh" "${HERMES_HOME}/scripts/preflight.sh"
+    run cp "${DEPLOY_DIR}/preflight.sh" "${HERMES_HOME}/scripts/preflight.sh"
     run chmod +x "${HERMES_HOME}/scripts/preflight.sh"
 
     # 6. Register MCP server (all tools exposed).
@@ -118,7 +119,7 @@ install_hermes() {
     run hermes -p trading mcp remove trading-tools >/dev/null 2>&1 || true
     # No TRADING_TOOL_GROUPS env var -> every tool exposed.
     printf 'y\n' | run hermes -p trading mcp add trading-tools \
-        --command "${REPO_DIR}/tools/run_mcp.sh"
+        --command "${REPO_ROOT}/tools/run_mcp.sh"
 
     # 7. Ensure kanban boards exist.
     log "Ensuring kanban boards equity and options exist"
@@ -189,7 +190,7 @@ install_kermes() {
     log "Installing skills into Kermes at $SKILLS_DIR"
 
     # Link each skill directory (includes reference/ subdirs)
-    for skill_dir in "$REPO_DIR/skills"/*/; do
+    for skill_dir in "$REPO_ROOT/skills"/*/; do
         local name
         name=$(basename "$skill_dir")
         log "  Linking skill: $name"
@@ -198,15 +199,15 @@ install_kermes() {
 
     # Link SOPs into kermes home for agent access
     run mkdir -p "$KERMES_HOME/trading-sops"
-    run ln -sfn "$REPO_DIR/sops" "$KERMES_HOME/trading-sops/sops"
+    run ln -sfn "$REPO_ROOT/sops" "$KERMES_HOME/trading-sops/sops"
 
     log ""
     log "Done. Next steps:"
-    log "  1. Start tools: cd $REPO_DIR/tools && uv run server.py"
+    log "  1. Start tools: cd $REPO_ROOT/tools && uv run server.py"
     log "  2. Or add MCP to ~/.kermes config (see mcp.json)"
     log "  3. Run: kermes"
     log ""
-    log "Skills installed: $(ls -1 "$REPO_DIR/skills" | wc -l)"
+    log "Skills installed: $(ls -1 "$REPO_ROOT/skills" | wc -l)"
 }
 
 install_meshclaw() {
@@ -216,9 +217,9 @@ install_meshclaw() {
     log "Installing for MeshClaw at $MC_HOME"
 
     run mkdir -p "$MC_HOME/skills"
-    run cp "$REPO_DIR/SOUL.md" "$MC_HOME/SKILL.md"
-    run cp -r "$REPO_DIR/skills"/* "$MC_HOME/skills/"
-    run cp -r "$REPO_DIR/sops" "$MC_HOME/sops"
+    run cp "$REPO_ROOT/SOUL.md" "$MC_HOME/SKILL.md"
+    run cp -r "$REPO_ROOT/skills"/* "$MC_HOME/skills/"
+    run cp -r "$REPO_ROOT/sops" "$MC_HOME/sops"
 
     # Generate agent spec
     local SPEC="$KIRO_AGENTS/trading-system.json"
@@ -234,7 +235,7 @@ install_meshclaw() {
   "mcpServers": {
     "trading-tools": {
       "command": "uv",
-      "args": ["run", "--directory", "$REPO_DIR/tools", "server.py"]
+      "args": ["run", "--directory", "$REPO_ROOT/tools", "server.py"]
     }
   },
   "resources": [
