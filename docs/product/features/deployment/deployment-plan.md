@@ -71,19 +71,71 @@ MISSING: .../setup/deploy/runs                              exit 1, 0 files copi
 - **Files:** `setup/deploy/verify.sh` (new)
 - **What:** implement design §3 checks 1–8: MCP responds · **expected tools reachable in the deployed profile** · **options tools specifically** · skills present with `requires_tools ⊆ reachable` · crons registered with resolvable script paths · kanban boards exist · `OPERATING_MANUAL.md` present · provenance stamp current. Exit non-zero on any failure, with a specific message.
 - **Check:** passes on a good install (see Task 8 for the negative tests).
-- **Status:** ☐ todo
+- **Status:** ☑ done — `setup/deploy/verify.sh` + `setup/deploy/mcp_probe.py`.
+
+**Checks 1–3 do a real MCP handshake, not introspection.** `mcp_probe.py` spawns the
+command *as registered for the profile* and speaks line-delimited JSON-RPC
+(`initialize` → `notifications/initialized` → `tools/list`). That exercises
+`run_mcp.sh`, the venv, and any `TRADING_TOOL_GROUPS` on the registration — verified
+by watching the reachable count track the gating:
+
+```
+$ mcp_probe.py --command tools/run_mcp.sh                             -> 61 tools
+$ ... --env TRADING_TOOL_GROUPS=research                              -> 24 tools
+$ ... --env TRADING_TOOL_GROUPS=monitor                               -> 17 tools
+$ ... --env TRADING_TOOL_GROUPS=eod                                   -> 13 tools
+```
+
+It deliberately does **not** shell out to `hermes`: the CLI has no tool-enumeration
+subcommand (`hermes_cli/subcommands/mcp.py` → `serve/add/remove/list/test/login/
+reauth/picker/catalog/install`), and a verifier must still work while the CLI is
+mid-upgrade. Check 2's expected set is the repo's own tool list probed under the same
+env — a repo-vs-runtime diff, never a hardcoded count (**RULE 3**). Boards for check 6
+are read from `setup/deploy/runs/*.yaml`, their one home.
+
+Green on an intact profile (full output in Task 8's fixture):
+
+```
+[1] ok handshake completed, 61 tools reachable      [5] ok all registered cron scripts resolve
+[2] ok every tool the repo defines is reachable     [6] ok board 'equity' / 'options' present
+[3] ok all 5 options tools reachable                [7] ok present
+[4] ok every skill's requires_tools is reachable    [8] ok runtime matches 46b8f63a
+✅ verification passed                                                          exit 0
+```
+
+⚠️ **Found while building this:** the first draft of checks 4 and 5 crashed on a
+Python `SyntaxError`, produced empty output, and my shell read empty as "no problems"
+— both printed **`ok`**. A vacuous pass, in the very script written to abolish vacuous
+passes, inside one hour. Both now fail closed when the check cannot run. This is the
+whole argument for Task 8.
 
 ### Task 7 — Divergence report (check 9, warn-only)
 - **Files:** `setup/deploy/verify.sh`
 - **What:** list skills present in the runtime with **no repo counterpart** (today: `options-trader`, `options-exit-manager`) and each one's referenced tools. **WARN, never fail** — deleting them would remove the only running options logic (D-DEP2).
 - **Check:** run against the current Hermes profile ⇒ reports both skills and notes they reference **zero** repo options tools.
-- **Status:** ☐ todo
+- **Status:** ☑ done — `verify.sh` check 9, warn-only. Covered by
+  `test_runtime_only_skill_warns_without_failing`, which asserts exit 0, the warning
+  text, **and that the skill directory still exists afterwards** (D-DEP2).
+  ◑ Running it against the *live* Hermes profile is deferred with Task 10.
 
 ### Task 8 — ⚠️ Negative tests for the verifier
 - **Files:** `tools/tests/test_deploy_verify.py` (new) or a shell harness
 - **What:** deliberately break each condition and assert `verify.sh` **FAILS**: remove a skill · drop a tool from its group · unregister a cron · stop the MCP server · stale provenance. **This is the most important task in the feature** — a verifier never observed failing proves nothing, which is precisely how "everything looks fine" persisted for 34 sessions.
 - **Check:** every negative case fails as expected; the positive case passes.
-- **Status:** ☐ todo
+- **Status:** ☑ done — `tools/tests/test_deploy_verify.py`, 13 tests: one per broken
+  condition (each asserting non-zero exit **and** the specific message), the intact
+  positive case, and the warn-only case. Every fixture is built in `tmp_path` and
+  passed via `--hermes-home`; nothing touches the real `~/.hermes`.
+
+```
+$ cd tools && uv run --extra dev pytest tests/test_deploy_verify.py -v
+13 passed in 11.87s
+$ cd tools && uv run --extra dev pytest tests/ -q
+344 passed, 10 warnings in 21.68s          # 331 + 13
+```
+
+The positive case matters as much as the negatives: without it, a verifier that always
+failed would also make every negative test green.
 
 ### Task 9 — Wire verification into install + idempotency
 - **Files:** `./install.sh`
