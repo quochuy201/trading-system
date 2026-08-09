@@ -199,11 +199,18 @@ EOF
     fi
 
     # 12. Run preflight and show status.
-    log "Running preflight check..."
-    if run "${PROFILE_DIR}/scripts/preflight.sh"; then
-        log "✅ Passed – system ready."
+    #     Never report a verdict a dry run did not actually earn — a claimed
+    #     "passed" that nothing verified is the failure mode this installer exists
+    #     to eliminate.
+    if [ "${DRY_RUN}" = true ]; then
+        echo "[dry-run] ${PROFILE_DIR}/scripts/preflight.sh (not run – no verdict)"
     else
-        log "❌ Failed – see above for remediation."
+        log "Running preflight check..."
+        if "${PROFILE_DIR}/scripts/preflight.sh"; then
+            log "✅ Passed – system ready."
+        else
+            log "❌ Failed – see above for remediation."
+        fi
     fi
 
     # 13. Remove legacy profiles (after new profile is fully configured).
