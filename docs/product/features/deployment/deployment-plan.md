@@ -172,15 +172,21 @@ exit=1        # REACHED not printed
 
 ## Definition of Done
 
-- [ ] Exactly one installer; duplicates archived
-- [ ] `REPO_ROOT` / `DEPLOY_DIR` resolved separately; all paths validated up front
-- [ ] `./install.sh hermes` completes end-to-end on a clean profile
-- [ ] `--dry-run` does real resolution and mutates nothing
-- [ ] `verify.sh` green after install; **wired in so a failure fails the install**
-- [ ] **Negative tests prove `verify.sh` actually fails** when it should
-- [ ] Options MCP tools **confirmed reachable in the deployed profile**
-- [ ] Runtime-only skills reported as a warning, **not deleted**
-- [ ] Provenance stamp present; both 🔴 bugs closed with evidence
+- [x] Exactly one installer; duplicates archived
+- [x] `REPO_ROOT` / `DEPLOY_DIR` resolved separately; all paths validated up front
+- [ ] `./install.sh hermes` completes end-to-end on a clean profile — **needs Task 10**
+- [x] `--dry-run` does real resolution and mutates nothing
+- [ ] `verify.sh` green after install; **wired in so a failure fails the install** —
+      wiring done and the failure path demonstrated; *green after a real install* needs Task 10
+- [x] **Negative tests prove `verify.sh` actually fails** when it should — 13 tests
+- [ ] Options MCP tools **confirmed reachable in the deployed profile** — reachable
+      through the repo launcher (61 tools, all 5 options tools); **the deployed profile
+      is unconfirmed**, which is the original 🔴 bug and the reason Task 10 exists
+- [x] Runtime-only skills reported as a warning, **not deleted** — asserted by test
+- [ ] Provenance stamp present; both 🔴 bugs closed with evidence — stamp code landed,
+      never yet written by a real install
+
+**5 of 9 met.** Every unmet item reduces to the same blocker: no real install has run.
 
 ## Decisions carried from spec
 
