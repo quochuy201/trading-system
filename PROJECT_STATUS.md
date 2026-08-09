@@ -9,7 +9,53 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-08-08** · Branch: `main` (13 ahead of `origin/main`, unpushed) · Tests: **331 passing** (verified 08-08) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ✅ working tree committed (08-08 entry)
+Last updated: **2026-08-09** · Branch: `main` (18 ahead of `origin/main`, unpushed) · Tests: **344 passing** (verified 08-09) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ✅ working tree committed (08-08 entry)
+
+---
+
+## ⏩ 2026-08-09 — `deployment` Tasks 4–8: the verifier ships
+
+Feature `deployment` (BUILD-PLAN queue **#0**) moves `plan` → **building**, 8 of 10 tasks done. Plan and per-task evidence: [`deployment-plan.md`](docs/product/features/deployment/deployment-plan.md).
+
+| Task | Commit | What |
+|---|---|---|
+| 4 honest `--dry-run` | `8a4e650` | it printed `✅ Passed – system ready.` for a preflight it never ran |
+| 5 provenance stamp | `421572e` | ◑ code only — no real install has written a stamp yet |
+| 6+7 `verify.sh` | `4ad2b02` | checks 1–8 fail the run, check 9 warns |
+| 8 negative tests | `f26aef6` | 13 tests, one per check |
+
+**Checks 1–3 measure reachability, not presence** — the distinction that let five options MCP tools sit unusable for 34 sessions. New `setup/deploy/mcp_probe.py` spawns the command *as the profile registered it* and completes a real MCP handshake (`initialize` → `tools/list`). That it measures reachability is observable, because the count tracks the gating:
+
+```
+$ mcp_probe.py --command tools/run_mcp.sh                  -> 61 tools
+$ ... --env TRADING_TOOL_GROUPS=research / monitor / eod   -> 24 / 17 / 13
+```
+
+It does **not** use the `hermes` CLI — that CLI has no tool-enumeration subcommand, and the verifier must work while the CLI is mid-upgrade. Check 2's expected set is the repo's own tools probed under the same env (a repo-vs-runtime diff); check 6's board names come from `setup/deploy/runs/*.yaml`. No restated values (**RULE 3**).
+
+⚠️ **The verifier's own first draft passed vacuously.** Checks 4 and 5 crashed on a `SyntaxError`, emitted nothing, and the shell read empty output as "no problems found" — both printed **`ok`**. Inside the one script written to abolish vacuous passes, within the hour. Both now fail closed when a check cannot run, and Task 8 exists precisely because agreement is not evidence.
+
+```
+$ cd tools && uv run --extra dev pytest tests/ -q
+344 passed, 10 warnings in 21.68s          # 331 + 13
+```
+
+**Still open:** Tasks 9–10 (wire `verify.sh` into `install.sh`; run the fixed installer, confirm the options tools are reachable in the *deployed* profile, close the two 🔴 CRITICAL bugs). Both need the `hermes` CLI to register MCP servers, crons and boards — see the note below. Until Task 10 runs, `verify.sh` has been proven against fixtures, never against the live profile.
+
+**Files:** `setup/deploy/verify.sh` (new), `setup/deploy/mcp_probe.py` (new), `tools/tests/test_deploy_verify.py` (new), `install.sh`, `docs/product/features/deployment/deployment-plan.md`, this file.
+
+### Note — the `hermes` CLI is mid-upgrade (observed, not acted on)
+
+Hermes **works**: the trading gateway (pid 14101) and interactive sessions run normally off the old venv, which `lsof` shows renamed to `hermes-agent/venv.stale.runtime-1786223633-…` — its own update-rename. What cannot happen is a **new** CLI invocation:
+
+```
+$ hermes mcp --help
+  exec: ~/.hermes/hermes-agent/venv/bin/hermes: No such file or directory
+$ sqlite3 ~/.hermes/kanban.db .tables      -> (empty; 0 tables, 0-byte file)
+   gateway logs `kanban notifier tick failed: no such table: kanban_notify_subs` every 5s
+```
+
+Left untouched by owner instruction. **Not established:** whether the morning crons can still fire — no `jobs.json` on disk and no cron tables in `state.db`, but a running gateway may hold its schedule in memory, and `hermes cron list` (the one command that would settle it) needs the CLI. Flagged, not diagnosed.
 
 ---
 
