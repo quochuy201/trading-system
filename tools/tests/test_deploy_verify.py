@@ -14,6 +14,7 @@ via `--hermes-home`. Nothing here reads or writes the real `~/.hermes`.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -78,12 +79,65 @@ def build_profile(home: Path, registration_env: dict[str, str] | None = None,
     return profile
 
 
-def run_verify(home: Path) -> subprocess.CompletedProcess:
+def run_verify(home: Path, path_prefix: Path | None = None,
+               hide_hermes: bool = False) -> subprocess.CompletedProcess:
+    """Run verify.sh against a throwaway profile.
+
+    Args:
+        home: Fake HERMES_HOME to verify.
+        path_prefix: Directory prepended to PATH, e.g. one holding a stub
+            `hermes` so check 5's CLI branch can be exercised without the real
+            runtime.
+        hide_hermes: Replace PATH with system dirs only, so `hermes` is absent
+            and the fail-closed branch is reached.
+
+    Returns:
+        The completed process; check 5's verdict is in stdout.
+    """
+    env = dict(os.environ)
+    if hide_hermes:
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env['PATH']}"
     return subprocess.run(
         [str(VERIFY), "hermes", "--profile", "trading",
          "--hermes-home", str(home), "--repo-root", str(REPO_ROOT)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=env,
     )
+
+
+def stub_hermes(tmp_path: Path, jobs: list[tuple[str, str]]) -> Path:
+    """Write a stub `hermes` that prints `cron list` output for `jobs`.
+
+    The real CLI has no `--json`, so check 5 parses the human table. This
+    reproduces that format exactly (indented `Name:` / `Script:` pairs) and
+    lets the CLI branch be tested without touching any runtime.
+
+    Args:
+        tmp_path: Where to create the `bin/` directory.
+        jobs: (name, script) pairs; an empty script means an agent-mode job
+            that declares no file to resolve.
+
+    Returns:
+        The directory to prepend to PATH.
+    """
+    bindir = tmp_path / "stub-bin"
+    bindir.mkdir(exist_ok=True)
+    blocks = []
+    for name, script in jobs:
+        block = f"  abc123 [active]\\n    Name:      {name}\\n    Schedule:  15 6 * * 1-5\\n"
+        if script:
+            block += f"    Script:    {script}\\n"
+        blocks.append(block)
+    body = "".join(blocks)
+    stub = bindir / "hermes"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "{body}"\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    return bindir
 
 
 # ── the positive case ───────────────────────────────────────────────────────
@@ -133,12 +187,87 @@ def test_missing_skill_fails(tmp_path):
 
 
 def test_missing_cron_store_fails(tmp_path):
-    """Check 5: nothing scheduled at all."""
+    """Check 5: nothing scheduled at all.
+
+    With no cache the CLI is consulted; against a throwaway HERMES_HOME it
+    reports no jobs, so both sources agree and the check fails.
+    """
     profile = build_profile(tmp_path)
     (profile / "cron" / "jobs.json").unlink()
     result = run_verify(tmp_path)
     assert result.returncode != 0
     assert "nothing is scheduled" in result.stdout
+
+
+def test_absent_cache_with_registered_crons_passes(tmp_path):
+    """Check 5: the 08-10 false failure — registered crons, cache not yet written.
+
+    `jobs.json` is written lazily by the scheduler on the first recorded run, so
+    a correct fresh install has no cache. Treating that as "nothing is
+    scheduled" failed an install whose six jobs were all registered and due. The
+    CLI is the authority and must be believed.
+    """
+    profile = build_profile(tmp_path)
+    (profile / "cron" / "jobs.json").unlink()
+    bindir = stub_hermes(tmp_path, [("trading-data-refresh", "trading-data-refresh.sh")])
+    result = run_verify(tmp_path, path_prefix=bindir)
+    assert "nothing is scheduled" not in result.stdout
+    assert "all registered cron scripts resolve (1 jobs, via hermes cron list)" in result.stdout
+    assert result.returncode == 0, result.stdout
+
+
+def test_cron_script_not_found_via_cli_fails(tmp_path):
+    """Check 5: the 06-23 failure must still be caught on the CLI path.
+
+    A registered job whose script is absent from the profile's scripts dir is
+    the drought bug; believing the CLI must not mean skipping resolution.
+    """
+    profile = build_profile(tmp_path)
+    (profile / "cron" / "jobs.json").unlink()
+    bindir = stub_hermes(tmp_path, [("trading-data-refresh", "not-deployed.sh")])
+    result = run_verify(tmp_path, path_prefix=bindir)
+    assert result.returncode != 0
+    assert "script not found" in result.stdout
+
+
+def test_agent_mode_cron_without_script_is_not_a_failure(tmp_path):
+    """Check 5: a job that runs a prompt has no file to resolve.
+
+    Counting it as unresolvable would fail every profile using agent-mode crons.
+    """
+    profile = build_profile(tmp_path)
+    (profile / "cron" / "jobs.json").unlink()
+    bindir = stub_hermes(tmp_path, [("trading-morning", "")])
+    result = run_verify(tmp_path, path_prefix=bindir)
+    assert "script not found" not in result.stdout
+    assert "all registered cron scripts resolve (1 jobs" in result.stdout
+
+
+def test_cron_check_fails_closed_with_no_cache_and_no_cli(tmp_path):
+    """Check 5: neither source available ⇒ fail, never a silent pass.
+
+    The verifier's own first draft passed vacuously when a check could not run;
+    an unverifiable cron is not a verified cron.
+    """
+    profile = build_profile(tmp_path)
+    (profile / "cron" / "jobs.json").unlink()
+    result = run_verify(tmp_path, hide_hermes=True)
+    assert result.returncode != 0
+    assert "cron check could not run" in result.stdout
+
+
+def test_empty_cron_cache_falls_through_to_the_cli(tmp_path):
+    """Check 5: an empty cache is no answer, not proof of an empty schedule.
+
+    `~/.hermes/cron/jobs.json` sits on disk as `{"jobs": []}` while seven jobs
+    are registered — an empty file must not veto the authority.
+    """
+    profile = build_profile(tmp_path)
+    (profile / "cron" / "jobs.json").write_text(json.dumps({"jobs": []}))
+    bindir = stub_hermes(tmp_path, [("trading-data-refresh", "trading-data-refresh.sh")])
+    result = run_verify(tmp_path, path_prefix=bindir)
+    assert "all registered cron scripts resolve (1 jobs, via hermes cron list)" in result.stdout
+    assert result.returncode == 0, result.stdout
 
 
 def test_cron_script_not_found_fails(tmp_path):

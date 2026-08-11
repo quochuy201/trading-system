@@ -168,30 +168,78 @@ fi
 # ── 5. Crons registered with resolvable script paths ────────────────────────
 # Hermes resolves a bare `--script NAME.sh` against the profile's scripts dir.
 # Getting that wrong is what made the data refresh silently never run (06-23).
+#
+# Two sources, consulted in this order, because neither alone is trustworthy:
+#   1. <profile>/cron/jobs.json — a LAZY cache. The scheduler writes it when it
+#      first records a run, not when a job is registered, so a correct fresh
+#      install has no file at all. Reading that absence as "nothing is
+#      scheduled" failed the 08-10 install while all six jobs were registered
+#      and due:  jobs.json birth 14:00:55, install 00:14.
+#   2. `hermes cron list` — the authority. Verified to honour HERMES_HOME (a
+#      temp home reports 0 jobs where the real one reports 7), so verifying a
+#      throwaway profile stays isolated from the live runtime.
+# An empty or unparseable cache counts as "no answer" and falls through, so the
+# authority still gets asked. Fail closed when neither source can answer — an
+# unverifiable cron is not a pass.
 echo "[5] Crons registered and their scripts resolvable"
 JOBS_FILE="${PROFILE_DIR}/cron/jobs.json"
-if [ ! -f "$JOBS_FILE" ]; then
-    fail "no cron job store at ${JOBS_FILE} — nothing is scheduled"
-else
-    if ! CRON_REPORT="$("$PY" -c '
+# Each source emits one "<name>\t<script>" line per job; script may be empty
+# (agent-mode jobs run a prompt, not a file, and have nothing to resolve).
+CRON_JOBS=""
+CRON_SOURCE=""
+if [ -f "$JOBS_FILE" ]; then
+    CRON_JOBS="$("$PY" -c '
 import json, sys
 from pathlib import Path
-
-jobs_file, scripts_dir = Path(sys.argv[1]), Path(sys.argv[2])
-jobs = (json.loads(jobs_file.read_text()) or {}).get("jobs") or []
-if not jobs:
-    print("cron job store is empty - nothing is scheduled")
+try:
+    jobs = (json.loads(Path(sys.argv[1]).read_text()) or {}).get("jobs") or []
+except Exception:
+    sys.exit(3)                     # unparseable cache == no answer, not a pass
 for job in jobs:
-    script = job.get("script")
-    if script and not (scripts_dir / script).exists():
-        name = job.get("name")
-        print("cron " + repr(name) + " -> script not found: " + str(scripts_dir / script))
-' "$JOBS_FILE" "${PROFILE_DIR}/scripts")"; then
-        fail "cron check could not run"
-    elif [ -n "$CRON_REPORT" ]; then
-        while IFS= read -r line; do [ -n "$line" ] && fail "$line"; done <<< "$CRON_REPORT"
+    print((job.get("name") or "?") + "\t" + (job.get("script") or ""))
+' "$JOBS_FILE" 2>/dev/null)" || CRON_JOBS=""
+    [ -n "$CRON_JOBS" ] && CRON_SOURCE="jobs.json cache"
+fi
+if [ -z "$CRON_JOBS" ] && command -v hermes >/dev/null 2>&1; then
+    CRON_JOBS="$(HERMES_HOME="$HERMES_HOME" hermes -p "$PROFILE" cron list --all 2>/dev/null | "$PY" -c '
+import re, sys
+name = None
+for line in sys.stdin:
+    m = re.match(r"\s*Name:\s+(\S+)", line)
+    if m:
+        if name:
+            print(name + "\t")     # previous block declared no script
+        name = m.group(1)
+        continue
+    m = re.match(r"\s*Script:\s+(\S+)", line)
+    if m and name:
+        print(name + "\t" + m.group(1))
+        name = None
+if name:
+    print(name + "\t")
+' 2>/dev/null)" || CRON_JOBS=""
+    [ -n "$CRON_JOBS" ] && CRON_SOURCE="hermes cron list"
+fi
+
+if [ -z "$CRON_SOURCE" ]; then
+    if [ -f "$JOBS_FILE" ] || command -v hermes >/dev/null 2>&1; then
+        fail "no cron jobs registered for profile '${PROFILE}' — nothing is scheduled"
     else
-        pass "all registered cron scripts resolve"
+        fail "cron check could not run: no ${JOBS_FILE} and no hermes CLI on PATH"
+    fi
+else
+    cron_missing=0
+    cron_count=0
+    while IFS="$(printf '\t')" read -r job_name job_script; do
+        [ -z "$job_name" ] && continue
+        cron_count=$((cron_count + 1))
+        if [ -n "$job_script" ] && [ ! -f "${PROFILE_DIR}/scripts/${job_script}" ]; then
+            fail "cron '${job_name}' -> script not found: ${PROFILE_DIR}/scripts/${job_script}"
+            cron_missing=$((cron_missing + 1))
+        fi
+    done <<< "$CRON_JOBS"
+    if [ "$cron_missing" -eq 0 ]; then
+        pass "all registered cron scripts resolve (${cron_count} jobs, via ${CRON_SOURCE})"
     fi
 fi
 
