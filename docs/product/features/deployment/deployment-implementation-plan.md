@@ -8,10 +8,16 @@
 
 Tasks 1–9 are done and committed. **The feature's headline goal is met:** the five options
 MCP tools are confirmed reachable *in the deployed profile* by real handshake, closing the
-34-session 🔴 bug. What remains is Tasks 11–12 (two defects the verifier caught on its first
-live run) and then Task 10.
+34-session 🔴 bug.
 
-**Resume here:** fix Task 11 + Task 12 against a throwaway `HERMES_HOME`, then Task 10.
+**Resumed 2026-08-10 (code only, no deploy): Tasks 11 and 12 are now done** — `86268dc`,
+`fd59de4`. Both were fixed and tested against a throwaway `HERMES_HOME`; suite **353 green**.
+Task 12's recorded diagnosis turned out to be wrong and is corrected in its entry below.
+
+**Only Task 10 remains, and it needs a real install** — which the owner has not authorized
+("fix the install/deployment script but do not deploy", 2026-08-10). Nothing else in the
+feature can close without it.
+
 **Do not run `./install.sh` against `~/.hermes` to test** — that is a deploy, not a build step
 (`install.sh:92` reads `HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"`, so a temp target is
 already supported). Two sessions have now damaged the live runtime doing exactly that; see
@@ -209,27 +215,62 @@ exit=1        # REACHED not printed
   `meshclaw` (`:273-298`) branches.
 - **Check:** after a clean install to a throwaway `HERMES_HOME`, all six skills present and
   `verify.sh` check 4 passes **without any hand-copying**.
-- **Status:** ☐ todo — found 2026-08-09 by `verify.sh`'s first live run:
+- **Status:** ☑ **done 2026-08-10** — `fd59de4`. Found 2026-08-09 by `verify.sh`'s first live run:
 
 ```
 [4] Skill contracts satisfied
   FAIL skill missing from profile: backtest / eod-review / monitor / research / risk-manager / trader
+$ sed -n '90,238p' install.sh | grep -c skills          ->  0
 ```
 
-### Task 12 — 🆕 `verify.sh` check 5 reads the wrong cron path
+  Fix copies the tree at `install.sh` step 4b, merging (`skills/.`) rather than replacing —
+  Hermes keeps its own built-in skills in that same directory (~18 of them) and check 9
+  deliberately never deletes them. Verified into a throwaway `HERMES_HOME`, no deploy:
+
+```
+[dry-run] cp -R <repo>/skills/. $T/profiles/trading/skills/
+backtest ok · eod-review ok · monitor ok · research ok · risk-manager ok · trader ok
+```
+
+  First tests this installer has ever had: `tools/tests/test_install.py` (4). They run it with
+  `--dry-run`, `HOME`/`HERMES_HOME` in `tmp_path`, and a stub `hermes` on `PATH` that logs every
+  call — one test asserts that log is **empty**, so "dry-run is inert" is asserted, not assumed.
+
+### Task 12 — 🆕 `verify.sh` check 5 fails installs whose crons *are* registered
 - **Files:** `setup/deploy/verify.sh`
-- **What:** check 5 looks for `profiles/trading/cron/jobs.json`; Hermes stores the job list
-  **globally** at `${HERMES_HOME}/cron/jobs.json`. It reports "nothing is scheduled" while all
-  six jobs are registered and scheduled — a verifier that fails on correct state is as harmful
-  as one that passes on broken state.
-- **Check:** check 5 passes against a profile with registered crons; the existing negative test
-  for an unregistered cron still fails. Read the store from its one home (**RULE 3**).
-- **Status:** ☐ todo — found 2026-08-09:
+- **⚠️ The original diagnosis in this entry was wrong.** It said Hermes stores the job list
+  globally and check 5 read the wrong path. The path was right; the *inference* was wrong:
 
 ```
-[5] FAIL no cron job store at ~/.hermes/profiles/trading/cron/jobs.json — nothing is scheduled
-$ find ~/.hermes -name jobs.json          ->  /Users/zelyuh/.hermes/cron/jobs.json
-$ hermes cron list                        ->  6 jobs [active], next run 2026-08-10
+$ cat ~/.hermes/cron/jobs.json      -> {"jobs": [], ...}          # global store EMPTY
+$ hermes cron list                  -> No scheduled jobs.
+$ hermes -p trading cron list       -> 7 jobs [active]            # the profile store is live
+$ stat -f "%SB" ~/.hermes/profiles/trading/cron/jobs.json -> Aug 10 14:00:55
+$ grep "Installed at" ~/.hermes/profiles/trading/PROVENANCE.md -> 2026-08-10T00:14:57Z
+```
+
+  `jobs.json` is written **lazily** by the scheduler when it first records a run — 14 hours
+  after the install that check 5 failed. So a correct fresh install has no cache, and
+  "file absent ⇒ nothing is scheduled" fails every one of them.
+- **What:** consult two sources in order — the cache when it has content, then
+  `hermes cron list` as the authority. An empty/unparseable cache counts as *no answer* and
+  falls through (which also covers the empty global file). Neither available ⇒ **fail closed**.
+  Shelling out to `hermes` is safe here: no file-only alternative exists, and the CLI honours
+  `HERMES_HOME` (`HERMES_HOME=$(mktemp -d) hermes -p trading cron list` → 0 jobs vs 7 real),
+  so verifying a throwaway profile stays isolated.
+- **Check:** check 5 passes against a profile with registered crons; the existing negative test
+  for an unregistered cron still fails.
+- **Status:** ☑ **done 2026-08-10** — `86268dc`. Five new tests, **observed failing against the
+  pre-fix script** before the fix was kept:
+
+```
+FAILED test_absent_cache_with_registered_crons_passes
+FAILED test_cron_script_not_found_via_cli_fails
+FAILED test_agent_mode_cron_without_script_is_not_a_failure
+FAILED test_cron_check_fails_closed_with_no_cache_and_no_cli
+FAILED test_empty_cron_cache_falls_through_to_the_cli
+5 failed, 13 deselected
+$ uv run --extra dev pytest tests/ -q   ->  353 passed          # 344 + 4 + 5
 ```
 
 ---
@@ -238,14 +279,15 @@ $ hermes cron list                        ->  6 jobs [active], next run 2026-08-
 
 - [x] Exactly one installer; duplicates archived
 - [x] `REPO_ROOT` / `DEPLOY_DIR` resolved separately; all paths validated up front
-- [ ] `./install.sh hermes` completes end-to-end on a clean profile — it **ran** 2026-08-09 but
-      exited non-zero on verification; **needs Tasks 11–12**
+- [ ] `./install.sh hermes` completes end-to-end on a clean profile — it **ran** 2026-08-09 and
+      exited non-zero on verification. Both causes are now fixed (Tasks 11–12); **confirming it
+      needs one more install run = Task 10, not yet authorized**
 - [x] `--dry-run` does real resolution and mutates nothing
 - [ ] `verify.sh` green after install; **wired in so a failure fails the install** — the wiring
-      is now proven *live*, not just against fixtures: the install genuinely aborted on the
+      is proven *live*, not just against fixtures: the install genuinely aborted on the
       verifier's verdict (`❌ Install FAILED verification – the profile is not usable as
-      deployed.`). **Green** still needs Tasks 11–12.
-- [x] **Negative tests prove `verify.sh` actually fails** when it should — 13 tests
+      deployed.`). Both known causes of the red verdict are fixed; **green** needs Task 10.
+- [x] **Negative tests prove `verify.sh` actually fails** when it should — 13 tests, now **18**
 - [x] **Options MCP tools confirmed reachable in the deployed profile** — ⭐ **met 2026-08-09.**
       Real MCP handshake against the profile as registered: 61 tools, all 5 options tools.
       This is the original 🔴 bug and the reason the feature is queue #0.
