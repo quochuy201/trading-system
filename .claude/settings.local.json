@@ -43,7 +43,13 @@
       "Bash(ps -o pid,ppid,lstart,command)",
       "WebFetch(domain:hermes-agent.nousresearch.com)",
       "Bash(./install.sh hermes *)",
-      "Bash(chmod +x *)"
+      "Bash(chmod +x *)",
+      "Skill(remember)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(sudo rm *)",
+      "Bash(git push *)"
     ]
   }
 }
