@@ -118,6 +118,15 @@ install_hermes() {
     run mkdir -p "${PROFILE_DIR}/sops"
     run cp -R "${REPO_ROOT}/sops/." "${PROFILE_DIR}/sops/"
 
+    # 4b. Copy agent skills. Without these the profile installs "successfully"
+    #     and the agent has no behaviour to follow — the defect verify.sh
+    #     check 4 caught on its first live run.
+    #     Merge (`skills/.` into an existing dir) rather than replace: Hermes
+    #     keeps its own built-in skills here too, and they are not ours to
+    #     delete — check 9 reports runtime-only skills and never removes them.
+    run mkdir -p "${PROFILE_DIR}/skills"
+    run cp -R "${REPO_ROOT}/skills/." "${PROFILE_DIR}/skills/"
+
     # 5. Deploy cron scripts to shared scripts/.
     run mkdir -p "${HERMES_HOME}/scripts"
     # Copy cron scripts from deploy/cron/
