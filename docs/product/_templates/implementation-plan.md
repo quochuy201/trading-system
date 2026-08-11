@@ -1,6 +1,6 @@
 # Implementation Plan: <Feature Name>
 
-> **File name:** save as `docs/product/features/<slug>/<slug>-plan.md` — named for the feature, not just `plan.md` (CLAUDE.md §How to develop).
+> **File name:** save as `docs/product/features/<slug>/<slug>-implementation-plan.md` — named for the feature, not just `plan.md` or `implementation-plan.md` (CLAUDE.md §How to develop).
 
 - **Slug:** `<slug>`  ·  **Status:** `plan`  ·  **Design:** [`design.md`](design.md)
 - **Executor:** Claude Code  ·  **Author:** Hermes (PM)  ·  **Date:** YYYY-MM-DD

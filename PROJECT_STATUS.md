@@ -15,7 +15,7 @@ Last updated: **2026-08-09** · Branch: `main` (18 ahead of `origin/main`, unpus
 
 ## ⏩ 2026-08-09 — `deployment` Tasks 4–8: the verifier ships
 
-Feature `deployment` (BUILD-PLAN queue **#0**) moves `plan` → **building**, 8 of 10 tasks done. Plan and per-task evidence: [`deployment-plan.md`](docs/product/features/deployment/deployment-plan.md).
+Feature `deployment` (BUILD-PLAN queue **#0**) moves `plan` → **building**, 8 of 10 tasks done. Plan and per-task evidence: [`deployment-implementation-plan.md`](docs/product/features/deployment/deployment-implementation-plan.md).
 
 | Task | Commit | What |
 |---|---|---|
@@ -42,7 +42,7 @@ $ cd tools && uv run --extra dev pytest tests/ -q
 
 **Still open:** Tasks 9–10 (wire `verify.sh` into `install.sh`; run the fixed installer, confirm the options tools are reachable in the *deployed* profile, close the two 🔴 CRITICAL bugs). Both need the `hermes` CLI to register MCP servers, crons and boards — see the note below. Until Task 10 runs, `verify.sh` has been proven against fixtures, never against the live profile.
 
-**Files:** `setup/deploy/verify.sh` (new), `setup/deploy/mcp_probe.py` (new), `tools/tests/test_deploy_verify.py` (new), `install.sh`, `docs/product/features/deployment/deployment-plan.md`, this file.
+**Files:** `setup/deploy/verify.sh` (new), `setup/deploy/mcp_probe.py` (new), `tools/tests/test_deploy_verify.py` (new), `install.sh`, `docs/product/features/deployment/deployment-implementation-plan.md`, this file.
 
 ### Note — the `hermes` CLI is mid-upgrade (observed, not acted on)
 
@@ -84,7 +84,7 @@ The three imports (`server.py:929-931`) all precede the three sends, so on a cle
 
 **Also:** deleted 11 orphaned `tools/.fuse_hidden*` files (32K SQLite WAL-index fragments left by a FUSE mount unlinking still-open files; `lsof` showed none held) and gitignored the pattern. Committed 7 untracked July reports and `skills/monitor/references/thesis-regime-check.md` — note **nothing links that reference**; `skills/monitor/SKILL.md` needs wiring for it to ever load.
 
-**Files:** `.gitignore`, `setup/**` (23 tracked), `tools/notifications/telegram.py`, `reports/**`, `skills/monitor/references/thesis-regime-check.md`, `docs/product/features/deployment/deployment-plan.md`, plus 62 removals. 8 commits, `ab44fd2..5dbbf9b`. Tests **331 passed** after.
+**Files:** `.gitignore`, `setup/**` (23 tracked), `tools/notifications/telegram.py`, `reports/**`, `skills/monitor/references/thesis-regime-check.md`, `docs/product/features/deployment/deployment-implementation-plan.md`, plus 62 removals. 8 commits, `ab44fd2..5dbbf9b`. Tests **331 passed** after.
 
 ⚠️ **Still unpushed** — `main` is 13 ahead of `origin/main`; the `telegram.py` fix does not reach any fresh clone until it is pushed.
 

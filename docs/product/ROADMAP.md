@@ -37,8 +37,8 @@ rules are advisory (markdown + optional tool calls the LLM is trusted to make).*
 
 | # | Feature | Slug | Layer | Status | Docs |
 |---|---------|------|-------|--------|------|
-| 0 | **Go-Live Metrics (trade-outcome capture)** — fills are never written back, so only 1 of 22 trades is measurable; blocks D5 + D7 | `go-live-metrics` | 6 Audit | **plan** (ready to build) | [spec](features/go-live-metrics/go-live-metrics-spec.md) · [design](features/go-live-metrics/go-live-metrics-design.md) · [plan](features/go-live-metrics/go-live-metrics-plan.md) |
-| 1 | **Deterministic Governance Gate** — move risk enforcement from advisory markdown into an unbypassable code gate inside `place_order` | `governance-gate` | 5 Risk | **plan** (approved 07-09, ready to build) | [spec](features/governance-gate/governance-gate-spec.md) · [design](features/governance-gate/governance-gate-design.md) · [plan](features/governance-gate/governance-gate-plan.md) |
+| 0 | **Go-Live Metrics (trade-outcome capture)** — fills are never written back, so only 1 of 22 trades is measurable; blocks D5 + D7 | `go-live-metrics` | 6 Audit | **plan** (ready to build) | [spec](features/go-live-metrics/go-live-metrics-spec.md) · [design](features/go-live-metrics/go-live-metrics-design.md) · [plan](features/go-live-metrics/go-live-metrics-implementation-plan.md) |
+| 1 | **Deterministic Governance Gate** — move risk enforcement from advisory markdown into an unbypassable code gate inside `place_order` | `governance-gate` | 5 Risk | **plan** (approved 07-09, ready to build) | [spec](features/governance-gate/governance-gate-spec.md) · [design](features/governance-gate/governance-gate-design.md) · [plan](features/governance-gate/governance-gate-implementation-plan.md) |
 | 2 | **Typed Action Contract** — first slice of the pipeline-contracts system; the `TradeProposal`/`ActionOutcome` types the gate consumes | `action-contract` | 4 Action | backlog | (folds into #1's design; graduates when full contracts start) |
 
 ### P1 — NEXT (learning + reproducibility)

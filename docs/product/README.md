@@ -34,7 +34,7 @@ the engineer owns the *how*. A plan is "done" only when its acceptance criteria 
    non-goals. Answers *what* and *why*. Owner approves before design.
 2. **Design** (`design.md`) — architecture, data model, integration points, error
    handling, tradeoffs, the exact files touched. Answers *how*. Grounded in real code.
-3. **Plan** (`plan.md`) — ordered, bite-sized tasks for Claude Code. Each task names
+3. **Plan** (`implementation-plan.md`) — ordered, bite-sized tasks for Claude Code. Each task names
    files, gives acceptance criteria, and specifies tests. This is the executable unit.
 
 Templates live in [`_templates/`](_templates/). Copy them; don't reinvent the format.
@@ -49,10 +49,10 @@ docs/product/
   ROADMAP.md             ← master backlog: every feature, status, priority, links
   ARCHITECTURE-MAP.md    ← the mental model: 6-layer lens ↔ your role-agents + key files
   _templates/
-    spec.md  design.md  plan.md
+    spec.md  design.md  implementation-plan.md
   features/
     <slug>/              ← one folder per ACTIVELY-SPECCED feature
-      spec.md  design.md  plan.md
+      spec.md  design.md  implementation-plan.md
 ```
 
 **A feature lives in the ROADMAP backlog until it is actively being spec'd** — only

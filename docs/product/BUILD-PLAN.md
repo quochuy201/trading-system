@@ -345,7 +345,7 @@ A random ID on derived data makes any "rebuild reproduces it exactly" invariant 
 
 ### Per-feature requirement (applies to every feature in §3)
 
-Each feature's `plan.md` must state: its **deterministic parts + tests**, its **judgment parts + the metric** that evaluates them, and — for anything that can block execution — a **shadow-mode period before enforcement**.
+Each feature's `implementation-plan.md` must state: its **deterministic parts + tests**, its **judgment parts + the metric** that evaluates them, and — for anything that can block execution — a **shadow-mode period before enforcement**.
 
 ---
 
@@ -355,8 +355,8 @@ Ratified features enter `docs/product/features/<slug>/` as `spec → design → 
 
 | # | Feature | Implements | Why this position | Status |
 |---|---------|-----------|-------------------|--------|
-| **0** | **`deployment`** 🔴 | — | **UNPARKED — prerequisite.** **THREE installers exist and none can complete** — they fail on *complementary* halves because one `$REPO_DIR` is used for two roots at different depths (`<repo>/` vs `<repo>/setup/deploy/`). **Nothing built reaches the runtime until this is fixed + verified.** Path fix is minutes; **`verify.sh` (reachability, not presence) is the actual feature.** | ✅ **designed** |
-| 1 | **`go-live-metrics`** | D5 (measurement) | The evidence clock isn't running (1 of 22 trades measurable). Cheap, unblocks D5 + D7 + every future measurement. Nothing should be measured until this works. | ✅ **designed** |
+| **0** | **`deployment`** 🔴 | — | **UNPARKED — prerequisite.** **THREE installers exist and none can complete** — they fail on *complementary* halves because one `$REPO_DIR` is used for two roots at different depths (`<repo>/` vs `<repo>/setup/deploy/`). **Nothing built reaches the runtime until this is fixed + verified.** Path fix is minutes; **`verify.sh` (reachability, not presence) is the actual feature.** | ⏸ **PAUSED 08-09** — Tasks 1–9 shipped, **DoD 6 of 9**. ⭐ The 🔴 options-reachability bug is **closed by live handshake** (61 tools, all 5 options tools in the *deployed* profile). Backlog: Tasks 11–12 (installer never copies `skills/`; `verify.sh` check 5 reads the wrong cron path) then Task 10. |
+| 1 | **`go-live-metrics`** ⬅ **NEXT** | D5 (measurement) | The evidence clock isn't running (1 of 22 trades measurable). Cheap, unblocks D5 + D7 + every future measurement. Nothing should be measured until this works. | ✅ **designed** — 11 tasks, ready to build |
 | 2 | **`governance-gate`** | **D1** (rule scope) + **D2** (risk config) | P0 safety. **D2 ships inside this feature** — `risk_limits.dev/live.yaml` (% of equity, git-versioned) + `TRADING_ENV` switch bound to broker mode + drift detector; the gate is its only consumer. Ships **shadow-first** per §4.5. **12 rules, each traced to an OPERATING_MANUAL section.** | ✅ **designed** |
 | 3 | **`data-source-adapters`** | **D3** | Canonical `MarketDataSource` + capability-flagged adapters + `AlpacaSource` (daily/intraday/quotes); monitoring reads the execution broker's feed. **Also closes the 🔴 options divergence** — the feed is built but unreachable by its consumer (see D6 correction). **Blocks #4.** | ✅ **designed** |
 | 4 | **`capital-aware-selection`** | **D6** | Fixes the drought at its source: affordability pre-filter + rank by return-on-capital across equity/options in one pass. Independent of the scanner rebuild. **Needs #3** for options BPR (equity-only can ship first). | ✅ **designed** (8 tasks) |
@@ -424,15 +424,15 @@ So building proceeds without re-litigating:
 
 1. **Discuss** in the vault (`Hermes-Brain/03-Learnings/` dated notes) → decision logged in `trading-system-agenda.md`.
 2. **Ratify** — owner confirms; item moves out of ⚠️/⛔ into ✅.
-3. **Promote** the ratified feature into `docs/product/features/<slug>/` as `spec.md → design.md → plan.md` (templates in `docs/product/_templates/`). *Nothing enters `features/` until step 2 — that's the discipline that was broken before.*
-4. **Build** — Claude Code executes the `plan.md` (TDD; tests green), preserving the OPERATING_MANUAL invariants.
+3. **Promote** the ratified feature into `docs/product/features/<slug>/` as `spec.md → design.md → implementation-plan.md` (templates in `docs/product/_templates/`). *Nothing enters `features/` until step 2 — that's the discipline that was broken before.*
+4. **Build** — Claude Code executes the `implementation-plan.md` (TDD; tests green), preserving the OPERATING_MANUAL invariants.
 5. **Record** — `PROJECT_STATUS.md` changelog entry + ROADMAP status bump (`plan → building → shipped`).
 
-**⚠️ Between step 3 and 4: adversarial review.** Before a `plan.md` is executed, review the spec/design *against the code and the data*, hunting for: fabricated facts, controls that can't actually fire, and mechanisms that contradict their own stated invariants. The 2026-07-25 pass on `go-live-metrics` + `governance-gate` found 10 findings, 4 critical — including a migration that would have **manufactured execution data** and two circuit-breaker rules that **could never fire**. Treat this as a required step, not an occasional one.
+**⚠️ Between step 3 and 4: adversarial review.** Before a `implementation-plan.md` is executed, review the spec/design *against the code and the data*, hunting for: fabricated facts, controls that can't actually fire, and mechanisms that contradict their own stated invariants. The 2026-07-25 pass on `go-live-metrics` + `governance-gate` found 10 findings, 4 critical — including a migration that would have **manufactured execution data** and two circuit-breaker rules that **could never fire**. Treat this as a required step, not an occasional one.
 
 ### One file per artifact — no version suffixes
 
-`features/<slug>/` contains **exactly `spec.md`, `design.md`, `plan.md`**. **Git is the version history** — never `design-v2.md`, `plan-v3.md`, etc. (We violated this once and ended up with 8 files for one feature; superseded drafts now live in `docs/_archive/<slug>-superseded/` for provenance only.) Same principle already applied to `risk_limits.yaml` (D2): git versions it, we don't.
+`features/<slug>/` contains **exactly `<slug>-spec.md`, `<slug>-design.md`, `<slug>-implementation-plan.md`**. **Git is the version history** — never `design-v2.md`, `plan-v3.md`, etc. (We violated this once and ended up with 8 files for one feature; superseded drafts now live in `docs/_archive/<slug>-superseded/` for provenance only.) Same principle already applied to `risk_limits.yaml` (D2): git versions it, we don't.
 
 `ROADMAP.md` stays the master status board; this `BUILD-PLAN.md` is the sequencing rationale; the agenda is the decision ledger.
 

@@ -44,7 +44,7 @@ This catches 4 of the 5 real mistakes:
 A cross-cutting fix that touched one file is incomplete. This failed ~10 times: design corrected, `spec`/`plan` left stale, so the broken instruction is what gets built.
 
 ```
-✅  "Fixed C2 — changed: plan.md (Tasks 2,4), design.md (§7), spec.md (scope)"
+✅  "Fixed C2 — changed: implementation-plan.md (Tasks 2,4), design.md (§7), spec.md (scope)"
 ❌  "Fixed C2."
 ```
 
@@ -82,16 +82,16 @@ Paper-only until D5 · gate ships in **shadow** first · D7 edge validation befo
 ## How to develop
 
 ```
-discuss → spec.md → design.md → adversarial review → plan.md → build → record
+discuss → spec.md → design.md → adversarial review → implementation-plan.md → build → record
 ```
 
 1. Read **`PROJECT_STATUS.md`** (known bugs first), then **`BUILD-PLAN.md`** (§4.7 = the queue — do not duplicate it here).
-2. Work from `docs/product/features/<slug>/plan.md`, one task at a time, tests green, commit per task.
+2. Work from `docs/product/features/<slug>/<slug>-implementation-plan.md`, one task at a time, tests green, commit per task.
 3. **Exactly three files per feature**, each named for the feature so editor tabs and search stay unambiguous:
    ```
    docs/product/features/<slug>/<slug>-spec.md
                                 <slug>-design.md
-                                <slug>-plan.md
+                                <slug>-implementation-plan.md
    ```
    Never `design-v2.md`; **git is the version history**. Superseded drafts → `docs/_archive/<slug>-superseded/`.
 4. **Adversarial review before building**, with **cold context** (repo only). Self-review found 10 issues where an independent pass found ~30 incl. 6 criticals. A finding is closed **by a commit**, not by agreement.
@@ -135,7 +135,7 @@ cd tools && uv run --extra dev pytest tests/test_broker.py::test_place_order -v
 
 ```
 CLAUDE.md · OPERATING_MANUAL.md · PROJECT_STATUS.md · config.yaml · install.sh
-docs/product/     BUILD-PLAN.md, features/<slug>/{spec,design,plan}.md, research/
+docs/product/     BUILD-PLAN.md, features/<slug>/<slug>-{spec,design,implementation-plan}.md, research/
 skills/           research · trader · monitor · risk-manager · eod-review · backtest
 sops/             <asset-class>/<strategy>/v<semver>.md  +  _routing/
 tools/            server.py (MCP surface) + broker/ data/ scanner/ analysis/
