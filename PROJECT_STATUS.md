@@ -9,9 +9,36 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-08-09** · Branch: `main` (18 ahead of `origin/main`, unpushed) · Tests: **344 passing** (verified 08-09) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ✅ working tree committed (08-08 entry)
+Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpushed) · Tests: **368 passing** (verified 08-16) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ⚠️ `setup/deploy/preflight.sh` uncommitted (08-16 entry)
 
 ---
+
+## ⏩ 2026-08-16 — `deployment` Tasks 11–12 land; `go-live-metrics` starts
+
+**`deployment`** — Tasks 11 and 12 done (10 of 12; Tasks 9–10 still need a real install, see below).
+
+| Task | Commit | What |
+|---|---|---|
+| 11 | `fd59de4` | `install.sh` never copied `skills/` into the Hermes profile |
+| 12 | `86268dc` | `verify.sh` check 5 failed installs whose crons *were* registered |
+| — | `4deec7d` | plan updated; Task 12's original diagnosis was wrong and is corrected in place |
+
+**`go-live-metrics`** (BUILD-PLAN queue **#1**) moves `plan` → **building**, 1 of 11 tasks done. Plan and per-task evidence: [`go-live-metrics-implementation-plan.md`](docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md).
+
+| Task | Commit | What |
+|---|---|---|
+| 1 `orders` + `fills` | `22dc627` | intent and reality become separate tables |
+
+The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
+
+```
+$ cd tools && uv run --extra dev pytest tests/ -q
+368 passed, 10 warnings in 28.17s          # 353 + 15
+```
+
+Migration verified against the existing dev DB, applied twice — `orders`, `fills`, `idx_fills_order` created; `trade_transactions` 22 → 22, `trade_plans` 13 → 13, `price_data` 172232 → 172232 rows.
+
+⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.
 
 ## ⏩ 2026-08-09 — `deployment` Tasks 4–8: the verifier ships
 

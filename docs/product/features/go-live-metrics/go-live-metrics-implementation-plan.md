@@ -1,7 +1,7 @@
 # Implementation Plan: Go-Live Metrics
 
 - **Slug:** `go-live-metrics` · **Status:** `plan` · **Design:** [`go-live-metrics-design.md`](go-live-metrics-design.md) · **Spec:** [`go-live-metrics-spec.md`](go-live-metrics-spec.md)
-- **Executor:** Claude Code · **Date:** 2026-08-08 · **Rev 3** — three-layer architecture — work begun on implementation
+- **Executor:** Claude Code · **Date:** 2026-08-08 · **Rev 3** — three-layer architecture · **Status: building** (Task 1 done 2026-08-16)
 
 ## How to Use This Plan
 
@@ -26,7 +26,13 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** create both tables per design §3a/§3b (+ index on `fills.order_id`). Add `Order` and `Fill` dataclasses. Repository: `save_order`, `set_order_terminal`, `insert_fill`, `get_fills_for_order`, `get_open_orders`. Migration is guarded (no-op if already applied).
 - **Tests:** `tools/tests/test_models_and_persistence.py` — save/load both entities; migration idempotent; **`insert_fill` twice with the same `fill_id` does not duplicate**; no update/delete method exists on fills.
 - **Acceptance:** both tables exist; existing DB migrates cleanly; fills are insert-only by construction.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `22dc627` (2026-08-16). 15 tests added, suite **368 green** (was 353).
+  - `Fill.fill_id` has **no default factory** — a generated id would mint a fresh row per poll and destroy the structural dedup. Asserted by `test_fill_id_is_never_generated`.
+  - `insert_fill` is `INSERT OR IGNORE`, returns `True` on insert / `False` on replay. `test_insert_fill_never_overwrites` re-inserts the same `fill_id` with a different price and asserts the **original** row survives — `INSERT OR REPLACE` would have deleted and reinserted it.
+  - Append-only is checked structurally, not by convention: `test_no_fill_mutation_path_exists` greps the repository source for `UPDATE fills` / `DELETE FROM fills` / `INSERT OR REPLACE INTO fills` and asserts the only fill-touching methods are `insert_fill` and `get_fills_for_order`.
+  - `save_order` deliberately keeps `plan_id` / `gate_*` / `regime_at_entry` NULL when unknown (`test_order_nullables_stay_null`) — Task 3 fills `regime_at_entry` from the plan.
+  - Migration proven on the real dev DB, run twice: both tables + `idx_fills_order` created, `trade_transactions` 22 → 22, `trade_plans` 13 → 13, `price_data` 172232 → 172232.
+  - ⚠️ The plan's baseline of "28 txn rows, 14 with price=0.0" is the **live profile** DB. The repo's `tools/trading.db` has **22 rows, 13 at price=0.0** (the figure CLAUDE.md cites). Task 11's evidence must name which DB it measured.
 
 ### Task 2 — Broker adapter: TWO methods, different jobs (design §4a)
 - **Files:** `tools/broker/adapter.py`, `tools/broker/alpaca.py`, `tools/broker/simulation.py`
