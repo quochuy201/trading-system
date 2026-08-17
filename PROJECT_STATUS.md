@@ -31,12 +31,14 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
+**Evidence, and its limit.** Migration run against the real dev DB, twice — `orders`, `fills`, `idx_fills_order` created; `trade_transactions` 22 → 22, `trade_plans` 13 → 13, `price_data` 172232 → 172232. The append-only guarantee was checked by **mutating the implementation**, not by reading it: swapping `INSERT OR IGNORE` → `INSERT OR REPLACE` fails three tests independently (`assert 1.0 == 150.25` — the stored execution got rewritten; `assert True is False` — the replay reported as new; plus the source-level guard).
+
+⚠️ **No real broker fill has ever been stored.** Every fill test uses a hand-built `Fill` against in-memory SQLite — the category CLAUDE.md lists under *Not evidence*. `get_account_activities()` (Task 2) and `sync_fills()` (Task 4) do not exist yet, so nothing has read Alpaca's activity feed. What is proven is narrower than "fills are captured correctly": **the table cannot double-count a replay and cannot be mutated after the fact.** The double-count this feature actually fears — appending `get_order()`'s cumulative `filled_qty` — is a Task 2/4 risk that Task 1 only makes the storage *safe against*. First real proof lands at Task 11.
+
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-368 passed, 10 warnings in 28.17s          # 353 + 15
+368 passed, 10 warnings in 28.17s          # 353 + 15 — a floor, not evidence
 ```
-
-Migration verified against the existing dev DB, applied twice — `orders`, `fills`, `idx_fills_order` created; `trade_transactions` 22 → 22, `trade_plans` 13 → 13, `price_data` 172232 → 172232 rows.
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.
 
