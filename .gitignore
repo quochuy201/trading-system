@@ -65,3 +65,6 @@ tools/backtest_state_*.json
 tools/backtest_week_state.json
 tools/sweep_metric_cache.json
 tools/test.txt
+
+# preflight.sh logs next to itself when run from the repo
+setup/deploy/preflight.log

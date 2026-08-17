@@ -100,12 +100,18 @@ def build_profile(
 
 def run_preflight(home: Path, tmp_path: Path, hermes_body: str = 'echo ok\n'
                   ) -> subprocess.CompletedProcess:
-    """Run preflight against a throwaway home with a stubbed `hermes`."""
+    """Run preflight against a throwaway home with a stubbed `hermes`.
+
+    Runs a *copy* under tmp_path: the script writes preflight.log beside
+    itself, and tests must not dirty the repo.
+    """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     _stub(bindir / "hermes", hermes_body)
+    script = tmp_path / "preflight.sh"
+    script.write_bytes(PREFLIGHT.read_bytes())
     return subprocess.run(
-        ["bash", str(PREFLIGHT)],
+        ["bash", str(script)],
         capture_output=True, text=True,
         cwd=str(tmp_path),
         env={
