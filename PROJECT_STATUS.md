@@ -34,6 +34,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 | 5 round trips | `0a6c509` | derived ids + rebuild invariant — **61 real trades now measurable** |
 | 6 R + slippage | `5b61d28` | the metric D5/D7 gate on; every uncomputable case carries a reason |
 | 6b drawdown | `a8936d6` | broker-served equity history — **the §4.4 circuit breakers become armable** |
+| 7 performance view | `dd7f78a` | `v_performance_current` — live metrics, no job to run |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -80,11 +81,21 @@ short qty=267  50.71 -> 48.61  pnl=561.65   (2 entry fills, 3 exit)
 
 **Task 6b arms the governance gate's §4.4 breakers**, which until now were dead controls that look alive. Drawdown is computed from broker-served equity history (D3), so it works today with no warmup: `drawdown_5d_pct 1.1911` on the real account, hand-checked against peak 108670.47 → latest 107376.13. A failed fetch reports **UNAVAILABLE, never 0.0** — a breaker reading "no drawdown" because the fetch died is a disarmed breaker. `portfolio_snapshots` also finally has a writer (it has held 0 rows since the schema was written), one row per day, UNIQUE-enforced so an EOD retry cannot double the series.
 
+**Task 7's view reads live over the real trips — and is honest about what it cannot say:**
+
+```
+mode=paper trades=61 win_rate=0.6721 net_pnl=3106.72 profit_factor=2.7443
+  expectancy_r=None   r_computable=0   r_excluded=61
+  max_drawdown=665.28 (path-dependent, computed in Python)
+```
+
+Real win rate and profit factor from actual P&L; expectancy **NULL** rather than 0.0, because no trade has a computable R. `GROUP BY mode` means paper and live are never summed.
+
 `total_fees` remains 0.0 carrying `fees_attributable=0`: Alpaca attributes no fees per trade, so D7's net-of-cost figure is portfolio-level, not per-trade.
 
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-517 passed, 10 warnings in 32.47s          # 353 + 164 — a floor, not evidence
+536 passed, 10 warnings in 32.78s          # 353 + 183 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.

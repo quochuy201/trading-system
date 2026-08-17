@@ -166,7 +166,21 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** create the view per design §3d (GROUP BY mode, strategy). Compute path-dependent metrics (`max_drawdown`, `sharpe`) in Python. Repurpose the existing `performance_metrics` table as an **EOD snapshot log** (add `expectancy_r` column).
 - **Tests:** `tools/tests/test_audit.py` — fixture set with **known expectancy** (assert exact); NULL-R trades excluded from `expectancy_r` but counted in `total_trades`; `r_excluded` correct; **paper/live never summed**; empty set ⇒ no crash, NULLs not zeros; **F10: a NULL-`net_pnl` row must not silently understate `win_rate`** — excluded from *both* numerator and denominator (`COUNT(net_pnl)`); zero-denominator ⇒ NULL, not a divide-by-zero.
 - **Acceptance:** the view returns correct live metrics with no job having to run.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `dd7f78a` (2026-08-16). 19 tests; suite 536.
+  - **Read live over the 61 real round trips:**
+    ```
+    mode=paper strategy=None trades=61 win_rate=0.6721 net_pnl=3106.72
+      expectancy_r=None  r_computable=0  r_excluded=61
+      profit_factor=2.7443  avg_slippage=None  fees_unattributable=61
+    path_metrics: max_drawdown=665.28  sharpe_r=None  trades=61
+    ```
+    **That row is the design working.** It states a real win rate and profit factor from actual P&L, and **refuses** to state expectancy — NULL with `r_excluded=61` — because not one trade has a computable R. A 0.0 there would have looked like a measured break-even edge.
+  - A **VIEW**, not a table: pure aggregates of `round_trips`, so nothing has to be scheduled and the answer can never be stale relative to the data.
+  - **`GROUP BY mode` — paper and live are never summed.**
+  - **F10 verified by mutation:** dividing `win_rate` by `COUNT(*)` instead of `COUNT(net_pnl)` fails with `assert 0.3333 == 0.5` — a NULL-P&L row would silently drag the rate down. `COUNT(net_pnl)` drops it from *both* sides.
+  - **NULL vs 0.0 is a real distinction here, and my first test conflated them:** no losses ⇒ `profit_factor` NULL (undefined); *all* losses ⇒ `0.0` (a genuine measurement). Both cases now tested separately.
+  - `max_drawdown` and Sharpe **cannot** live in the view — both depend on trade ORDER, which `GROUP BY` discards — so they are computed in Python over exit-ordered rows. Mutation-checked: returning 0.0 instead of None for an empty/degenerate series fails 2 tests.
+  - `performance_metrics` repurposed as a dated **EOD snapshot log** (+`expectancy_r`, `mode`, `r_excluded`, `snapshot_at`). It records what the numbers WERE; the view is what they ARE. Append-only, so two days both survive.
 
 ### Task 8 — `trade_transactions`: LEAVE IT ALONE (no code)
 - **Files:** none
