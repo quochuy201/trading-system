@@ -307,3 +307,212 @@ class TestComplianceScorer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- go-live-metrics Task 7: v_performance_current + snapshot log ---
+#
+# The view answers everything that is a pure aggregate of round_trips, on read,
+# so no job has to run and the answer can never be stale. Two properties matter
+# more than the arithmetic: paper and live are never summed, and an unknown is
+# NULL rather than a confident zero.
+
+from datetime import datetime as _dt
+
+import pytest as _pytest
+
+from audit.performance import (
+    current_performance,
+    max_drawdown_r,
+    path_metrics,
+    sharpe,
+    write_performance_snapshot,
+)
+from persistence.repository import Repository as _Repo
+
+
+def _trip(repo, rt_id, *, mode="paper", strategy="swing", net_pnl=100.0,
+          r=1.0, slippage=None, symbol="NVDA", exit_at="2026-01-01T00:00:00"):
+    """Insert a round trip directly — this suite tests the aggregation, not
+    the pairing (that is test_round_trips.py)."""
+    repo.conn.execute(
+        """INSERT INTO round_trips
+        (round_trip_id, content_hash, symbol, strategy, direction, quantity,
+         entry_price, exit_price, exit_at, gross_pnl, total_fees,
+         fees_attributable, net_pnl, r_multiple, slippage, mode)
+        VALUES (?,?,?,?,'long',100,10.0,11.0,?,?,0.0,0,?,?,?,?)""",
+        (rt_id, "h" + rt_id, symbol, strategy, exit_at, net_pnl, net_pnl, r,
+         slippage, mode),
+    )
+    repo.conn.commit()
+
+
+class TestPerformanceView:
+    def test_known_expectancy_is_exact(self):
+        """R of +2, -1, +3, 0 -> expectancy 1.0. Hand-computed."""
+        repo = _Repo(":memory:")
+        for i, r in enumerate([2.0, -1.0, 3.0, 0.0]):
+            _trip(repo, f"t{i}", r=r, net_pnl=r * 100)
+        row = current_performance(repo)[0]
+        assert row["total_trades"] == 4
+        assert row["expectancy_r"] == _pytest.approx(1.0)
+        assert row["r_computable_trades"] == 4
+        assert row["r_excluded"] == 0
+        repo.close()
+
+    def test_null_r_excluded_from_expectancy_but_counted_as_a_trade(self):
+        """A trade we cannot score is still a trade that happened."""
+        repo = _Repo(":memory:")
+        _trip(repo, "a", r=2.0, net_pnl=200.0)
+        _trip(repo, "b", r=None, net_pnl=50.0)
+        row = current_performance(repo)[0]
+        assert row["total_trades"] == 2
+        assert row["expectancy_r"] == _pytest.approx(2.0)  # the NULL is not a 0
+        assert row["r_computable_trades"] == 1
+        assert row["r_excluded"] == 1
+        repo.close()
+
+    def test_paper_and_live_are_never_summed(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "p1", mode="paper", net_pnl=100.0, r=1.0)
+        _trip(repo, "l1", mode="live", net_pnl=-500.0, r=-2.0)
+        rows = {r["mode"]: r for r in current_performance(repo)}
+        assert set(rows) == {"paper", "live"}
+        assert rows["paper"]["total_net_pnl"] == 100.0
+        assert rows["live"]["total_net_pnl"] == -500.0
+        assert current_performance(repo, mode="paper") == [rows["paper"]]
+        repo.close()
+
+    def test_null_net_pnl_does_not_understate_win_rate(self):
+        """F10. `SUM(net_pnl > 0)` alone yields NULL for a NULL-P&L row, which
+        would drag the rate down. COUNT(net_pnl) drops it from BOTH sides."""
+        repo = _Repo(":memory:")
+        _trip(repo, "w", net_pnl=100.0, r=1.0)
+        _trip(repo, "l", net_pnl=-50.0, r=-1.0)
+        _trip(repo, "u", net_pnl=None, r=None)
+        row = current_performance(repo)[0]
+        assert row["total_trades"] == 3
+        assert row["win_rate"] == _pytest.approx(0.5)  # 1 of 2 scoreable, not 1 of 3
+        repo.close()
+
+    def test_empty_set_returns_nothing_rather_than_zeros(self):
+        repo = _Repo(":memory:")
+        assert current_performance(repo) == []
+        repo.close()
+
+    def test_all_losses_gives_a_profit_factor_of_zero(self):
+        """Zero here is a real measurement — made nothing, lost something —
+        and must NOT be confused with the undefined case below."""
+        repo = _Repo(":memory:")
+        _trip(repo, "a", net_pnl=-10.0, r=-1.0)
+        row = current_performance(repo)[0]
+        assert row["profit_factor"] == _pytest.approx(0.0)
+        assert row["total_net_pnl"] == -10.0
+        repo.close()
+
+    def test_no_losses_gives_null_profit_factor_not_a_crash(self):
+        """Nothing to divide by. NULLIF turns the zero denominator into NULL —
+        'undefined' — rather than raising or reporting a confident number."""
+        repo = _Repo(":memory:")
+        _trip(repo, "a", net_pnl=100.0, r=1.0)
+        row = current_performance(repo)[0]
+        assert row["profit_factor"] is None
+        assert row["win_rate"] == _pytest.approx(1.0)
+        repo.close()
+
+    def test_no_wins_and_no_losses_does_not_divide_by_zero(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "a", net_pnl=0.0, r=0.0)
+        row = current_performance(repo)[0]
+        assert row["profit_factor"] is None
+        assert row["win_rate"] == _pytest.approx(0.0)
+        repo.close()
+
+    def test_strategies_are_grouped_separately(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "s1", strategy="swing", r=2.0)
+        _trip(repo, "m1", strategy="momentum", r=-1.0)
+        rows = {r["strategy"]: r for r in current_performance(repo)}
+        assert rows["swing"]["expectancy_r"] == _pytest.approx(2.0)
+        assert rows["momentum"]["expectancy_r"] == _pytest.approx(-1.0)
+        repo.close()
+
+    def test_view_needs_no_job_to_run(self):
+        """Insert a trip and read immediately — no rebuild, no refresh."""
+        repo = _Repo(":memory:")
+        _trip(repo, "a", r=1.5)
+        assert current_performance(repo)[0]["expectancy_r"] == _pytest.approx(1.5)
+        _trip(repo, "b", r=2.5)
+        assert current_performance(repo)[0]["expectancy_r"] == _pytest.approx(2.0)
+        repo.close()
+
+
+class TestPathDependentMetrics:
+    def test_max_drawdown_hand_computed(self):
+        # cumulative: 100, 60, 160, 110 -> peak 160, trough 110 -> 50
+        assert max_drawdown_r([100.0, -40.0, 100.0, -50.0]) == _pytest.approx(50.0)
+
+    def test_a_curve_that_only_rises_has_no_drawdown(self):
+        assert max_drawdown_r([10.0, 20.0, 30.0]) == 0.0
+
+    def test_empty_series_is_unknown_not_zero(self):
+        assert max_drawdown_r([]) is None
+
+    def test_sharpe_needs_dispersion(self):
+        assert sharpe([1.0]) is None            # one point
+        assert sharpe([2.0, 2.0, 2.0]) is None  # zero variance is undefined
+        assert sharpe([1.0, 2.0, 3.0]) == _pytest.approx(2.0 / 1.0)
+
+    def test_path_metrics_respects_exit_order_and_mode(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "a", net_pnl=100.0, r=1.0, exit_at="2026-01-01T00:00:00")
+        _trip(repo, "b", net_pnl=-40.0, r=-0.5, exit_at="2026-01-02T00:00:00")
+        _trip(repo, "z", mode="live", net_pnl=-9999.0, r=-9.0,
+              exit_at="2026-01-03T00:00:00")
+
+        paper = path_metrics(repo, "paper")
+        assert paper["trades"] == 2
+        assert paper["max_drawdown"] == _pytest.approx(40.0)
+        assert path_metrics(repo, "live")["max_drawdown"] == _pytest.approx(9999.0)
+        repo.close()
+
+
+class TestSnapshotLog:
+    def test_writes_one_row_per_strategy(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "s1", strategy="swing", r=2.0, net_pnl=200.0)
+        _trip(repo, "m1", strategy="momentum", r=-1.0, net_pnl=-100.0)
+
+        assert write_performance_snapshot(repo, "paper",
+                                          as_of=_dt(2026, 8, 16)) == 2
+        rows = repo.conn.execute(
+            "SELECT * FROM performance_metrics ORDER BY strategy").fetchall()
+        assert [r["strategy"] for r in rows] == ["momentum", "swing"]
+        assert rows[1]["expectancy_r"] == _pytest.approx(2.0)
+        assert rows[1]["mode"] == "paper"
+        assert rows[0]["snapshot_at"].startswith("2026-08-16")
+        repo.close()
+
+    def test_snapshot_records_the_exclusion_count(self):
+        repo = _Repo(":memory:")
+        _trip(repo, "a", r=2.0, net_pnl=200.0)
+        _trip(repo, "b", r=None, net_pnl=50.0)
+        write_performance_snapshot(repo, "paper")
+        row = repo.conn.execute("SELECT * FROM performance_metrics").fetchone()
+        assert row["total_trades"] == 2 and row["r_excluded"] == 1
+        repo.close()
+
+    def test_no_trips_writes_nothing_and_does_not_raise(self):
+        repo = _Repo(":memory:")
+        assert write_performance_snapshot(repo, "paper") == 0
+        repo.close()
+
+    def test_the_log_is_append_only_history_not_a_cache(self):
+        """Two days of snapshots must both survive — this is a record of what
+        the numbers WERE, unlike the view which is what they ARE."""
+        repo = _Repo(":memory:")
+        _trip(repo, "a", r=1.0)
+        write_performance_snapshot(repo, "paper", as_of=_dt(2026, 8, 15))
+        write_performance_snapshot(repo, "paper", as_of=_dt(2026, 8, 16))
+        assert repo.conn.execute(
+            "SELECT COUNT(*) c FROM performance_metrics").fetchone()["c"] == 2
+        repo.close()

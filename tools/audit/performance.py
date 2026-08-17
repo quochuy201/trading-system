@@ -98,3 +98,152 @@ def _empty_metrics() -> dict:
         "avg_loser": 0, "max_drawdown": 0, "gross_profit": 0,
         "gross_loss": 0, "by_symbol": {}, "by_sop_version": {},
     }
+
+
+# --- Go-live metrics: the round-trip view + its path-dependent companions ---
+#
+# `v_performance_current` answers everything that is a pure aggregate of
+# round_trips, on read, with no job to run and no staleness possible. Two
+# metrics cannot live there because they depend on the ORDER of trades, which
+# a GROUP BY discards: max drawdown and Sharpe. Those are computed here.
+#
+# Nothing in this section reads `trade_transactions` or the ledger — the
+# legacy path above is untouched (design §6).
+
+import logging
+import math
+from datetime import datetime, timezone
+
+_log = logging.getLogger(__name__)
+
+
+def current_performance(repo: Repository, mode: str | None = None) -> list[dict]:
+    """Read `v_performance_current`, one row per (mode, strategy).
+
+    Args:
+        repo: Repository.
+        mode: Restrict to "paper" | "live" | "simulation". None returns every
+            group — but they are never merged, because summing paper and live
+            would be meaningless.
+
+    Returns:
+        List of dicts with the view's columns. Empty list when there are no
+        round trips. Values may be None ("unknown"); they are never coerced to
+        0.0, which would read as a measured zero.
+    """
+    sql = "SELECT * FROM v_performance_current"
+    params: tuple = ()
+    if mode:
+        sql += " WHERE mode = ?"
+        params = (mode,)
+    sql += " ORDER BY mode, strategy"
+    return [dict(r) for r in repo.conn.execute(sql, params).fetchall()]
+
+
+def max_drawdown_r(pnls: list[float]) -> float | None:
+    """Largest peak-to-trough decline of the cumulative P&L curve.
+
+    Path-dependent, so it cannot be a column in the view: a GROUP BY has no
+    notion of trade order.
+
+    Args:
+        pnls: Realised P&L per trade, in exit order.
+
+    Returns:
+        The drawdown as a positive number, 0.0 for a curve that never declines,
+        None for an empty series ("unknown", not "no drawdown").
+    """
+    if not pnls:
+        return None
+    cumulative = peak = 0.0
+    worst = 0.0
+    for pnl in pnls:
+        cumulative += pnl
+        peak = max(peak, cumulative)
+        worst = max(worst, peak - cumulative)
+    return worst
+
+
+def sharpe(values: list[float]) -> float | None:
+    """Mean over standard deviation of a per-trade series.
+
+    Args:
+        values: Per-trade returns — R-multiples where available, since a
+            Sharpe over raw dollars is dominated by position size.
+
+    Returns:
+        None for fewer than two points, or when every value is identical
+        (zero dispersion ⇒ undefined, not "infinitely good").
+    """
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    if variance <= 0:
+        return None
+    return mean / math.sqrt(variance)
+
+
+def path_metrics(repo: Repository, mode: str) -> dict:
+    """Max drawdown and Sharpe for one mode, in exit order.
+
+    Args:
+        repo: Repository.
+        mode: "paper" | "live" | "simulation".
+
+    Returns:
+        {"max_drawdown": float | None, "sharpe_r": float | None,
+         "trades": int} — None means "not computable from what we have",
+        never a stand-in zero.
+    """
+    rows = repo.conn.execute(
+        "SELECT net_pnl, r_multiple FROM round_trips WHERE mode = ? ORDER BY exit_at",
+        (mode,),
+    ).fetchall()
+    pnls = [r["net_pnl"] for r in rows if r["net_pnl"] is not None]
+    rs = [r["r_multiple"] for r in rows if r["r_multiple"] is not None]
+    return {
+        "max_drawdown": max_drawdown_r(pnls),
+        "sharpe_r": sharpe(rs),
+        "trades": len(rows),
+    }
+
+
+def write_performance_snapshot(repo: Repository, mode: str,
+                               as_of: datetime | None = None) -> int:
+    """Append one dated row per (mode, strategy) to the EOD snapshot log.
+
+    `performance_metrics` is repurposed as a LOG of what the numbers were on a
+    given day. The view remains the source of truth — this exists so a later
+    question like "what did expectancy look like in July" is answerable without
+    replaying history.
+
+    Args:
+        repo: Repository.
+        mode: Which mode to snapshot.
+        as_of: Timestamp to stamp; defaults to now (UTC).
+
+    Returns:
+        Number of rows written — one per strategy group. 0 when there are no
+        round trips yet, which is not an error.
+    """
+    when = as_of or datetime.now(timezone.utc).replace(tzinfo=None)
+    path = path_metrics(repo, mode)
+    written = 0
+    for row in current_performance(repo, mode=mode):
+        repo.conn.execute(
+            """INSERT INTO performance_metrics
+            (period, mode, strategy, total_trades, win_rate, expectancy_r,
+             r_excluded, profit_factor, max_drawdown, sharpe_ratio, snapshot_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "eod", mode, row["strategy"], row["total_trades"],
+                row["win_rate"], row["expectancy_r"], row["r_excluded"],
+                row["profit_factor"], path["max_drawdown"], path["sharpe_r"],
+                when.isoformat(),
+            ),
+        )
+        written += 1
+    repo.conn.commit()
+    _log.info("performance snapshot mode=%s rows=%d", mode, written)
+    return written

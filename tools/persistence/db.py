@@ -332,6 +332,34 @@ CREATE TABLE IF NOT EXISTS round_trip_fills (
 
 CREATE INDEX IF NOT EXISTS idx_rtf_fill ON round_trip_fills(fill_id);
 
+-- Live performance, computed on read. A VIEW rather than a table because
+-- these are pure aggregates of round_trips: no job has to run, and the answer
+-- can never be stale relative to the data.
+--
+-- GROUP BY mode guarantees paper and live are NEVER summed.
+--
+-- F10: COUNT(net_pnl) excludes NULL-P&L rows from BOTH sides of win_rate.
+-- `SUM(net_pnl > 0)` alone yields NULL for those rows, which silently
+-- understates the rate. NULLIF guards every denominator, so an empty or
+-- all-NULL group returns NULL — "unknown" — rather than a divide-by-zero or
+-- a confident 0.0.
+CREATE VIEW IF NOT EXISTS v_performance_current AS
+SELECT mode, strategy,
+       COUNT(*)                                              AS total_trades,
+       SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END) * 1.0
+         / NULLIF(COUNT(net_pnl), 0)                         AS win_rate,
+       AVG(r_multiple)                                       AS expectancy_r,
+       COUNT(r_multiple)                                     AS r_computable_trades,
+       COUNT(*) - COUNT(r_multiple)                          AS r_excluded,
+       SUM(CASE WHEN net_pnl > 0 THEN net_pnl ELSE 0 END) /
+         NULLIF(ABS(SUM(CASE WHEN net_pnl < 0 THEN net_pnl ELSE 0 END)), 0)
+                                                             AS profit_factor,
+       SUM(net_pnl)                                          AS total_net_pnl,
+       AVG(slippage)                                         AS avg_slippage,
+       SUM(CASE WHEN fees_attributable = 0 THEN 1 ELSE 0 END) AS fees_unattributable
+FROM round_trips
+GROUP BY mode, strategy;
+
 -- Where incremental syncs remember how far they got. One row per stream, e.g.
 -- key='fills:FILL'. The cursor is the broker's own activity id, so rewinding it
 -- re-imports through the same code path that does the daily sync.
@@ -378,6 +406,12 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
 _COLUMN_MIGRATIONS = [
     ("trade_plans", "regime", "TEXT"),
     ("portfolio_snapshots", "date", "TEXT"),
+    # performance_metrics is repurposed as an EOD SNAPSHOT LOG of the view —
+    # a dated record of what the numbers were, not the source of truth.
+    ("performance_metrics", "expectancy_r", "REAL"),
+    ("performance_metrics", "mode", "TEXT"),
+    ("performance_metrics", "r_excluded", "INTEGER"),
+    ("performance_metrics", "snapshot_at", "TEXT"),
 ]
 
 
