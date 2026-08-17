@@ -224,11 +224,11 @@ class Repository:
             )
         cur = self.conn.execute(
             """INSERT OR IGNORE INTO fills
-            (fill_id, order_id, symbol, side, qty, price, fill_type,
+            (fill_id, broker_order_id, symbol, side, qty, price, fill_type,
              filled_at, mode)
             VALUES (?,?,?,?,?,?,?,?,?)""",
             (
-                fill.fill_id, fill.order_id, fill.symbol, fill.side,
+                fill.fill_id, fill.broker_order_id, fill.symbol, fill.side,
                 fill.qty, fill.price, fill.fill_type,
                 fill.filled_at.isoformat(), fill.mode,
             ),
@@ -236,15 +236,27 @@ class Repository:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def get_fills_for_order(self, order_id: str) -> list[Fill]:
-        """All executions for one order, in execution order. [] if none."""
+    def get_fills_for_order(self, broker_order_id: str) -> list[Fill]:
+        """All executions for one BROKER order id, in execution order.
+
+        Args:
+            broker_order_id: The broker's order id — the value the activity
+                feed reports, i.e. `orders.broker_order_id`, NOT our own
+                `orders.order_id`.
+
+        Returns:
+            Fills oldest-first. [] when the order has none, including for an
+            order we never recorded (backfilled history, or a position opened
+            outside this system).
+        """
         rows = self.conn.execute(
-            "SELECT * FROM fills WHERE order_id = ? ORDER BY filled_at, fill_id",
-            (order_id,),
+            "SELECT * FROM fills WHERE broker_order_id = ? ORDER BY filled_at, fill_id",
+            (broker_order_id,),
         ).fetchall()
         return [
             Fill(
-                fill_id=r["fill_id"], order_id=r["order_id"], symbol=r["symbol"],
+                fill_id=r["fill_id"], broker_order_id=r["broker_order_id"],
+                symbol=r["symbol"],
                 side=r["side"], qty=r["qty"], price=r["price"],
                 fill_type=r["fill_type"],
                 filled_at=datetime.fromisoformat(r["filled_at"]),
@@ -252,6 +264,34 @@ class Repository:
             )
             for r in rows
         ]
+
+    # --- Sync cursors ---
+
+    def get_sync_cursor(self, key: str) -> str | None:
+        """Where an incremental sync last got to. None = never run."""
+        row = self.conn.execute(
+            "SELECT value FROM sync_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_sync_cursor(self, key: str, value: str | None) -> None:
+        """Record sync progress.
+
+        Args:
+            key: Stream name, e.g. "fills:FILL".
+            value: The broker's id of the last consumed item. None rewinds the
+                stream to the beginning, which re-imports through the same code
+                path rather than a separate backfill script.
+
+        Returns:
+            None.
+        """
+        self.conn.execute(
+            """INSERT OR REPLACE INTO sync_state (key, value, updated_at)
+            VALUES (?,?,?)""",
+            (key, value, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
+        )
+        self.conn.commit()
 
     # --- Workflow Checkpoints ---
 

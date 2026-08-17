@@ -267,19 +267,33 @@ CREATE TABLE IF NOT EXISTS orders (
 -- fill_id is the broker's activity id, so a replayed activity feed collides on
 -- the primary key. Dedup is structural. INSERT only — never UPDATE, never
 -- DELETE. qty is THIS execution, not cum_qty.
+--
+-- The column is broker_order_id, not order_id, because that is what it holds:
+-- the id the BROKER put on the execution. It joins orders.broker_order_id, NOT
+-- orders.order_id (which is ours). Naming it order_id is how "fills.order_id
+-- joins orders.order_id" became a claim that matches zero rows.
 CREATE TABLE IF NOT EXISTS fills (
-    fill_id      TEXT PRIMARY KEY,
-    order_id     TEXT NOT NULL,
-    symbol       TEXT NOT NULL,
-    side         TEXT NOT NULL,
-    qty          INTEGER NOT NULL,
-    price        REAL NOT NULL,
-    fill_type    TEXT NOT NULL,
-    filled_at    TEXT NOT NULL,
-    mode         TEXT NOT NULL
+    fill_id          TEXT PRIMARY KEY,
+    broker_order_id  TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    side             TEXT NOT NULL,
+    qty              INTEGER NOT NULL,
+    price            REAL NOT NULL,
+    fill_type        TEXT NOT NULL,
+    filled_at        TEXT NOT NULL,
+    mode             TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_fills_order ON fills(order_id);
+CREATE INDEX IF NOT EXISTS idx_fills_broker_order ON fills(broker_order_id);
+
+-- Where incremental syncs remember how far they got. One row per stream, e.g.
+-- key='fills:FILL'. The cursor is the broker's own activity id, so rewinding it
+-- re-imports through the same code path that does the daily sync.
+CREATE TABLE IF NOT EXISTS sync_state (
+    key         TEXT PRIMARY KEY,
+    value       TEXT,
+    updated_at  TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS scan_funnel (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,8 +346,41 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
+def _rename_fills_order_column(conn: sqlite3.Connection) -> None:
+    """Rename the legacy `fills.order_id` to `broker_order_id` (idempotent).
+
+    The column always held the broker's order id; `order_id` invited the join
+    against `orders.order_id` (ours), which matches zero rows. Renaming makes
+    the join key self-describing.
+
+    Refuses to touch a table that already holds rows — `fills` is append-only,
+    and no migration of this feature's data should ever be silent. In practice
+    the rename runs against an empty table.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(fills)")}
+    if not cols or "order_id" not in cols or "broker_order_id" in cols:
+        return
+    count = conn.execute("SELECT COUNT(*) AS n FROM fills").fetchone()["n"]
+    if count:
+        raise RuntimeError(
+            f"fills has {count} rows under the legacy column name 'order_id'; "
+            "refusing to auto-rename append-only data — migrate deliberately"
+        )
+    conn.execute("ALTER TABLE fills RENAME COLUMN order_id TO broker_order_id")
+    conn.execute("DROP INDEX IF EXISTS idx_fills_order")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fills_broker_order ON fills(broker_order_id)"
+    )
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create all tables and apply column migrations (idempotent)."""
+    """Create all tables and apply migrations (idempotent).
+
+    Renames run BEFORE the schema script: SCHEMA creates
+    `idx_fills_broker_order`, which cannot be built against a table still
+    carrying the legacy column name.
+    """
+    _rename_fills_order_column(conn)
     conn.executescript(SCHEMA)
     _apply_column_migrations(conn)
     conn.commit()

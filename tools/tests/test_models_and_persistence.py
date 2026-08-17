@@ -248,7 +248,7 @@ class TestOrdersAndFillsSchema:
         indexes = [r["name"] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index'"
         ).fetchall()]
-        assert "idx_fills_order" in indexes
+        assert "idx_fills_broker_order" in indexes
         conn.close()
 
     def test_migration_is_a_noop_when_already_applied(self):
@@ -256,7 +256,7 @@ class TestOrdersAndFillsSchema:
         repo = Repository(":memory:")
         repo.save_order(Order(order_id="o1", symbol="AAPL", side="buy",
                               order_type="limit", qty_requested=10, mode="paper"))
-        repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+        repo.insert_fill(Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL",
                               side="buy", qty=10, price=150.0,
                               fill_type="fill", mode="paper"))
         init_db(repo.conn)  # second migration pass
@@ -280,7 +280,7 @@ class TestOrderFillModels:
 
     def test_fill_roundtrip(self):
         fill = Fill(
-            fill_id="act-1", order_id="o1", symbol="AAPL", side="buy",
+            fill_id="act-1", broker_order_id="o1", symbol="AAPL", side="buy",
             qty=40, price=150.25, fill_type="partial_fill", mode="paper",
         )
         restored = from_json(Fill, to_json(fill))
@@ -354,7 +354,7 @@ class TestOrderFillRepository:
     def test_insert_fill_is_idempotent(self):
         """Replaying the same broker execution is a PK conflict, not a new row."""
         self.repo.save_order(self._order())
-        fill = Fill(fill_id="act-1", order_id="o1", symbol="AAPL", side="buy",
+        fill = Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL", side="buy",
                     qty=100, price=150.25, fill_type="fill", mode="paper")
         assert self.repo.insert_fill(fill) is True
         assert self.repo.insert_fill(fill) is False
@@ -366,10 +366,10 @@ class TestOrderFillRepository:
         INSERT OR REPLACE would delete-and-reinsert, silently rewriting history.
         """
         self.repo.save_order(self._order())
-        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL",
                                    side="buy", qty=100, price=150.25,
                                    fill_type="fill", mode="paper"))
-        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL",
                                    side="buy", qty=999, price=1.0,
                                    fill_type="fill", mode="paper"))
         fills = self.repo.get_fills_for_order("o1")
@@ -380,11 +380,11 @@ class TestOrderFillRepository:
     def test_partial_fills_are_separate_rows(self):
         """One row per execution — qty is THIS execution, never cumulative."""
         self.repo.save_order(self._order())
-        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL",
                                    side="buy", qty=40, price=150.00,
                                    fill_type="partial_fill", mode="paper",
                                    filled_at=datetime(2026, 8, 14, 9, 30)))
-        self.repo.insert_fill(Fill(fill_id="act-2", order_id="o1", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-2", broker_order_id="o1", symbol="AAPL",
                                    side="buy", qty=60, price=150.50,
                                    fill_type="fill", mode="paper",
                                    filled_at=datetime(2026, 8, 14, 9, 31)))
@@ -396,10 +396,10 @@ class TestOrderFillRepository:
     def test_get_fills_for_order_isolates_orders(self):
         self.repo.save_order(self._order("o1"))
         self.repo.save_order(self._order("o2"))
-        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-1", broker_order_id="o1", symbol="AAPL",
                                    side="buy", qty=10, price=1.0,
                                    fill_type="fill", mode="paper"))
-        self.repo.insert_fill(Fill(fill_id="act-2", order_id="o2", symbol="AAPL",
+        self.repo.insert_fill(Fill(fill_id="act-2", broker_order_id="o2", symbol="AAPL",
                                    side="buy", qty=10, price=1.0,
                                    fill_type="fill", mode="paper"))
         assert [f.fill_id for f in self.repo.get_fills_for_order("o1")] == ["act-1"]

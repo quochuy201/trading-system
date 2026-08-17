@@ -132,7 +132,7 @@ class Fill:
     partially filled order is two Fill rows, not one row updated twice.
     """
     fill_id: str = ""  # broker activity id — never generated locally
-    order_id: str = ""
+    broker_order_id: str = ""  # joins orders.broker_order_id, NOT orders.order_id
     symbol: str = ""
     side: str = ""  # buy, sell
     qty: int = 0  # this execution only, NOT cum_qty
