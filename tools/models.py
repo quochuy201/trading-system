@@ -68,6 +68,11 @@ class TradePlan:
     risk_assessment: dict[str, Any] = field(default_factory=dict)
     rationale: str = ""
     created_at: datetime = field(default_factory=_now)
+    # Market regime when the decision was made — captured here, at plan
+    # creation, from the session's preflight value. Orders inherit it rather
+    # than recomputing: the regime calculation is versioned, so a later lookup
+    # would quietly rewrite history. None when unknown; never fabricated.
+    regime: str | None = None
 
 
 @dataclass

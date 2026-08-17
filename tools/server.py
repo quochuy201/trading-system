@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 from broker.alpaca import AlpacaBrokerAdapter
 from broker.retry import RetryConfig, with_retry
 from data.source import get_data_source
-from models import to_json
+from models import Order, to_json
 from persistence.repository import Repository
 
 mcp = FastMCP("trading-tools")
@@ -142,6 +142,72 @@ def get_account() -> str:
     return json.dumps(account)
 
 
+def _order_mode() -> str:
+    """paper | live | simulation — derived from the active broker, one place."""
+    platform = _get_platform()
+    return {"alpaca_paper": "paper", "alpaca_live": "live"}.get(platform, platform)
+
+
+def _intended_price(
+    side: str, limit_price: float | None, stop_price: float | None,
+    plan,
+) -> float | None:
+    """The price this order was aiming at — the slippage reference, or None.
+
+    Precedence: an explicit limit, then an explicit stop (the trigger level IS
+    the intent for a stop order), then the plan's entry level.
+
+    The plan's entry level is only borrowed when this order is the plan's
+    *entry* leg (same side). Reusing an entry level as an exit's reference
+    would produce a confidently wrong slippage number, and per the feature's
+    honest-data rule a wrong number is worse than a missing one.
+    """
+    if limit_price is not None:
+        return limit_price
+    if stop_price is not None:
+        return stop_price
+    if plan is not None and plan.side == side:
+        return plan.entry_limit_price
+    return None
+
+
+def _record_order_intent(
+    tx, symbol: str, side: str, order_type: str, quantity: int,
+    limit_price: float | None, stop_price: float | None, plan_id: str,
+) -> None:
+    """Write the `orders` row for an order that reached the broker.
+
+    Records what we asked for, so that `fills` can later record what we got.
+    `regime_at_entry` is inherited from the plan — deliberately NOT recomputed
+    here: `get_market_regime` is a network call, and the regime that matters is
+    the one at the decision, not at submit.
+
+    Never raises. The order is already live at the broker; failing here must
+    not surface an error the agent could read as "not placed" and retry, which
+    would double-submit. Logged loudly instead.
+    """
+    try:
+        repo = get_repo()
+        plan = repo.get_trade_plan(plan_id) if plan_id else None
+        repo.save_order(Order(
+            plan_id=plan_id or None,
+            broker_order_id=tx.broker_order_id or None,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            qty_requested=quantity,
+            intended_price=_intended_price(side, limit_price, stop_price, plan),
+            regime_at_entry=plan.regime if plan else None,
+            mode=_order_mode(),
+        ))
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "order intent not recorded symbol=%s broker_order_id=%s plan_id=%s "
+            "— order IS live at the broker; metrics will miss it",
+            symbol, getattr(tx, "broker_order_id", "?"), plan_id,
+        )
+
+
 @mcp.tool()
 def place_order(
     symbol: str, side: str, order_type: str, quantity: int,
@@ -173,6 +239,11 @@ def place_order(
     tx.plan_id = plan_id
     if plan_id:
         get_repo().save_transaction(tx)
+    _record_order_intent(
+        tx=tx, symbol=symbol, side=side, order_type=order_type,
+        quantity=quantity, limit_price=limit_price, stop_price=stop_price,
+        plan_id=plan_id,
+    )
     # Auto-log to transaction ledger
     _log_to_ledger(
         action=side, symbol=symbol, quantity=quantity,

@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS trade_plans (
     time_stop TEXT,
     risk_assessment TEXT,
     rationale TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    regime TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trade_transactions (
@@ -310,7 +311,29 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+# Columns added to tables that already exist in deployed databases.
+# `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a new column
+# never reaches it — these need a real ALTER. Guarded, so re-running is safe.
+# (table, column, declaration)
+_COLUMN_MIGRATIONS = [
+    ("trade_plans", "regime", "TEXT"),
+]
+
+
+def _apply_column_migrations(conn: sqlite3.Connection) -> None:
+    """Add any missing columns listed in _COLUMN_MIGRATIONS.
+
+    Existing rows get NULL — the honest value for "we were not recording this
+    when that row was written", never a backfilled guess.
+    """
+    for table, column, decl in _COLUMN_MIGRATIONS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create all tables (idempotent)."""
+    """Create all tables and apply column migrations (idempotent)."""
     conn.executescript(SCHEMA)
+    _apply_column_migrations(conn)
     conn.commit()

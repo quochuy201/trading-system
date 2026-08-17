@@ -32,8 +32,9 @@ class Repository:
             """INSERT OR REPLACE INTO trade_plans
             (plan_id, symbol, strategy, sop_version, side, quantity,
              entry_order_type, entry_limit_price, take_profit, stop_loss,
-             trailing_stop, time_stop, risk_assessment, rationale, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             trailing_stop, time_stop, risk_assessment, rationale, created_at,
+             regime)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 plan.plan_id, plan.symbol, plan.strategy, plan.sop_version,
                 plan.side, plan.quantity, plan.entry_order_type,
@@ -41,7 +42,7 @@ class Repository:
                 plan.trailing_stop,
                 plan.time_stop.isoformat() if plan.time_stop else None,
                 json.dumps(plan.risk_assessment), plan.rationale,
-                plan.created_at.isoformat(),
+                plan.created_at.isoformat(), plan.regime,
             ),
         )
         self.conn.commit()
@@ -64,6 +65,7 @@ class Repository:
             risk_assessment=json.loads(row["risk_assessment"]) if row["risk_assessment"] else {},
             rationale=row["rationale"],
             created_at=datetime.fromisoformat(row["created_at"]),
+            regime=row["regime"],
         )
 
     def list_trade_plans(self, symbol: str | None = None) -> list[TradePlan]:
@@ -127,9 +129,16 @@ class Repository:
 
         Returns:
             None.
+
+        Raises:
+            sqlite3.IntegrityError: order_id already stored, or another order
+                already claims this broker_order_id. Deliberately not
+                INSERT OR REPLACE — that would silently delete the earlier
+                order, losing a real placement from the metrics with nothing
+                to notice it. The caller logs and continues.
         """
         self.conn.execute(
-            """INSERT OR REPLACE INTO orders
+            """INSERT INTO orders
             (order_id, plan_id, broker_order_id, symbol, side, order_type,
              qty_requested, intended_price, submitted_at, terminal_status,
              gate_verdict, gate_rule_id, regime_at_entry, mode)
