@@ -119,6 +119,65 @@ class AlpacaBrokerAdapter(BrokerAdapter):
         except Exception:
             return False
 
+    @staticmethod
+    def _whole_shares(raw, field: str, activity_id: str) -> int:
+        """Cast a broker quantity string to int, refusing to truncate.
+
+        Alpaca sends every numeric as a string. A fractional share floored to
+        an int is a wrong position that nothing downstream can detect, so this
+        fails loudly instead.
+        """
+        value = float(raw)
+        if value != int(value):
+            raise ValueError(
+                f"fractional {field}={raw} on activity {activity_id}; "
+                f"refusing to truncate — fills.qty is a whole-share column"
+            )
+        return int(value)
+
+    def _normalize_activity(self, row: dict) -> dict:
+        activity_id = row.get("id", "")
+        return {
+            "id": activity_id,
+            "order_id": row.get("order_id", ""),
+            "symbol": row.get("symbol", ""),
+            "side": row.get("side", ""),
+            "qty": self._whole_shares(row["qty"], "qty", activity_id),
+            "cum_qty": self._whole_shares(row["cum_qty"], "cum_qty", activity_id),
+            "price": float(row["price"]),
+            "type": row.get("type", ""),
+            "transaction_time": row.get("transaction_time", ""),
+        }
+
+    def get_account_activities(
+        self,
+        activity_type: str = "FILL",
+        page_token: str | None = None,
+        page_size: int = 100,
+    ) -> list[dict]:
+        """See BrokerAdapter.get_account_activities."""
+        params: dict = {"page_size": page_size, "direction": "asc"}
+        if page_token:
+            params["page_token"] = page_token
+        raw = self.trading_client.get(f"/account/activities/{activity_type}", params)
+        return [self._normalize_activity(r) for r in (raw or [])]
+
+    def get_order(self, broker_order_id: str) -> dict:
+        """See BrokerAdapter.get_order — status only, never a fill source."""
+        try:
+            order = self.trading_client.get_order_by_id(broker_order_id)
+        except Exception:
+            return {
+                "order_id": broker_order_id, "status": "unknown",
+                "symbol": "", "qty_requested": 0,
+            }
+        return {
+            "order_id": str(order.id),
+            "status": str(order.status.value) if order.status else "unknown",
+            "symbol": order.symbol,
+            "qty_requested": int(float(order.qty)) if order.qty else 0,
+        }
+
     def get_positions(self) -> list[dict]:
         positions = self.trading_client.get_all_positions()
         return [

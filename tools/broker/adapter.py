@@ -26,6 +26,62 @@ class BrokerAdapter(ABC):
         ...
 
     @abstractmethod
+    def get_account_activities(
+        self,
+        activity_type: str = "FILL",
+        page_token: str | None = None,
+        page_size: int = 100,
+    ) -> list[dict]:
+        """Discrete account activities, oldest first — THE fill source.
+
+        Each row is one *execution*, so a partially filled order yields several
+        rows. This is why fills come from here and not from `get_order()`:
+        `get_order()` reports a *cumulative* filled quantity, so appending it
+        across polls double-counts (poll at 50 filled, poll again at 100,
+        append both ⇒ 150). Real evidence from the paper account: 64 of 250
+        FILL activities have `qty != cum_qty`, and 31 orders filled in more
+        than one execution.
+
+        Args:
+            activity_type: Broker activity type, e.g. "FILL".
+            page_token: Cursor — the `id` of the last row already consumed.
+                None starts from the oldest activity.
+            page_size: Max rows per page; >= 1.
+
+        Returns:
+            List of dicts, oldest first, each with keys:
+            `id` (stable unique execution id — becomes `fills.fill_id`),
+            `order_id`, `symbol`, `side`, `qty` (THIS execution only),
+            `cum_qty` (the broker's running total — exposed so the difference
+            is checkable, never to be summed), `price`, `type`
+            (fill | partial_fill), `transaction_time` (ISO-8601).
+            Empty list when the cursor has reached the end.
+
+        Raises:
+            ValueError: the broker reported a fractional quantity, which would
+                be silently truncated into a wrong position.
+        """
+        ...
+
+    @abstractmethod
+    def get_order(self, broker_order_id: str) -> dict:
+        """Order status ONLY — never a fill source.
+
+        Needed because cancelled/rejected/expired orders never appear in the
+        FILL activity feed, so terminal status cannot be derived from fills
+        alone. Deliberately exposes no quantity or price fields: the cumulative
+        ones are exactly what would double-count if appended.
+
+        Args:
+            broker_order_id: The broker's order id.
+
+        Returns:
+            {"order_id", "status", "symbol", "qty_requested"}. `status` is
+            "unknown" when the broker has no such order.
+        """
+        ...
+
+    @abstractmethod
     def get_positions(self) -> list[dict]:
         ...
 

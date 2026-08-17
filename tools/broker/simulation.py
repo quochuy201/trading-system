@@ -34,6 +34,11 @@ class SimulationBrokerAdapter(BrokerAdapter):
         self.current_time: datetime | None = None
         self._order_counter = 0
         self._fill_price_bar: dict | None = None  # set by harness for correct fill pricing
+        # Executions this simulation modelled, oldest first — the backtest's
+        # equivalent of the broker's activity feed, so reconciliation runs the
+        # same code path live and in backtest.
+        self._activities: list[dict] = []
+        self._order_status: dict[str, dict] = {}
 
     def set_time(self, t: datetime) -> None:
         """Advance simulation clock. Data queries respect this."""
@@ -74,6 +79,7 @@ class SimulationBrokerAdapter(BrokerAdapter):
         order_id = self._next_order_id()
 
         if bar is None:
+            self._record_status(order_id, symbol, quantity, "rejected")
             return TradeTransaction(
                 transaction_id=order_id, symbol=symbol, side=side,
                 order_type=order_type, quantity=quantity, price=0.0,
@@ -103,6 +109,7 @@ class SimulationBrokerAdapter(BrokerAdapter):
                 filled = True
 
         if not filled:
+            self._record_status(order_id, symbol, quantity, "pending")
             return TradeTransaction(
                 transaction_id=order_id, symbol=symbol, side=side,
                 order_type=order_type, quantity=quantity, price=0.0,
@@ -130,13 +137,76 @@ class SimulationBrokerAdapter(BrokerAdapter):
             else:
                 self.positions[symbol] = pos
 
+        self._record_status(order_id, symbol, quantity, "filled")
+        self._record_activity(order_id, symbol, side, quantity, fill_price)
+
         return TradeTransaction(
             transaction_id=order_id, symbol=symbol, side=side,
             order_type=order_type, quantity=quantity, price=fill_price,
             broker_order_id=order_id, status="filled",
         )
 
+    def _record_status(self, order_id, symbol, quantity, status) -> None:
+        self._order_status[order_id] = {
+            "order_id": order_id, "status": status,
+            "symbol": symbol, "qty_requested": quantity,
+        }
+
+    def _record_activity(
+        self, order_id: str, symbol: str, side: str, qty: int, price: float
+    ) -> None:
+        """Append the execution just modelled.
+
+        The activity id is derived from the sequence, never random: backtests
+        must be reproducible, and Task 5 hashes fill ids into round-trip ids.
+        The simulation fills in one shot, so `cum_qty == qty` — but the field
+        is present so both adapters carry the same shape.
+        """
+        self._activities.append({
+            "id": f"SIM-ACT-{len(self._activities) + 1:06d}",
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": side,
+            "qty": qty,
+            "cum_qty": qty,
+            "price": price,
+            "type": "fill",
+            "transaction_time": (
+                self.current_time.isoformat() if self.current_time else ""
+            ),
+        })
+
+    def get_account_activities(
+        self,
+        activity_type: str = "FILL",
+        page_token: str | None = None,
+        page_size: int = 100,
+    ) -> list[dict]:
+        """See BrokerAdapter.get_account_activities.
+
+        Only FILL is modelled — the simulation charges no regulatory fees, so
+        inventing FEE rows would fabricate costs the backtest never paid.
+        """
+        if activity_type != "FILL":
+            return []
+        start = 0
+        if page_token:
+            ids = [a["id"] for a in self._activities]
+            # Unknown cursor ⇒ nothing left, rather than silently replaying
+            # from the beginning and duplicating every fill.
+            start = ids.index(page_token) + 1 if page_token in ids else len(ids)
+        return [dict(a) for a in self._activities[start:start + page_size]]
+
+    def get_order(self, broker_order_id: str) -> dict:
+        """See BrokerAdapter.get_order — status only, never a fill source."""
+        return self._order_status.get(broker_order_id, {
+            "order_id": broker_order_id, "status": "unknown",
+            "symbol": "", "qty_requested": 0,
+        })
+
     def cancel_order(self, order_id: str) -> bool:
+        if order_id in self._order_status:
+            self._order_status[order_id]["status"] = "canceled"
         return True  # Simulation: all cancels succeed
 
     def get_positions(self) -> list[dict]:
