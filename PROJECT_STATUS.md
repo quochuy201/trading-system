@@ -29,6 +29,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 |---|---|---|
 | 1 `orders` + `fills` | `22dc627` | intent and reality become separate tables |
 | 2 fill source | `85d12aa` | fills come from the activity feed, never from `get_order()` |
+| 3 intent capture | `a83b5ca` | `place_order` writes an `orders` row; regime inherited from the plan |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -47,9 +48,20 @@ sum(cum_qty) = 180   <- the double-count avoided
 
 That is why `get_order()` is not the fill source: it reports the *cumulative* filled quantity, so appending it across polls overstates by 34–80% on these real orders. `get_order()` now returns status only — no `filled_qty`/`filled_avg_price` — so it is structurally unusable as one. The test fixture is that payload captured verbatim; guessing would have missed that every numeric arrives as a **string** and that `id` is `"<timestamp>::<uuid>"`.
 
+**Task 3** adds intent capture to the live order path, additively — the broker call, its arguments, the `trade_transactions` write and the ledger entry are unchanged, and recording failures are logged rather than returned (the order is already live; an error the agent reads as "not placed" would invite a double-submit). Regime is **inherited from the plan**, never computed at submit: `get_market_regime` in the order path would add a network failure mode *and* capture the wrong moment. Migration ran against the dev DB — 13 plans preserved, `regime` added, **0 rows backfilled with a guess**. ⚠️ `CREATE TABLE IF NOT EXISTS` cannot add a column to an existing table, so `db.py` now carries a guarded `_COLUMN_MIGRATIONS` pass; every future column goes there.
+
+Two silent-data-loss bugs were caught by tests that expected one thing and got another, then confirmed by mutation:
+
+| Mutation | Test that fails | What it would have cost |
+|---|---|---|
+| `intended_price` always borrows the plan's entry level | `assert 210.0 is None` | exits carry the entry price ⇒ wrong slippage in Task 6 |
+| `save_order` uses `INSERT OR REPLACE` | `assert 'TSLA' == 'NVDA'` | a duplicate `broker_order_id` silently deletes a real placement |
+
+⚠️ **Open finding for Task 4 — the join key.** `fills.order_id` holds the *broker's* order id while `orders.order_id` is *ours*, so joining them matches **zero rows** — verbatim the defect CLAUDE.md's RULE 1 table already records. Task 3 populates `orders.broker_order_id` on every row, so the correct join is `fills.order_id = orders.broker_order_id`. Detail and the recommended column rename: [`go-live-metrics-implementation-plan.md`](docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md) Task 3.
+
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-383 passed, 10 warnings in 28.93s          # 353 + 30 — a floor, not evidence
+403 passed, 10 warnings in 28.15s          # 353 + 50 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.

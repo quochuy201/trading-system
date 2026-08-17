@@ -57,7 +57,20 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** add a `regime` column to `trade_plans`, written at **plan creation** from the session preflight value (F8). On submit, INSERT into `orders` capturing `intended_price` (limit/signal price), `mode`, gate verdict fields (nullable until the gate ships), and `regime_at_entry` **inherited from the plan via `plan_id`**. ⚠️ **Do NOT call `get_market_regime` in the order path** — network call + failure mode in the hot path, and it would be the wrong (submit-time) regime. Keep writing `trade_transactions` during cutover; it becomes read-only in Task 8.
 - **Tests:** `tools/tests/test_reconcile.py::test_place_order_records_intent` — an order row exists with `intended_price` set and `terminal_status IS NULL`; **`regime_at_entry` matches the plan's `regime`**; **order with no plan ⇒ `regime_at_entry IS NULL`, never fabricated**; **assert the order path makes no regime call** (no network in `place_order`).
 - **Acceptance:** every placed order produces exactly one `orders` row; **no change to order-placement behaviour**; regime captured where it's known.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `a83b5ca` (2026-08-16). 20 tests; suite 403.
+  - **Real-path evidence:** the `regime` ALTER ran against the dev DB — 13 existing plans preserved, column added, **0 rows backfilled** with a guessed regime, idempotent across two `init_db` passes. ⚠️ `CREATE TABLE IF NOT EXISTS` is a **no-op on an existing table**, so a new column never reaches a deployed DB. Added a guarded `_COLUMN_MIGRATIONS` pass in `db.py`; every future column goes there.
+  - **Three honest-data decisions, each mutation-checked:**
+    1. `intended_price` borrows the plan's entry level **only when the order is that plan's entry leg** (same side). Mutating it to always borrow fails with `assert 210.0 is None` — an exit would have carried the entry price and produced a confidently wrong slippage in Task 6.
+    2. `save_order` is a **plain INSERT**, not `INSERT OR REPLACE`. `broker_order_id` is UNIQUE, so REPLACE silently deletes an earlier real placement — mutating it back fails with `assert 'TSLA' == 'NVDA'`. Found by a test that expected 2 rows and got 1.
+    3. Recording **never blocks trading**: the order is already live, so a DB failure is logged, never returned. Mutating the handler to re-raise surfaces `sqlite3.IntegrityError` to the agent — which could read as "not placed" and invite a double-submit.
+  - No regime call in the order path, guarded twice: monkeypatching `get_market_regime` to raise, and asserting the name does not appear in `place_order`'s source.
+  - `mode` is `paper | live | simulation` derived from the active broker. Simulation gets its own value rather than being mislabelled paper — D-C says backtest results are never summed with live/paper.
+
+  ### ⚠️ Finding for Task 4 — the join key (resolve before writing fills)
+
+  `fills.order_id` is documented in design §3b as `TradeActivity.order_id → FK orders`. That is the **broker's** id, while `orders.order_id` is **ours** — so `fills.order_id = orders.order_id` matches **zero rows**. This is verbatim the defect CLAUDE.md's RULE 1 table already records ("one is the broker's UUID, one is ours — 0 rows match").
+
+  Task 3 makes the correct join available: `orders.broker_order_id` is now populated on every row (asserted by `test_place_order_records_intent`). **Task 4 must join `fills.order_id = orders.broker_order_id`**, and `fills.order_id` must keep storing the broker's id — fills arrive from the activity feed for orders we never recorded (backfill, and the 6 orphan paper positions), so translating at insert time would either drop them or invent an `orders` row. Recommend renaming the column to `fills.broker_order_id` while the table still has 0 rows, so the join key is self-documenting and this cannot be reintroduced.
 
 ### Task 4 — `sync_fills()` (cursor) + `sync_orders_terminal()` (status)
 - **Files:** `tools/audit/reconcile.py` (new), `sync_state` cursor row in `tools/persistence/db.py`
