@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS trade_transactions (
 
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
     timestamp TEXT NOT NULL,
     total_value REAL,
     cash REAL,
@@ -376,7 +377,27 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
 # (table, column, declaration)
 _COLUMN_MIGRATIONS = [
     ("trade_plans", "regime", "TEXT"),
+    ("portfolio_snapshots", "date", "TEXT"),
 ]
+
+
+# Indexes that reference a column added by _COLUMN_MIGRATIONS. They CANNOT
+# live in SCHEMA: executescript runs before the migration, so on a deployed
+# database the index would be built against a column that does not exist yet
+# and every connection would fail. (This has now bitten twice — fills and
+# portfolio_snapshots — hence the separate, explicitly-ordered pass.)
+_POST_MIGRATION_INDEXES = [
+    # One snapshot per day. UNIQUE so an EOD retry REPLACES the day rather
+    # than appending a second row and double-counting the equity series.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_date"
+    " ON portfolio_snapshots(date)",
+]
+
+
+def _apply_post_migration_indexes(conn: sqlite3.Connection) -> None:
+    """Build indexes that depend on migrated columns, after they exist."""
+    for statement in _POST_MIGRATION_INDEXES:
+        conn.execute(statement)
 
 
 def _apply_column_migrations(conn: sqlite3.Connection) -> None:
@@ -428,4 +449,5 @@ def init_db(conn: sqlite3.Connection) -> None:
     _rename_fills_order_column(conn)
     conn.executescript(SCHEMA)
     _apply_column_migrations(conn)
+    _apply_post_migration_indexes(conn)
     conn.commit()

@@ -84,6 +84,9 @@ class TestBrokerAdapterABC:
                 return {"order_id": broker_order_id, "status": "unknown",
                         "symbol": "", "qty_requested": 0}
 
+            def get_portfolio_history(self, period="1M", timeframe="1D"):
+                return {"timestamps": [], "equity": []}
+
             def get_positions(self):
                 return []
 

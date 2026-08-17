@@ -920,10 +920,16 @@ def get_portfolio_state() -> str:
                     "entry_price": 220.50, "current_price": 225.30,
                     "unrealized_pnl": 48.00, "unrealized_pnl_pct": 2.2}, ...]}
     """
+    from audit.drawdown import drawdowns_from_broker
+
     broker = get_broker()
     account = with_retry(broker.get_account, _retry_config)()
     positions = with_retry(broker.get_positions, _retry_config)()
-    return json.dumps({"account": account, "positions": positions})
+    # Drawdown comes from broker-served equity history, so it is available
+    # today with no warmup. UNAVAILABLE on failure — never 0.0, which would
+    # read as "no drawdown" and silently disarm the §4.4 breakers.
+    risk = drawdowns_from_broker(broker)
+    return json.dumps({"account": account, "positions": positions, "risk": risk})
 
 
 # --- Persistence Tools ---

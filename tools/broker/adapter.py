@@ -82,6 +82,31 @@ class BrokerAdapter(ABC):
         ...
 
     @abstractmethod
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1D"
+    ) -> dict:
+        """Account equity over time — the source for drawdown.
+
+        The BROKER is authoritative for account state (D3), so drawdown is
+        computed from history it serves rather than from anything we recorded.
+        That means the circuit breakers work today, with no warmup period and
+        no dependence on us having been running.
+
+        Args:
+            period: Lookback window, e.g. "1M".
+            timeframe: Bar size, e.g. "1D".
+
+        Returns:
+            {"timestamps": [int], "equity": [float]} — parallel lists, oldest
+            first. Empty lists when the broker has no history.
+
+        Raises:
+            Whatever the transport raises. Callers must translate a failure to
+            UNAVAILABLE, never to "no drawdown" — see design §3b-ter.
+        """
+        ...
+
+    @abstractmethod
     def get_positions(self) -> list[dict]:
         ...
 

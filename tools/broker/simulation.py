@@ -39,10 +39,17 @@ class SimulationBrokerAdapter(BrokerAdapter):
         # same code path live and in backtest.
         self._activities: list[dict] = []
         self._order_status: dict[str, dict] = {}
+        self._equity_curve: list[tuple[int, float]] = []
 
     def set_time(self, t: datetime) -> None:
-        """Advance simulation clock. Data queries respect this."""
+        """Advance simulation clock. Data queries respect this.
+
+        Also records an equity point, so the backtest builds the same equity
+        curve shape the live broker serves and drawdown is computed by
+        identical code in both.
+        """
         self.current_time = t
+        self._equity_curve.append((int(t.timestamp()), self.get_account()["equity"]))
 
     def _next_order_id(self) -> str:
         self._order_counter += 1
@@ -208,6 +215,20 @@ class SimulationBrokerAdapter(BrokerAdapter):
         if order_id in self._order_status:
             self._order_status[order_id]["status"] = "canceled"
         return True  # Simulation: all cancels succeed
+
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1D"
+    ) -> dict:
+        """See BrokerAdapter.get_portfolio_history.
+
+        Served from the simulated equity curve. `period`/`timeframe` are
+        accepted for shape compatibility but not resampled — the harness
+        already advances one point per bar.
+        """
+        return {
+            "timestamps": [t for t, _ in self._equity_curve],
+            "equity": [e for _, e in self._equity_curve],
+        }
 
     def get_positions(self) -> list[dict]:
         result = []

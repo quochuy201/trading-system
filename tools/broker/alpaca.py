@@ -178,6 +178,26 @@ class AlpacaBrokerAdapter(BrokerAdapter):
             "qty_requested": int(float(order.qty)) if order.qty else 0,
         }
 
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1D"
+    ) -> dict:
+        """See BrokerAdapter.get_portfolio_history."""
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        history = self.trading_client.get_portfolio_history(
+            GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+        )
+        timestamps = list(getattr(history, "timestamp", None) or [])
+        equity = list(getattr(history, "equity", None) or [])
+        # Alpaca can return a null equity point for a session with no activity.
+        # Drop the pair rather than coercing to 0.0, which would read as a
+        # total wipeout and trip every drawdown breaker.
+        pairs = [(t, e) for t, e in zip(timestamps, equity) if e is not None]
+        return {
+            "timestamps": [t for t, _ in pairs],
+            "equity": [float(e) for _, e in pairs],
+        }
+
     def get_positions(self) -> list[dict]:
         positions = self.trading_client.get_all_positions()
         return [
