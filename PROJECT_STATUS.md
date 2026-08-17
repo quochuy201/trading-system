@@ -28,6 +28,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 | Task | Commit | What |
 |---|---|---|
 | 1 `orders` + `fills` | `22dc627` | intent and reality become separate tables |
+| 2 fill source | `85d12aa` | fills come from the activity feed, never from `get_order()` |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -35,9 +36,20 @@ The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` 
 
 ⚠️ **No real broker fill has ever been stored.** Every fill test uses a hand-built `Fill` against in-memory SQLite — the category CLAUDE.md lists under *Not evidence*. `get_account_activities()` (Task 2) and `sync_fills()` (Task 4) do not exist yet, so nothing has read Alpaca's activity feed. What is proven is narrower than "fills are captured correctly": **the table cannot double-count a replay and cannot be mutated after the fact.** The double-count this feature actually fears — appending `get_order()`'s cumulative `filled_qty` — is a Task 2/4 risk that Task 1 only makes the storage *safe against*. First real proof lands at Task 11.
 
+**Task 2 was checked against the live paper account, not a fixture** — and it turned the design's warning into a measured fact. The account holds **250 real FILL activities across 186 orders; 31 of those orders filled in more than one execution, and 64 rows have `qty != cum_qty`.** Read through the new adapter, real order `b38bacd0` (SHOP sell 100):
+
+```
+partial_fill  qty= 80  cum_qty= 80  price=120.5
+fill          qty= 20  cum_qty=100  price=121.91
+sum(qty)     = 100   <- the position we record
+sum(cum_qty) = 180   <- the double-count avoided
+```
+
+That is why `get_order()` is not the fill source: it reports the *cumulative* filled quantity, so appending it across polls overstates by 34–80% on these real orders. `get_order()` now returns status only — no `filled_qty`/`filled_avg_price` — so it is structurally unusable as one. The test fixture is that payload captured verbatim; guessing would have missed that every numeric arrives as a **string** and that `id` is `"<timestamp>::<uuid>"`.
+
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-368 passed, 10 warnings in 28.17s          # 353 + 15 — a floor, not evidence
+383 passed, 10 warnings in 28.93s          # 353 + 30 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.

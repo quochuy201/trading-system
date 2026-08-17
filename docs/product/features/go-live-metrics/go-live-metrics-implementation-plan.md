@@ -43,7 +43,14 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
   2. **`get_order(broker_order_id) -> dict`** — **status only.** Needed because cancelled/rejected/expired orders **never appear** in FILL activities.
 - **Tests:** `tools/tests/test_broker.py` — activities return per-execution rows (assert `qty` ≠ `cum_qty` on a partial); pagination via `page_token`; both adapters agree on shape; `get_order` returns status and is **never used to build a fill** (assert no fill-shaped fields are consumed from it).
 - **Acceptance:** the fill source is per-execution, not a cumulative snapshot.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `85d12aa` (2026-08-16). 15 tests; suite 383.
+  - **Verified against the live paper account, not a fixture.** 250 real FILL activities, 186 orders, **31 filled in more than one execution**, **64 rows where `qty != cum_qty`**. Real order `b38bacd0` (SHOP sell 100) read through the new adapter: `qty` 80 + 20 = **100** (correct); `cum_qty` 80 + 100 = **180** (the double-count). The design's warning is now a measured fact.
+  - Cursor sweep verified end to end: 3 pages × 100, 250 unique ids, empty page terminates — this is exactly the loop Task 4 drives.
+  - **The fixture is that real payload captured verbatim.** Two things I would have got wrong by guessing: every numeric arrives as a **string** (`"price": "8"`), and `id` is `"<timestamp>::<uuid>"`, not a bare UUID.
+  - `get_order()` returns `{order_id, status, symbol, qty_requested}` — **no** `filled_qty`/`filled_avg_price`/`price`/`qty`, so it is structurally unusable as a fill source. Asserted, both adapters.
+  - Mutation-checked: pointing the fill source at `cum_qty` fails with `assert [80, 100] == [80, 20]`.
+  - ⚠️ `get_account_activities` and `get_order` are **abstract** — a new adapter must decide rather than silently returning "no fills". `FakeBroker` in `test_broker.py` updated accordingly.
+  - Fractional qty raises rather than truncating (0 of 250 real rows are fractional; a floored share is a wrong position nothing downstream can detect).
 
 ### Task 3 — `place_order` writes an `orders` row
 - **Files:** `tools/server.py` (`place_order`, ~line 146-182)
