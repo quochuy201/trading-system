@@ -414,8 +414,12 @@ class TestOrderFillRepository:
         assert not re.search(r"UPDATE\s+fills", source, re.IGNORECASE)
         assert not re.search(r"DELETE\s+FROM\s+fills", source, re.IGNORECASE)
         assert not re.search(r"INSERT\s+OR\s+REPLACE\s+INTO\s+fills", source, re.IGNORECASE)
+        # Update this list deliberately, never to silence a failure: it is the
+        # whole fill-touching surface, and every addition should be a reader.
         fill_methods = [m for m in dir(Repository) if "fill" in m and not m.startswith("_")]
-        assert sorted(fill_methods) == ["get_fills_for_order", "insert_fill"]
+        assert sorted(fill_methods) == [
+            "get_all_fills", "get_fills_for_order", "insert_fill",
+        ]
 
 
 class TestPriceDataHelpers:

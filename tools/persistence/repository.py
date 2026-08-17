@@ -253,17 +253,29 @@ class Repository:
             "SELECT * FROM fills WHERE broker_order_id = ? ORDER BY filled_at, fill_id",
             (broker_order_id,),
         ).fetchall()
-        return [
-            Fill(
-                fill_id=r["fill_id"], broker_order_id=r["broker_order_id"],
-                symbol=r["symbol"],
-                side=r["side"], qty=r["qty"], price=r["price"],
-                fill_type=r["fill_type"],
-                filled_at=datetime.fromisoformat(r["filled_at"]),
-                mode=r["mode"],
-            )
-            for r in rows
-        ]
+        return [self._row_to_fill(r) for r in rows]
+
+    @staticmethod
+    def _row_to_fill(row: sqlite3.Row) -> Fill:
+        return Fill(
+            fill_id=row["fill_id"], broker_order_id=row["broker_order_id"],
+            symbol=row["symbol"], side=row["side"], qty=row["qty"],
+            price=row["price"], fill_type=row["fill_type"],
+            filled_at=datetime.fromisoformat(row["filled_at"]),
+            mode=row["mode"],
+        )
+
+    def get_all_fills(self) -> list[Fill]:
+        """Every stored execution, oldest first.
+
+        The input to the round-trip rebuild, which is why it reads the whole
+        table: trips are a function of the complete fill history, not of a
+        window of it.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM fills ORDER BY filled_at, fill_id"
+        ).fetchall()
+        return [self._row_to_fill(r) for r in rows]
 
     # --- Sync cursors ---
 

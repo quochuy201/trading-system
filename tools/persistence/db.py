@@ -286,6 +286,51 @@ CREATE TABLE IF NOT EXISTS fills (
 
 CREATE INDEX IF NOT EXISTS idx_fills_broker_order ON fills(broker_order_id);
 
+-- round_trips is a DERIVED CACHE. `fills` is the truth; this table is
+-- truncated and recomputed by rebuild_round_trips(). Hence round_trip_id is a
+-- hash of the boundary fills, never a UUID — a random id would make the
+-- rebuild invariant unpassable and dangle every external reference on every
+-- rebuild.
+CREATE TABLE IF NOT EXISTS round_trips (
+    round_trip_id   TEXT PRIMARY KEY,
+    content_hash    TEXT NOT NULL,
+    plan_id         TEXT,
+    symbol          TEXT NOT NULL,
+    strategy        TEXT,
+    sop_version     TEXT,
+    direction       TEXT,
+    quantity        INTEGER,
+    entry_price     REAL,
+    entry_at        TEXT,
+    exit_price      REAL,
+    exit_at         TEXT,
+    initial_stop    REAL,
+    gross_pnl       REAL,
+    total_fees      REAL,
+    fees_attributable INTEGER NOT NULL DEFAULT 0,
+    net_pnl         REAL,
+    r_multiple      REAL,
+    r_uncomputable_reason TEXT,
+    slippage        REAL,
+    regime_at_entry TEXT,
+    mode            TEXT NOT NULL,
+    rebuilt_at      TEXT
+);
+
+-- Which fills compose which trip. Derived, so it is rebuilt alongside
+-- round_trips. Deliberately NOT a round_trip_id column on `fills`: stamping
+-- fills would need an UPDATE, breaking the append-only immutability the whole
+-- design rests on. A fill split by a position flip legitimately belongs to two
+-- trips, which the composite key allows.
+CREATE TABLE IF NOT EXISTS round_trip_fills (
+    round_trip_id TEXT NOT NULL,
+    fill_id       TEXT NOT NULL,
+    leg           TEXT NOT NULL,
+    PRIMARY KEY (round_trip_id, fill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rtf_fill ON round_trip_fills(fill_id);
+
 -- Where incremental syncs remember how far they got. One row per stream, e.g.
 -- key='fills:FILL'. The cursor is the broker's own activity id, so rewinding it
 -- re-imports through the same code path that does the daily sync.
