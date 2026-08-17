@@ -1,19 +1,20 @@
 """Negative tests for `setup/deploy/preflight.sh`.
 
-Preflight is the gate that decides whether a trading cycle starts at all, so a
-check that cannot fail is worse than no check: it reports health it never
-measured. Check 1 was exactly that — a grep for `DEEPSEEK_API_KEY` in the
-profile `.env`, which passes while the token is revoked or the account is out
-of credits, and which named a key the model does not even use (both trading
-profiles run `provider: xai`). It is now a live `hermes -z` round-trip.
+Preflight gates a cycle that would do something harmful, so a check that
+cannot fail is worse than no check: it reports health it never measured.
+
+No check may name a vendor's credential. This file once asserted
+DEEPSEEK_API_KEY while the profiles ran provider xai (whose credential is an
+OAuth token in auth.json, not a key in .env), and DISCORD_BOT_TOKEN after
+delivery had moved to Telegram. Check 1 therefore asks the runtime that owns
+the credential — `hermes -z` — rather than guessing where it lives.
 
 Every check here is broken deliberately and asserted to FAIL, naming the right
 reason.
 
 Isolation: each test builds a throwaway profile under `tmp_path` and passes it
-via HERMES_HOME, with stub `hermes` and `python` executables on the script's
-path. Nothing here reads or writes the real `~/.hermes`, and no test makes a
-network call.
+via HERMES_HOME, with a stub `python` standing in for the tools layer. Nothing
+here reads or writes the real `~/.hermes`, and no test makes a network call.
 """
 from __future__ import annotations
 
@@ -67,7 +68,6 @@ def build_profile(
         env_lines = "\n".join([
             "ALPACA_API_KEY=" + "k" * 8,
             "ALPACA_SECRET_KEY=" + "s" * 8,
-            "DISCORD_BOT_TOKEN=" + "t" * 8,
         ])
     (profile / ".env").write_text(env_lines + "\n")
 
@@ -100,10 +100,11 @@ def build_profile(
 
 def run_preflight(home: Path, tmp_path: Path, hermes_body: str = 'echo ok\n'
                   ) -> subprocess.CompletedProcess:
-    """Run preflight against a throwaway home with a stubbed `hermes`.
+    """Run preflight against a throwaway home with a stubbed `hermes` on PATH.
 
     Runs a *copy* under tmp_path: the script writes preflight.log beside
-    itself, and tests must not dirty the repo.
+    itself, and tests must not dirty the repo. The stub goes on PATH rather
+    than behind an env override, because the script calls `hermes` directly.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
@@ -115,11 +116,10 @@ def run_preflight(home: Path, tmp_path: Path, hermes_body: str = 'echo ok\n'
         capture_output=True, text=True,
         cwd=str(tmp_path),
         env={
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": str(tmp_path),
             "HERMES_HOME": str(home),
             "HERMES_PROFILE": "trading",
-            "HERMES_BIN": str(bindir / "hermes"),
         },
     )
 
@@ -134,12 +134,11 @@ def test_all_checks_pass(tmp_path):
     assert "All preflight checks passed" in result.stdout
 
 
-# --- check 1: model auth is a live round-trip, not a key grep ---
+# --- check 1: model auth asks the runtime, never a key name ---
 
 
 def test_dead_provider_fails_check_1(tmp_path):
-    """A revoked token / 403 must abort the cycle. `hermes -z` exits non-zero
-    both when the agent raises and when no final response is produced."""
+    """A revoked token / 403 must abort the cycle."""
     build_profile(tmp_path / "home")
     result = run_preflight(
         tmp_path / "home", tmp_path,
@@ -151,7 +150,8 @@ def test_dead_provider_fails_check_1(tmp_path):
 
 
 def test_no_final_response_fails_check_1(tmp_path):
-    """The xAI failure mode on record: the run produces nothing at all."""
+    """The recorded xAI failure mode: the run produces nothing at all.
+    `hermes -z` exits 1 for that, not only for raised exceptions."""
     build_profile(tmp_path / "home")
     result = run_preflight(tmp_path / "home", tmp_path, hermes_body='exit 1\n')
     assert result.returncode != 0
@@ -161,15 +161,27 @@ def test_no_final_response_fails_check_1(tmp_path):
 def test_check_1_does_not_depend_on_any_key_name(tmp_path):
     """The regression that motivated the rewrite.
 
-    A `.env` with no model key at all must still PASS when the model answers —
-    proving the check measures reachability, not the presence of a string. The
-    old grep asserted DEEPSEEK_API_KEY while the profiles run provider: xai.
+    A profile .env naming NO model-provider key must still pass when the agent
+    answers — proving the check measures whether the model works, not whether
+    a particular string exists. The old grep asserted DEEPSEEK_API_KEY while
+    the profiles ran provider xai.
     """
     home = tmp_path / "home"
-    build_profile(home)  # .env has no DEEPSEEK_API_KEY and no XAI_API_KEY
+    build_profile(home)  # .env carries ALPACA keys only
     result = run_preflight(home, tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Model authentication valid" in result.stdout
+
+
+def test_check_1_is_scoped_to_the_profile(tmp_path):
+    """The probe must run as the profile whose cycle is about to start."""
+    home = tmp_path / "home"
+    build_profile(home)
+    run_preflight(home, tmp_path,
+                  hermes_body='echo "$@" > "$(dirname "$0")/hermes.args"\necho ok\n')
+    args = (tmp_path / "bin" / "hermes.args").read_text()
+    assert "-p trading" in args
+    assert "-z" in args
 
 
 # --- check 2: Alpaca ---
@@ -177,7 +189,7 @@ def test_check_1_does_not_depend_on_any_key_name(tmp_path):
 
 def test_missing_alpaca_key_fails_check_2(tmp_path):
     home = tmp_path / "home"
-    build_profile(home, env_lines="ALPACA_SECRET_KEY=ssss\nDISCORD_BOT_TOKEN=tttt")
+    build_profile(home, env_lines="ALPACA_SECRET_KEY=ssss")
     result = run_preflight(home, tmp_path)
     assert result.returncode != 0
     assert "ALPACA_API_KEY missing" in result.stdout
@@ -188,7 +200,7 @@ def test_empty_alpaca_key_fails_check_2(tmp_path):
     home = tmp_path / "home"
     build_profile(
         home,
-        env_lines="ALPACA_API_KEY=\nALPACA_SECRET_KEY=ssss\nDISCORD_BOT_TOKEN=tttt",
+        env_lines="ALPACA_API_KEY=\nALPACA_SECRET_KEY=ssss",
     )
     result = run_preflight(home, tmp_path)
     assert result.returncode != 0
@@ -233,17 +245,6 @@ def test_active_kill_switch_fails_check_4(tmp_path):
     assert "Kill switch is ACTIVE" in result.stdout
 
 
-# --- check 5: delivery ---
-
-
-def test_missing_discord_token_fails_check_5(tmp_path):
-    home = tmp_path / "home"
-    build_profile(home, env_lines="ALPACA_API_KEY=kkkk\nALPACA_SECRET_KEY=ssss")
-    result = run_preflight(home, tmp_path)
-    assert result.returncode != 0
-    assert "DISCORD_BOT_TOKEN missing" in result.stdout
-
-
 # --- check 0: prerequisites ---
 
 
@@ -261,3 +262,23 @@ def test_remediation_names_no_machine_specific_path():
     source = PREFLIGHT.read_text()
     assert "/Users/" not in source
     assert "workplace/trading-system" not in source
+
+
+
+def test_preflight_names_no_vendor_credential():
+    """No check may assert a specific provider's key.
+
+    This file asserted DEEPSEEK_API_KEY while the profiles ran provider xai,
+    and DISCORD_BOT_TOKEN after delivery had already moved to Telegram. Both
+    were dead controls that named a vendor -- and the vendor changes.
+    """
+    body = "\n".join(
+        line for line in PREFLIGHT.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    for vendor_key in ("DEEPSEEK", "DISCORD", "TELEGRAM", "SLACK", "OPENAI",
+                       "ANTHROPIC", "XAI", "INSTAGRAM"):
+        assert vendor_key not in body, (
+            f"{vendor_key} named in preflight -- vendor credentials change; "
+            f"this check will rot into a lie"
+        )

@@ -4,11 +4,25 @@
 # On failure, prints actionable remediation and exits without creating kanban graph
 #
 # Checks are real, not imagined:
-#   1. Model auth   -> a live `hermes -z` round-trip, NOT a grep for a key name
+#   1. Model auth   -> `hermes -z` round-trip; the agent must actually answer
 #   2. Alpaca       -> keys present + get_account() round-trip via tools layer
 #   3. Data fresh   -> MAX(timestamp) in price_data within 4 days (Fri->Mon + holiday)
 #   4. Kill switch  -> check_kill_switch() from server.py, must be inactive
-#   5. Delivery     -> DISCORD_BOT_TOKEN present in profile .env
+#
+# NO CHECK MAY NAME A VENDOR'S CREDENTIAL. Provider and delivery channel both
+# change -- this file once asserted DEEPSEEK_API_KEY while the profiles ran
+# provider xai (whose credential is an OAuth token in auth.json, not a key in
+# .env at all), and asserted DISCORD_BOT_TOKEN after delivery had moved to
+# Telegram. A key-name grep is also a dead control: it passes while the token
+# is revoked or the account is out of credits.
+#
+# So check 1 asks the runtime that OWNS the credential instead of guessing
+# where it lives: `hermes -z` exits non-zero both when the agent raises and
+# when no final response is produced (hermes_cli/oneshot.py). It stays correct
+# across a provider change because it never names one.
+#
+# Delivery credentials are deliberately NOT checked: a missing notifier is a
+# quiet cycle, not a wrong one, and there is no vendor-neutral way to ask.
 #
 # Tools layer lives INSIDE the profile (~/.hermes/profiles/<profile>/tools/),
 # and server.py auto-loads <profile>/.env itself (parent.parent of tools/), so
@@ -36,7 +50,6 @@ TOOLS_DIR="$PROFILE_DIR/tools"
 ENV_FILE="$PROFILE_DIR/.env"
 LOG_FILE="$SCRIPT_DIR/preflight.log"
 UV_BIN="${UV_BIN:-uv}"
-HERMES_BIN="${HERMES_BIN:-hermes}"
 
 # Prefer the venv interpreter the tools layer already ships. `uv run` can
 # re-resolve dependencies, which needs the network and adds latency to a gate
@@ -69,23 +82,16 @@ log "0. Checking profile prerequisites..."
 [ -d "$TOOLS_DIR" ] || fail "Tools layer missing at $TOOLS_DIR" \
     "Run the installer from the repo: ./install.sh hermes (it owns that path, not this script)"
 [ -f "$ENV_FILE" ] || fail "Profile .env missing" \
-    "Create $ENV_FILE with ALPACA_API_KEY, ALPACA_SECRET_KEY, DISCORD_BOT_TOKEN and the model provider's key"
+    "Create $ENV_FILE with ALPACA_API_KEY and ALPACA_SECRET_KEY (plus whatever the model provider and notifier need)"
 [ -f "$TOOLS_DIR/trading.db" ] || fail "trading.db missing in tools layer" \
     "Re-copy tools layer from the repo (includes trading.db)"
 success "Prerequisites present (tools layer + .env)"
 
-# 1. Model auth resolves -- a live round-trip, NOT a grep for a key name.
-#
-#    A key-presence grep is a dead control: it passes while the token is
-#    revoked or the account is out of credits, which is exactly how trading
-#    has silently halted before. It also asserted DEEPSEEK_API_KEY while both
-#    trading profiles run `provider: xai` -- a key the model never uses.
-#
-#    `hermes -z` exits non-zero both when the agent raises and when no final
-#    response is produced (see hermes_cli/oneshot.py), so both failure modes
-#    are caught. Costs one small model call and ~6s per cycle.
+# 1. Model auth -- ask the runtime that owns the credential.
+#    Called directly, not through an indirection variable: there is exactly
+#    one hermes on PATH and naming it twice invites drift.
 log "1. Checking model authentication..."
-if ! PROBE_OUT="$("$HERMES_BIN" -p "$PROFILE_NAME" -z 'Reply with exactly: ok' 2>&1)"; then
+if ! PROBE_OUT="$(hermes -p "$PROFILE_NAME" -z 'Reply with exactly: ok' 2>&1)"; then
     fail "Model auth failed: $(printf '%s' "$PROBE_OUT" | tr '\n' ' ' | tail -c 200)" \
         "Re-authenticate the provider, or check the account has credits and is under its spending limit"
 fi
@@ -133,11 +139,6 @@ KS_OUT="$(cd "$TOOLS_DIR" && "${PY_RUN[@]}" -c "from server import check_kill_sw
 echo "$KS_OUT" | grep -qE '"active": *true' && \
     fail "Kill switch is ACTIVE" "Review emergency, then clear the KILL_SWITCH file / state before resuming"
 success "Kill switch is inactive (trading allowed)"
-
-# 5. Delivery channel configured
-log "5. Checking delivery channel..."
-require_env_key DISCORD_BOT_TOKEN
-success "Delivery channel configured"
 
 # All checks passed
 log "🎉 All preflight checks passed - proceeding with cycle creation"
