@@ -85,6 +85,59 @@ class TradeTransaction:
 
 
 @dataclass
+class Order:
+    """An order we submitted — INTENT, recorded at submit time.
+
+    Separate from `Fill` on purpose: an order says what we asked for, a fill
+    says what the market gave us. Conflating them is what made the old
+    `trade_transactions` table unable to answer "what did we actually pay".
+
+    `regime_at_entry` is inherited from the plan (denormalized deliberately —
+    orders must stand alone as facts, plans can be edited). No plan ⇒ None,
+    never fabricated. Same for the gate fields, which stay None until the
+    governance gate ships.
+    """
+    order_id: str = field(default_factory=_new_id)
+    plan_id: str | None = None
+    broker_order_id: str | None = None
+    symbol: str = ""
+    side: str = ""  # buy, sell
+    order_type: str = ""
+    qty_requested: int = 0
+    intended_price: float | None = None  # limit/signal price → slippage reference
+    submitted_at: datetime = field(default_factory=_now)
+    terminal_status: str | None = None  # None until terminal; then filled, partially_filled, cancelled, rejected, expired, unknown_historical
+    gate_verdict: str | None = None  # APPROVED, REDUCED, REJECTED, PENDING
+    gate_rule_id: str | None = None
+    regime_at_entry: str | None = None
+    mode: str = ""  # paper, live
+
+
+@dataclass
+class Fill:
+    """One execution as reported by the broker — REALITY, append-only.
+
+    `fill_id` is the broker's own activity id and has NO default factory: it
+    must come from the broker so that replaying the activity feed collides on
+    the primary key instead of appending a duplicate. Minting one here would
+    make idempotency a thing we have to code correctly rather than a thing the
+    schema guarantees.
+
+    `qty` is THIS execution only — never the cumulative filled quantity. A
+    partially filled order is two Fill rows, not one row updated twice.
+    """
+    fill_id: str = ""  # broker activity id — never generated locally
+    order_id: str = ""
+    symbol: str = ""
+    side: str = ""  # buy, sell
+    qty: int = 0  # this execution only, NOT cum_qty
+    price: float = 0.0
+    fill_type: str = ""  # fill, partial_fill
+    filled_at: datetime = field(default_factory=_now)
+    mode: str = ""  # paper, live
+
+
+@dataclass
 class ExecutionReport:
     transactions: list[TradeTransaction] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

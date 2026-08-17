@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from datetime import datetime
 
 from models import (
+    Fill,
     JournalEntry,
+    Order,
     TradePlan,
     TradeTransaction,
     WorkflowCheckpoint,
@@ -229,6 +231,191 @@ class TestRepository:
         result = self.repo.query_price_data("AAPL", "2024-01-01", "2024-01-04")
         assert len(result) == 2
         assert result[0]["close"] == 151.0
+
+
+# --- Orders & Fills (go-live-metrics Task 1) ---
+
+
+class TestOrdersAndFillsSchema:
+    def test_both_tables_and_index_exist(self):
+        conn = get_connection(":memory:")
+        init_db(conn)
+        names = [r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+        assert "orders" in names
+        assert "fills" in names
+        indexes = [r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()]
+        assert "idx_fills_order" in indexes
+        conn.close()
+
+    def test_migration_is_a_noop_when_already_applied(self):
+        """Re-running init_db must not raise and must not drop existing rows."""
+        repo = Repository(":memory:")
+        repo.save_order(Order(order_id="o1", symbol="AAPL", side="buy",
+                              order_type="limit", qty_requested=10, mode="paper"))
+        repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+                              side="buy", qty=10, price=150.0,
+                              fill_type="fill", mode="paper"))
+        init_db(repo.conn)  # second migration pass
+        assert repo.get_order("o1") is not None
+        assert len(repo.get_fills_for_order("o1")) == 1
+        repo.close()
+
+
+class TestOrderFillModels:
+    def test_order_roundtrip(self):
+        order = Order(
+            order_id="o1", plan_id="p1", broker_order_id="brk-1", symbol="AAPL",
+            side="buy", order_type="limit", qty_requested=100,
+            intended_price=150.0, mode="paper", regime_at_entry="RISK_ON",
+        )
+        restored = from_json(Order, to_json(order))
+        assert restored.order_id == "o1"
+        assert restored.intended_price == 150.0
+        assert restored.regime_at_entry == "RISK_ON"
+        assert restored.terminal_status is None
+
+    def test_fill_roundtrip(self):
+        fill = Fill(
+            fill_id="act-1", order_id="o1", symbol="AAPL", side="buy",
+            qty=40, price=150.25, fill_type="partial_fill", mode="paper",
+        )
+        restored = from_json(Fill, to_json(fill))
+        assert restored.fill_id == "act-1"
+        assert restored.qty == 40
+        assert restored.price == 150.25
+
+    def test_fill_id_is_never_generated(self):
+        """fill_id is the broker's activity id — dedup is structural.
+
+        A default factory here would mint a fresh id per poll, turning every
+        replay into a new row and silently destroying idempotency.
+        """
+        assert Fill().fill_id == ""
+
+
+class TestOrderFillRepository:
+    def setup_method(self):
+        self.repo = Repository(":memory:")
+
+    def teardown_method(self):
+        self.repo.close()
+
+    def _order(self, order_id="o1", **kw):
+        params = dict(symbol="AAPL", side="buy", order_type="limit",
+                      qty_requested=100, intended_price=150.0, mode="paper")
+        params.update(kw)
+        return Order(order_id=order_id, **params)
+
+    def test_save_and_get_order(self):
+        self.repo.save_order(self._order(plan_id="p1", broker_order_id="brk-1",
+                                         regime_at_entry="RISK_ON"))
+        result = self.repo.get_order("o1")
+        assert result is not None
+        assert result.symbol == "AAPL"
+        assert result.qty_requested == 100
+        assert result.intended_price == 150.0
+        assert result.plan_id == "p1"
+        assert result.regime_at_entry == "RISK_ON"
+        assert result.terminal_status is None
+
+    def test_order_nullables_stay_null(self):
+        """No plan, no gate, no regime ⇒ NULL — never a fabricated value."""
+        self.repo.save_order(self._order(intended_price=None))
+        result = self.repo.get_order("o1")
+        assert result is not None
+        assert result.plan_id is None
+        assert result.intended_price is None
+        assert result.gate_verdict is None
+        assert result.gate_rule_id is None
+        assert result.regime_at_entry is None
+
+    def test_get_nonexistent_order(self):
+        assert self.repo.get_order("nope") is None
+
+    def test_set_order_terminal(self):
+        self.repo.save_order(self._order())
+        self.repo.set_order_terminal("o1", "cancelled")
+        result = self.repo.get_order("o1")
+        assert result is not None
+        assert result.terminal_status == "cancelled"
+
+    def test_get_open_orders_excludes_terminal(self):
+        self.repo.save_order(self._order("o1"))
+        self.repo.save_order(self._order("o2"))
+        self.repo.save_order(self._order("o3"))
+        self.repo.set_order_terminal("o2", "filled")
+        open_ids = sorted(o.order_id for o in self.repo.get_open_orders())
+        assert open_ids == ["o1", "o3"]
+
+    def test_insert_fill_is_idempotent(self):
+        """Replaying the same broker execution is a PK conflict, not a new row."""
+        self.repo.save_order(self._order())
+        fill = Fill(fill_id="act-1", order_id="o1", symbol="AAPL", side="buy",
+                    qty=100, price=150.25, fill_type="fill", mode="paper")
+        assert self.repo.insert_fill(fill) is True
+        assert self.repo.insert_fill(fill) is False
+        assert len(self.repo.get_fills_for_order("o1")) == 1
+
+    def test_insert_fill_never_overwrites(self):
+        """fills is append-only: a re-insert must not mutate the stored row.
+
+        INSERT OR REPLACE would delete-and-reinsert, silently rewriting history.
+        """
+        self.repo.save_order(self._order())
+        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+                                   side="buy", qty=100, price=150.25,
+                                   fill_type="fill", mode="paper"))
+        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+                                   side="buy", qty=999, price=1.0,
+                                   fill_type="fill", mode="paper"))
+        fills = self.repo.get_fills_for_order("o1")
+        assert len(fills) == 1
+        assert fills[0].price == 150.25
+        assert fills[0].qty == 100
+
+    def test_partial_fills_are_separate_rows(self):
+        """One row per execution — qty is THIS execution, never cumulative."""
+        self.repo.save_order(self._order())
+        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+                                   side="buy", qty=40, price=150.00,
+                                   fill_type="partial_fill", mode="paper",
+                                   filled_at=datetime(2026, 8, 14, 9, 30)))
+        self.repo.insert_fill(Fill(fill_id="act-2", order_id="o1", symbol="AAPL",
+                                   side="buy", qty=60, price=150.50,
+                                   fill_type="fill", mode="paper",
+                                   filled_at=datetime(2026, 8, 14, 9, 31)))
+        fills = self.repo.get_fills_for_order("o1")
+        assert len(fills) == 2
+        assert [f.fill_id for f in fills] == ["act-1", "act-2"]  # ordered by time
+        assert sum(f.qty for f in fills) == 100
+
+    def test_get_fills_for_order_isolates_orders(self):
+        self.repo.save_order(self._order("o1"))
+        self.repo.save_order(self._order("o2"))
+        self.repo.insert_fill(Fill(fill_id="act-1", order_id="o1", symbol="AAPL",
+                                   side="buy", qty=10, price=1.0,
+                                   fill_type="fill", mode="paper"))
+        self.repo.insert_fill(Fill(fill_id="act-2", order_id="o2", symbol="AAPL",
+                                   side="buy", qty=10, price=1.0,
+                                   fill_type="fill", mode="paper"))
+        assert [f.fill_id for f in self.repo.get_fills_for_order("o1")] == ["act-1"]
+        assert self.repo.get_fills_for_order("unknown") == []
+
+    def test_no_fill_mutation_path_exists(self):
+        """Append-only enforced by construction: no UPDATE/DELETE reaches fills."""
+        import re
+        import persistence.repository as repo_mod
+
+        source = Path(repo_mod.__file__).read_text()
+        assert not re.search(r"UPDATE\s+fills", source, re.IGNORECASE)
+        assert not re.search(r"DELETE\s+FROM\s+fills", source, re.IGNORECASE)
+        assert not re.search(r"INSERT\s+OR\s+REPLACE\s+INTO\s+fills", source, re.IGNORECASE)
+        fill_methods = [m for m in dir(Repository) if "fill" in m and not m.startswith("_")]
+        assert sorted(fill_methods) == ["get_fills_for_order", "insert_fill"]
 
 
 class TestPriceDataHelpers:

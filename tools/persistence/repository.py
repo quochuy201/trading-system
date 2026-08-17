@@ -5,7 +5,9 @@ import sqlite3
 from datetime import datetime, timezone
 
 from models import (
+    Fill,
     JournalEntry,
+    Order,
     TradePlan,
     TradeTransaction,
     WorkflowCheckpoint,
@@ -112,6 +114,135 @@ class Repository:
             (plan_id,),
         ).fetchall()
         return [self.get_transaction(r["transaction_id"]) for r in rows]  # type: ignore
+
+    # --- Orders (intent) ---
+
+    def save_order(self, order: Order) -> None:
+        """Record a submitted order.
+
+        Args:
+            order: The order as submitted. `mode` and `symbol` must be set;
+                nullable fields (plan_id, gate_*, regime_at_entry) stay NULL
+                when unknown rather than being defaulted to a value.
+
+        Returns:
+            None.
+        """
+        self.conn.execute(
+            """INSERT OR REPLACE INTO orders
+            (order_id, plan_id, broker_order_id, symbol, side, order_type,
+             qty_requested, intended_price, submitted_at, terminal_status,
+             gate_verdict, gate_rule_id, regime_at_entry, mode)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                order.order_id, order.plan_id, order.broker_order_id,
+                order.symbol, order.side, order.order_type,
+                order.qty_requested, order.intended_price,
+                order.submitted_at.isoformat(), order.terminal_status,
+                order.gate_verdict, order.gate_rule_id, order.regime_at_entry,
+                order.mode,
+            ),
+        )
+        self.conn.commit()
+
+    def _row_to_order(self, row: sqlite3.Row) -> Order:
+        return Order(
+            order_id=row["order_id"], plan_id=row["plan_id"],
+            broker_order_id=row["broker_order_id"], symbol=row["symbol"],
+            side=row["side"], order_type=row["order_type"],
+            qty_requested=row["qty_requested"],
+            intended_price=row["intended_price"],
+            submitted_at=datetime.fromisoformat(row["submitted_at"]),
+            terminal_status=row["terminal_status"],
+            gate_verdict=row["gate_verdict"], gate_rule_id=row["gate_rule_id"],
+            regime_at_entry=row["regime_at_entry"], mode=row["mode"],
+        )
+
+    def get_order(self, order_id: str) -> Order | None:
+        """Load one order by our own order_id. Returns None if absent."""
+        row = self.conn.execute(
+            "SELECT * FROM orders WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        return self._row_to_order(row) if row else None
+
+    def set_order_terminal(self, order_id: str, terminal_status: str) -> None:
+        """Mark an order terminal.
+
+        Args:
+            order_id: Our order id.
+            terminal_status: filled | partially_filled | cancelled | rejected |
+                expired | unknown_historical.
+
+        Returns:
+            None. Unknown order_id is a no-op — reconciliation must never
+            fail on a record it has not seen yet.
+        """
+        self.conn.execute(
+            "UPDATE orders SET terminal_status = ? WHERE order_id = ?",
+            (terminal_status, order_id),
+        )
+        self.conn.commit()
+
+    def get_open_orders(self) -> list[Order]:
+        """Orders with no terminal status yet, oldest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM orders WHERE terminal_status IS NULL ORDER BY submitted_at"
+        ).fetchall()
+        return [self._row_to_order(r) for r in rows]
+
+    # --- Fills (reality, append-only) ---
+
+    def insert_fill(self, fill: Fill) -> bool:
+        """Append one broker execution. Idempotent by primary key.
+
+        Args:
+            fill: The execution. `fill_id` must be the broker's activity id —
+                a locally minted id would defeat the PK collision that makes
+                replaying the activity feed safe.
+
+        Returns:
+            True if the row was inserted, False if this fill_id was already
+            stored. INSERT OR IGNORE, never REPLACE: a re-insert must not
+            rewrite the stored execution.
+
+        Raises:
+            ValueError: fill_id is empty.
+        """
+        if not fill.fill_id:
+            raise ValueError(
+                "fill_id is required and must be the broker's activity id; "
+                "refusing to store a fill we cannot deduplicate"
+            )
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO fills
+            (fill_id, order_id, symbol, side, qty, price, fill_type,
+             filled_at, mode)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                fill.fill_id, fill.order_id, fill.symbol, fill.side,
+                fill.qty, fill.price, fill.fill_type,
+                fill.filled_at.isoformat(), fill.mode,
+            ),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_fills_for_order(self, order_id: str) -> list[Fill]:
+        """All executions for one order, in execution order. [] if none."""
+        rows = self.conn.execute(
+            "SELECT * FROM fills WHERE order_id = ? ORDER BY filled_at, fill_id",
+            (order_id,),
+        ).fetchall()
+        return [
+            Fill(
+                fill_id=r["fill_id"], order_id=r["order_id"], symbol=r["symbol"],
+                side=r["side"], qty=r["qty"], price=r["price"],
+                fill_type=r["fill_type"],
+                filled_at=datetime.fromisoformat(r["filled_at"]),
+                mode=r["mode"],
+            )
+            for r in rows
+        ]
 
     # --- Workflow Checkpoints ---
 

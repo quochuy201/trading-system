@@ -243,6 +243,43 @@ CREATE TABLE IF NOT EXISTS iv_history (
     PRIMARY KEY (symbol, date)
 );
 
+-- orders = INTENT (what we asked for), fills = REALITY (what we got).
+-- Kept apart so "what did we actually pay" is answerable. See
+-- docs/product/features/go-live-metrics/go-live-metrics-design.md §3a/§3b.
+CREATE TABLE IF NOT EXISTS orders (
+    order_id         TEXT PRIMARY KEY,
+    plan_id          TEXT,
+    broker_order_id  TEXT UNIQUE,
+    symbol           TEXT NOT NULL,
+    side             TEXT NOT NULL,
+    order_type       TEXT NOT NULL,
+    qty_requested    INTEGER NOT NULL,
+    intended_price   REAL,
+    submitted_at     TEXT NOT NULL,
+    terminal_status  TEXT,
+    gate_verdict     TEXT,
+    gate_rule_id     TEXT,
+    regime_at_entry  TEXT,
+    mode             TEXT NOT NULL
+);
+
+-- fill_id is the broker's activity id, so a replayed activity feed collides on
+-- the primary key. Dedup is structural. INSERT only — never UPDATE, never
+-- DELETE. qty is THIS execution, not cum_qty.
+CREATE TABLE IF NOT EXISTS fills (
+    fill_id      TEXT PRIMARY KEY,
+    order_id     TEXT NOT NULL,
+    symbol       TEXT NOT NULL,
+    side         TEXT NOT NULL,
+    qty          INTEGER NOT NULL,
+    price        REAL NOT NULL,
+    fill_type    TEXT NOT NULL,
+    filled_at    TEXT NOT NULL,
+    mode         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fills_order ON fills(order_id);
+
 CREATE TABLE IF NOT EXISTS scan_funnel (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
