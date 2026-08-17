@@ -149,7 +149,17 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** add `get_portfolio_history(period, timeframe) -> {timestamps[], equity[]}` (Alpaca `/v2/account/portfolio/history`; simulation from its equity curve). Compute `drawdown_5d_pct` / `drawdown_20d_pct` from it (short cache ≈5 min). Extend `get_portfolio_state()` to surface them. Write one `portfolio_snapshots` row per day (durable copy + backtest; **broker remains the source of truth**).
 - **Tests:** `tools/tests/test_broker.py` + `tools/tests/test_reconcile.py` — both adapters return the same shape; drawdown-from-peak computed correctly on a known series (assert exact); **fetch failure ⇒ `UNAVAILABLE`, never 0/"no drawdown"**; daily snapshot idempotent (one row per day).
 - **Acceptance:** `drawdown_5d/20d` computable **today**, with no warmup and no dependence on prior recording — the governance gate's §4.4 breakers become armable.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `a8936d6` (2026-08-16). 15 tests; suite 517.
+  - **Computed from the real account, hand-checked:**
+    ```
+    24 daily equity points; last 6: [105968.12, 105661.5, 105380.1, 107211.45, 108670.47, 107376.13]
+    drawdown_5d_pct  1.1911   drawdown_20d_pct 1.1911
+    hand-check 5d: peak 108670.47, latest 107376.13 -> 1.1911%  ✓
+    ```
+  - **Failure reports `UNAVAILABLE`, never 0.0** — a breaker reading "no drawdown" because the fetch died is a disarmed breaker, at exactly the moment we cannot see the account. Verified live: broker unreachable ⇒ `{'drawdown_5d_pct': 'UNAVAILABLE', 'drawdown_20d_pct': 'UNAVAILABLE'}`. Same reasoning drops Alpaca's **null** equity points instead of coercing them to 0.0, which would read as a total wipeout.
+  - **`portfolio_snapshots` finally has a writer** — the table has existed with 0 rows since the schema was written. One row per calendar day, UNIQUE-enforced: two writes on the same day ⇒ **1 row**, so an EOD retry cannot double the equity series. It is a durable copy for backtest and cross-checking; the broker stays authoritative.
+  - **Mutation-checked:** failure→0.0 fails 2 tests · ignoring the window fails 2 (`assert 48.5 == 0.0`) · `OR REPLACE`→`OR IGNORE` on the snapshot fails 1.
+  - ⚠️ **Third instance of one schema bug shape, now fixed generally.** `SCHEMA`'s `CREATE UNIQUE INDEX … ON portfolio_snapshots(date)` ran *before* the migration that adds `date`, so every connection to a deployed DB failed with `no such column: date`. Indexes depending on migrated columns now live in an explicit `_POST_MIGRATION_INDEXES` pass. (Instances 1–2 were the `fills` index.)
 
 ### Task 7 — `v_performance_current` view + snapshot log
 - **Files:** `tools/persistence/db.py` (view), `tools/audit/performance.py`
