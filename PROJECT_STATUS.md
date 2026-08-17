@@ -32,6 +32,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 | 3 intent capture | `a83b5ca` | `place_order` writes an `orders` row; regime inherited from the plan |
 | 4 reconciliation | `ab79200` | `sync_fills()` + `sync_orders_terminal()` — **250 real executions imported** |
 | 5 round trips | `0a6c509` | derived ids + rebuild invariant — **61 real trades now measurable** |
+| 6 R + slippage | `5b61d28` | the metric D5/D7 gate on; every uncomputable case carries a reason |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -70,11 +71,17 @@ long  qty=311  49.24 -> 50.57  pnl=414.84   (7 entry fills, 3 exit)
 short qty=267  50.71 -> 48.61  pnl=561.65   (2 entry fills, 3 exit)
 ```
 
-⚠️ Not yet measured: `r_multiple` and `slippage` are NULL until Task 6, and `total_fees` is 0.0 carrying `fees_attributable=0` — Alpaca attributes no fees per trade, so D7's net-of-cost number is a portfolio-level figure, not a per-trade one.
+**Task 6 adds R-multiple and slippage** — hand-computed and asserted to 4dp, with four named refusals so an uncomputable R can never silently become 0.0 (a zero R is a real outcome and must stay distinguishable). Slippage is sign-normalised so positive always means worse.
+
+⚠️ **And it measures something uncomfortable: 0 of the 61 real trips are R-computable.** All 61 report `no_order_recorded` — `orders` has 0 rows, because every one of the 250 imported executions predates Task 3's intent capture. This is exactly the "cannot be reconstructed retroactively" the 🔴 bug below records, now measured rather than asserted. The first R-computable trade will be one placed **after** Task 3 shipped, which is what Task 11 demonstrates.
+
+📌 **Open decision:** 16 of 186 broker orders appear in the legacy `trade_transactions` table *and* link to a plan with a usable `stop_loss`. Backfilling `orders` from those would make up to 16 historical trips measurable. Not done — Task 8 fences that table off, and the owner should decide.
+
+`total_fees` remains 0.0 carrying `fees_attributable=0`: Alpaca attributes no fees per trade, so D7's net-of-cost figure is portfolio-level, not per-trade.
 
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-481 passed, 10 warnings in 33.19s          # 353 + 128 — a floor, not evidence
+502 passed, 10 warnings in 32.25s          # 353 + 149 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.

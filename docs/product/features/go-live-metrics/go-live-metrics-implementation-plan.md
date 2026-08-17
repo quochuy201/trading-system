@@ -128,7 +128,21 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** `r_multiple` from the trip + `trade_plans.stop_loss` **as recorded at entry** (long/short formulas, design §4). Missing plan / null stop / denominator ≤ 0 ⇒ `NULL` + `r_uncomputable_reason`. `slippage` = entry vs `orders.intended_price`, sign-adjusted per side.
 - **Tests:** `tools/tests/test_round_trips.py` — hand-computed long R (assert exact to 4dp); short R; missing stop ⇒ NULL+reason; denominator ≤ 0 ⇒ NULL+reason; **never silently 0**; slippage sign correct for buy and for sell.
 - **Acceptance:** hand-computed R matches exactly; uncomputable cases carry a reason.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `5b61d28` (2026-08-16). 21 tests; suite 502.
+  - Hand-computed to 4dp: long entry 150.25 / stop 147.10 / exit 158.40 ⇒ `8.15/3.15 = 2.5873`; short entry 50.71 / stop 52.20 / exit 48.61 ⇒ `2.10/1.49 = 1.4094`.
+  - **Four refusals, none of which may become 0.0** — a zero R is a real outcome (exited at entry) and must stay distinguishable from "could not compute":
+
+    | reason | meaning |
+    |---|---|
+    | `no_order_recorded` | the fill predates intent capture — unrecoverable history |
+    | `no_plan_recorded` | order exists, no plan — an ad-hoc trade |
+    | `stop_is_zero_placeholder` | `TradePlan.stop_loss` defaults to **0.0**; treating that as a stop gives `risk == entry_price` and a plausible-looking R that is fiction |
+    | `non_positive_risk` | stop on the wrong side of entry |
+  - Slippage is sign-normalised so **positive always means worse** either way: a long that paid above intent and a short that sold below it both report positive. No reference ⇒ NULL, never 0.0 (which would read as "filled exactly at intent").
+  - **Mutation-checked:** uncomputable→0.0 fails 5 tests · zero-stop accepted fails 3 (`stop=0.0 produced 0.0666…`) · short slippage not inverted fails 3 · non-positive risk allowed through fails 3 (incl. `ZeroDivisionError`).
+  - ⚠️ **Honest result on real data: 0 of 61 real trips are R-computable.** All 61 report `no_order_recorded` — `orders` has **0 rows**, because every one of the 250 imported executions predates Task 3's intent capture. This is PROJECT_STATUS's "cannot be reconstructed retroactively", now measured rather than asserted. The machinery is proven by the hand-computed tests; the historical dataset lacks the inputs. **The first R-computable trade is one placed after Task 3 shipped.**
+  - 📌 **Decision for the owner, deliberately not taken here:** **16 of 186** broker orders appear in the legacy `trade_transactions` table *and* link to a plan with a usable `stop_loss`. Backfilling `orders` from those rows would make up to 16 trips R-measurable. Task 8 fences `trade_transactions` off — that fence is about not fabricating *fills* from it, and backfilling *intent* is a different operation, but adjacent enough to need a decision rather than a commit.
+  - Note: an entry spanning several orders takes its intent from the **first** entry fill's order; distinct intended prices across one entry are not blended.
 
 ### Task 6b — Equity history + daily portfolio snapshot (unblocks the circuit breakers)
 - **Files:** `tools/broker/adapter.py`, `tools/broker/alpaca.py`, `tools/broker/simulation.py`, `tools/server.py` (`get_portfolio_state`), EOD path
