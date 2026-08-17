@@ -75,7 +75,7 @@ short qty=267  50.71 -> 48.61  pnl=561.65   (2 entry fills, 3 exit)
 
 ⚠️ **And it measures something uncomfortable: 0 of the 61 real trips are R-computable.** All 61 report `no_order_recorded` — `orders` has 0 rows, because every one of the 250 imported executions predates Task 3's intent capture. This is exactly the "cannot be reconstructed retroactively" the 🔴 bug below records, now measured rather than asserted. The first R-computable trade will be one placed **after** Task 3 shipped, which is what Task 11 demonstrates.
 
-📌 **Open decision:** 16 of 186 broker orders appear in the legacy `trade_transactions` table *and* link to a plan with a usable `stop_loss`. Backfilling `orders` from those would make up to 16 historical trips measurable. Not done — Task 8 fences that table off, and the owner should decide.
+✅ **Decided 2026-08-16 (owner): leave history alone, count forward.** Backfilling `orders` from the 16 recoverable legacy `trade_transactions` rows was rejected — the D5 sample counts only trades placed through intent capture, and Task 8's fence around `trade_transactions` stays absolute. The go-live clock therefore starts from the first order placed after `a83b5ca`, at **0 of 100**.
 
 `total_fees` remains 0.0 carrying `fees_attributable=0`: Alpaca attributes no fees per trade, so D7's net-of-cost figure is portfolio-level, not per-trade.
 
