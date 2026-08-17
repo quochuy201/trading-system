@@ -80,7 +80,23 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
   Per-item try/except so one bad record can't abort the batch.
 - **Tests:** `tools/tests/test_reconcile.py` — **idempotency: run `sync_fills()` twice ⇒ zero duplicate rows** (PK conflict, not a dedup branch); a partial fill followed by a completing fill yields **two rows whose qty sums to the order qty** (⚠️ the double-count regression test); cursor advances and resumes correctly; an early cursor backfills; cancelled order gets terminal status via `get_order` with **no** fill row; one bad record doesn't stop the batch.
 - **Acceptance:** fills are per-execution and idempotent by construction; **no code path derives a fill from `get_order()`**.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `ab79200` (2026-08-16). 22 tests; suite 444.
+  - **Real broker executions are now in our tables — 250 of them.** Run against the live paper account:
+    ```
+    run 1                      inserted=250 skipped=0   failed=0 pages=3
+    run 2                      inserted=0   skipped=0   failed=0 pages=0   (cursor resumed)
+    after a full cursor rewind inserted=0   skipped=250 failed=0 pages=3
+    fills stored: 250 · distinct fill_ids: 250
+    ```
+    The third line is the proof: re-importing all 250 real executions yields 250 primary-key conflicts and **zero** duplicates. Idempotency is structural, not a branch that must be right.
+  - Read back out of `fills`, order `b38bacd0`: `partial_fill qty=80 @120.5` + `fill qty=20 @121.91` = **100**. `cum_qty` would have said 180. Real orders now stored with up to **7 executions** (7 fills/311 shares — the FLR order PROJECT_STATUS cites).
+  - **Rewinding the cursor IS the backfill** — same code path as the daily sync, no separate import script.
+  - Per-record `try/except`; the cursor advances **past** a failure on purpose (not advancing wedges the sync forever) and `failed` is returned so the gap is visible and recoverable.
+  - **Mutation-checked** (on committed code): `qty`→`cum_qty` fails with `assert 180 == 100`; freezing the cursor on failure fails two tests; `INSERT OR IGNORE`→`OR REPLACE` fails three.
+  - ⚠️ **Join key renamed, per owner decision: `fills.order_id` → `fills.broker_order_id`.** It always held the *broker's* id while `orders.order_id` is *ours*, so joining them matched zero rows — the defect CLAUDE.md's RULE 1 table records. `test_fills_join_orders_on_broker_order_id` asserts both directions: the right join returns the row, the wrong one returns `[]`. The migration renames in place and **refuses to run against a populated table** (`fills` is append-only; no silent data migration).
+  - Found while building it: `SCHEMA`'s `CREATE INDEX ON fills(broker_order_id)` ran *before* the rename and failed on a legacy table. Migrations now run first in `init_db`.
+  - **Deviation from the plan text:** `sync_orders_terminal()` checks every non-terminal order, not only those "with no fills". Restricting it would leave filled orders non-terminal forever and `get_open_orders()` growing without bound. It still reads **status only** — `get_order()` exposes no qty or price, asserted by `test_terminal_sync_reads_only_status`.
+  - Not yet exercised on real data: `sync_orders_terminal` returned `checked=0` because the dev DB's `orders` table is empty — nothing has been placed through `place_order` yet. Task 11 is where that closes.
 
 ### Task 5 — `round_trips` + `round_trip_fills` + deterministic IDs + ⭐ rebuild invariant
 - **Files:** `tools/persistence/db.py`, `tools/audit/round_trips.py` (new), `tools/audit/ids.py` (new)

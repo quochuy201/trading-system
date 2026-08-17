@@ -30,6 +30,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 | 1 `orders` + `fills` | `22dc627` | intent and reality become separate tables |
 | 2 fill source | `85d12aa` | fills come from the activity feed, never from `get_order()` |
 | 3 intent capture | `a83b5ca` | `place_order` writes an `orders` row; regime inherited from the plan |
+| 4 reconciliation | `ab79200` | `sync_fills()` + `sync_orders_terminal()` — **250 real executions imported** |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -61,7 +62,7 @@ Two silent-data-loss bugs were caught by tests that expected one thing and got a
 
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-403 passed, 10 warnings in 28.15s          # 353 + 50 — a floor, not evidence
+444 passed, 10 warnings in 32.42s          # 353 + 91 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.
