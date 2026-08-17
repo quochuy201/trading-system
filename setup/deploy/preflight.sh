@@ -28,28 +28,45 @@
 # and server.py auto-loads <profile>/.env itself (parent.parent of tools/), so
 # no manual key exporting is needed.
 #
-# The profile is resolved from HERMES_PROFILE if set (per-profile cron/gateway
-# runs set it), else from the parent directory of this script when installed
-# into a profile's scripts/ dir, else defaults to "trading".
+# WHICH PROFILE: the installed copy lives at <profile>/scripts/preflight.sh, so
+# its own location names the profile unambiguously. That scales to any number
+# of profiles (trading, trading-small, trading-v2, ...) with no edit here --
+# install.sh drops a copy in each, and each copy derives its own name.
+#
+# Location is preferred over the environment because HERMES_HOME is NOT the
+# shared root under cron. A profile gateway is launched with
+# HERMES_HOME=~/.hermes/profiles/<name> (see its launchd plist), and cron
+# resolves scripts from that home (cron/scheduler.py `_get_hermes_home()`), so
+# composing "$HERMES_HOME/profiles/$NAME" yields
+# ~/.hermes/profiles/trading/profiles/trading and every cycle aborts.
+#
+# There is deliberately NO default profile. Guessing one means silently
+# preflighting a different profile than the cycle that is about to run.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Determine the owning profile: env wins, then script location, then default.
-if [ -n "${HERMES_PROFILE:-}" ]; then
-    PROFILE_NAME="$HERMES_PROFILE"
-elif [[ "$SCRIPT_DIR" == *"/profiles/"*"/scripts" ]]; then
-    PROFILE_NAME="$(basename "$(dirname "$SCRIPT_DIR")")"
-else
-    PROFILE_NAME="trading"
-fi
-
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE_NAME"
-TOOLS_DIR="$PROFILE_DIR/tools"
-ENV_FILE="$PROFILE_DIR/.env"
 LOG_FILE="$SCRIPT_DIR/preflight.log"
 UV_BIN="${UV_BIN:-uv}"
+
+# Logging
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+fail() { log "❌ PREFLIGHT FAILED: $1"; echo "🔧 REMEDIATION: $2"; exit 1; }
+success() { log "✅ PREFLIGHT PASSED: $1"; }
+
+if [[ "$SCRIPT_DIR" == */profiles/*/scripts ]]; then
+    PROFILE_DIR="$(dirname "$SCRIPT_DIR")"            # installed copy
+elif [[ "${HERMES_HOME:-}" == */profiles/* ]]; then
+    PROFILE_DIR="$HERMES_HOME"                        # gateway already scoped us
+elif [ -n "${HERMES_PROFILE:-}" ]; then
+    PROFILE_DIR="${HERMES_HOME:-$HOME/.hermes}/profiles/$HERMES_PROFILE"
+else
+    fail "Cannot determine which profile to check (script is at $SCRIPT_DIR)" \
+        "Run the copy installed at <hermes-home>/profiles/<name>/scripts/, or set HERMES_PROFILE"
+fi
+PROFILE_NAME="$(basename "$PROFILE_DIR")"
+TOOLS_DIR="$PROFILE_DIR/tools"
+ENV_FILE="$PROFILE_DIR/.env"
 
 # Prefer the venv interpreter the tools layer already ships. `uv run` can
 # re-resolve dependencies, which needs the network and adds latency to a gate
@@ -60,11 +77,6 @@ if [ -x "$TOOLS_DIR/.venv/bin/python" ]; then
 else
     PY_RUN=("$UV_BIN" run python)
 fi
-
-# Logging
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
-fail() { log "❌ PREFLIGHT FAILED: $1"; echo "🔧 REMEDIATION: $2"; exit 1; }
-success() { log "✅ PREFLIGHT PASSED: $1"; }
 
 # Assert an env var is present AND non-empty in the profile .env.
 # One definition rather than the same regex written out per key — and the

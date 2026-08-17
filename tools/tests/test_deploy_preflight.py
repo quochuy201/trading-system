@@ -42,6 +42,7 @@ def _stub(path: Path, body: str) -> Path:
 def build_profile(
     home: Path,
     *,
+    profile: str = "trading",
     env_lines: str | None = None,
     last_bar_days_ago: int = 2,
     account_out: str = ACCOUNT_JSON,
@@ -59,7 +60,7 @@ def build_profile(
     Returns:
         Path to the profile directory.
     """
-    profile = home / "profiles" / "trading"
+    profile = home / "profiles" / profile
     tools = profile / "tools"
     (profile / "scripts").mkdir(parents=True, exist_ok=True)
     tools.mkdir(parents=True, exist_ok=True)
@@ -282,3 +283,81 @@ def test_preflight_names_no_vendor_credential():
             f"{vendor_key} named in preflight -- vendor credentials change; "
             f"this check will rot into a lie"
         )
+
+
+# --- which profile: location is the source of truth, and there is no default ---
+
+
+@pytest.mark.parametrize("profile", ["trading", "trading-small", "trading-v2",
+                                     "trading-strategiesA"])
+def test_installed_copy_derives_its_own_profile(tmp_path, profile):
+    """Scales to any number of profiles with no edit to the script.
+
+    install.sh drops a copy in each profile's scripts/ dir, so each copy names
+    its own profile from its own path.
+    """
+    home = tmp_path / "home"
+    build_profile(home, profile=profile)
+    scripts = home / "profiles" / profile / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    script = scripts / "preflight.sh"
+    script.write_bytes(PREFLIGHT.read_bytes())
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    _stub(bindir / "hermes", "echo ok\n")
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(tmp_path),
+        env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"(profile: {profile})" in result.stdout
+
+
+def test_gateway_scoped_hermes_home_does_not_double_the_path(tmp_path):
+    """The bug this guards: a profile gateway is launched with
+    HERMES_HOME=~/.hermes/profiles/<name> (see its launchd plist), and cron
+    resolves scripts from that home. Composing "$HERMES_HOME/profiles/$NAME"
+    then yields ~/.hermes/profiles/trading/profiles/trading and EVERY cycle
+    aborts at check 0.
+    """
+    home = tmp_path / "home"
+    build_profile(home)
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    _stub(bindir / "hermes", "echo ok\n")
+    script = tmp_path / "preflight.sh"
+    script.write_bytes(PREFLIGHT.read_bytes())
+
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(tmp_path),
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "HERMES_HOME": str(home / "profiles" / "trading"),  # as the gateway sets it
+        },
+    )
+    assert "profiles/trading/profiles" not in result.stdout, "path doubled"
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_refuses_to_guess_a_profile(tmp_path):
+    """No default. Guessing means preflighting a different profile than the
+    cycle about to run — silently, and more wrongly the more profiles exist."""
+    script = tmp_path / "preflight.sh"
+    script.write_bytes(PREFLIGHT.read_bytes())
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+    )
+    assert result.returncode != 0
+    assert "Cannot determine which profile" in result.stdout
+
+
+def test_no_profile_name_is_hardcoded():
+    body = "\n".join(
+        line for line in PREFLIGHT.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    for literal in ('"trading"', "'trading'", '"trading-small"'):
+        assert literal not in body, f"{literal} hardcoded as a profile name"
