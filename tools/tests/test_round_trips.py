@@ -354,3 +354,197 @@ def test_task_6_columns_are_left_null_not_zeroed():
     assert t["initial_stop"] is None
     assert t["slippage"] is None
     repo.close()
+
+
+# --- Task 6: R-multiple ---
+
+
+class TestRMultiple:
+    """R is *the* performance metric: outcome in units of the risk taken.
+
+    Every uncomputable case must return a reason, never a number. A silent 0.0
+    would be indistinguishable from a real break-even trade and would drag the
+    expectancy D5 gates on toward zero.
+    """
+
+    def test_long_r_hand_computed(self):
+        from audit.round_trips import r_multiple
+        # entry 150.25, stop 147.10 -> risk 3.15; exit 158.40 -> gain 8.15
+        r, reason = r_multiple("long", 150.25, 158.40, 147.10)
+        assert reason is None
+        assert round(r, 4) == round(8.15 / 3.15, 4) == 2.5873
+
+    def test_short_r_hand_computed(self):
+        from audit.round_trips import r_multiple
+        # entry 50.71, stop 52.20 -> risk 1.49; exit 48.61 -> gain 2.10
+        r, reason = r_multiple("short", 50.71, 48.61, 52.20)
+        assert reason is None
+        assert round(r, 4) == round(2.10 / 1.49, 4) == 1.4094
+
+    def test_losing_long_is_negative_r(self):
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 147.00, 145.00)
+        assert reason is None
+        assert r == pytest.approx(-0.6)  # lost 3 of the 5 risked
+
+    def test_a_full_stop_out_is_exactly_minus_one(self):
+        from audit.round_trips import r_multiple
+        r, _ = r_multiple("long", 150.00, 145.00, 145.00)
+        assert r == pytest.approx(-1.0)
+
+    def test_break_even_is_zero_and_not_a_missing_value(self):
+        """0.0 here is a real outcome. It must be a number with no reason —
+        that is exactly why uncomputable cases return None instead."""
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 150.00, 145.00)
+        assert r == 0.0 and reason is None
+
+    def test_missing_stop_is_null_with_a_reason(self):
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 160.00, None)
+        assert r is None and reason == "no_stop_recorded"
+
+    def test_zero_stop_placeholder_is_refused(self):
+        """TradePlan.stop_loss defaults to 0.0. Treating that as a real stop
+        gives risk == entry_price and a plausible-looking R that is fiction."""
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 160.00, 0.0)
+        assert r is None and reason == "stop_is_zero_placeholder"
+
+    def test_stop_on_the_wrong_side_is_refused(self):
+        """A long whose stop sits above entry has non-positive risk. Estimating
+        one would fabricate the denominator of the number D7 is judged on."""
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 160.00, 155.00)
+        assert r is None and reason == "non_positive_risk"
+        r, reason = r_multiple("short", 150.00, 140.00, 145.00)
+        assert r is None and reason == "non_positive_risk"
+
+    def test_stop_equal_to_entry_is_refused_not_infinite(self):
+        from audit.round_trips import r_multiple
+        r, reason = r_multiple("long", 150.00, 160.00, 150.00)
+        assert r is None and reason == "non_positive_risk"
+
+    def test_uncomputable_never_returns_zero(self):
+        from audit.round_trips import r_multiple
+        for stop in (None, 0.0, 155.00, 150.00):
+            r, reason = r_multiple("long", 150.00, 160.00, stop)
+            assert r is None and reason, f"stop={stop} produced {r!r}"
+
+
+# --- Task 6: slippage ---
+
+
+class TestSlippage:
+    """Positive always means worse, whichever way the trade goes. This is the
+    number that reveals whether paper fills are flattering us."""
+
+    def test_long_paying_more_than_intended_is_positive(self):
+        from audit.round_trips import slippage
+        assert slippage("long", 150.25, 150.00) == pytest.approx(0.25)
+
+    def test_long_getting_a_better_price_is_negative(self):
+        from audit.round_trips import slippage
+        assert slippage("long", 149.80, 150.00) == pytest.approx(-0.20)
+
+    def test_short_selling_lower_than_intended_is_positive(self):
+        from audit.round_trips import slippage
+        assert slippage("short", 153.50, 154.00) == pytest.approx(0.50)
+
+    def test_short_selling_higher_is_negative(self):
+        from audit.round_trips import slippage
+        assert slippage("short", 154.30, 154.00) == pytest.approx(-0.30)
+
+    def test_no_reference_price_is_null_not_zero(self):
+        """0.0 would read as 'filled exactly at intent' — a claim we cannot make."""
+        from audit.round_trips import slippage
+        assert slippage("long", 150.25, None) is None
+
+
+# --- Task 6: end to end through the rebuild ---
+
+
+def _trip_with_plan(repo, stop_loss, intended_price, side="buy",
+                    entry=150.00, exit_=160.00):
+    repo.save_trade_plan(TradePlan(plan_id="p1", symbol="NVDA", side=side,
+                                   quantity=100, stop_loss=stop_loss))
+    repo.save_order(Order(order_id="o1", plan_id="p1", broker_order_id="brk-1",
+                          symbol="NVDA", side=side, order_type="limit",
+                          qty_requested=100, intended_price=intended_price,
+                          mode="paper"))
+    other = "sell" if side == "buy" else "buy"
+    _store(repo, [f("e1", side, 100, entry, 0), f("x1", other, 100, exit_, 10)])
+    rebuild_round_trips(repo)
+    return _snapshot(repo)[0]
+
+
+def test_r_and_slippage_land_in_the_table():
+    repo = Repository(":memory:")
+    t = _trip_with_plan(repo, stop_loss=145.00, intended_price=149.50)
+    assert t["initial_stop"] == 145.00
+    assert round(t["r_multiple"], 4) == 2.0          # gained 10 on 5 risked
+    assert t["r_uncomputable_reason"] is None
+    assert t["slippage"] == pytest.approx(0.50)      # paid 150.00 vs 149.50
+    repo.close()
+
+
+def test_short_trip_r_and_slippage_end_to_end():
+    repo = Repository(":memory:")
+    t = _trip_with_plan(repo, stop_loss=155.00, intended_price=150.50,
+                        side="sell", entry=150.00, exit_=145.00)
+    assert t["direction"] == "short"
+    assert round(t["r_multiple"], 4) == 1.0          # gained 5 on 5 risked
+    assert t["slippage"] == pytest.approx(0.50)      # sold 150.00 vs 150.50
+    repo.close()
+
+
+def test_fill_with_no_order_row_reports_no_order_recorded():
+    """All 250 real fills predate intent capture, so they have no order row.
+    The reason must say that precisely — it is unrecoverable history, not a
+    planning gap, and the scorecard's exclusions should distinguish them."""
+    repo = Repository(":memory:")
+    _store(repo, [f("e1", "buy", 100, 150.0, 0), f("x1", "sell", 100, 154.0, 10)])
+    rebuild_round_trips(repo)
+
+    t = _snapshot(repo)[0]
+    assert t["r_multiple"] is None
+    assert t["r_uncomputable_reason"] == "no_order_recorded"
+    assert t["slippage"] is None
+    repo.close()
+
+
+def test_ad_hoc_order_without_a_plan_reports_no_plan_recorded():
+    """An order we DID record but that carries no plan is a different case:
+    a manual trade, not missing history."""
+    repo = Repository(":memory:")
+    repo.save_order(Order(order_id="o1", broker_order_id="brk-1", symbol="NVDA",
+                          side="buy", order_type="market", qty_requested=100,
+                          mode="paper"))
+    _store(repo, [f("e1", "buy", 100, 150.0, 0), f("x1", "sell", 100, 154.0, 10)])
+    rebuild_round_trips(repo)
+
+    t = _snapshot(repo)[0]
+    assert t["r_uncomputable_reason"] == "no_plan_recorded"
+    repo.close()
+
+
+def test_plan_without_a_stop_reports_the_placeholder():
+    repo = Repository(":memory:")
+    t = _trip_with_plan(repo, stop_loss=0.0, intended_price=None)
+    assert t["r_multiple"] is None
+    assert t["r_uncomputable_reason"] == "stop_is_zero_placeholder"
+    repo.close()
+
+
+def test_metrics_survive_the_rebuild_invariant():
+    """R and slippage are derived too — a rebuild must reproduce them exactly."""
+    repo = Repository(":memory:")
+    _trip_with_plan(repo, stop_loss=145.00, intended_price=149.50)
+    before = _snapshot(repo)
+
+    repo.conn.execute("UPDATE round_trips SET r_multiple = 99, slippage = 99")
+    repo.conn.commit()
+    rebuild_round_trips(repo)
+
+    assert _snapshot(repo) == before
+    repo.close()
