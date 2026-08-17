@@ -31,6 +31,7 @@ Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpus
 | 2 fill source | `85d12aa` | fills come from the activity feed, never from `get_order()` |
 | 3 intent capture | `a83b5ca` | `place_order` writes an `orders` row; regime inherited from the plan |
 | 4 reconciliation | `ab79200` | `sync_fills()` + `sync_orders_terminal()` — **250 real executions imported** |
+| 5 round trips | `0a6c509` | derived ids + rebuild invariant — **61 real trades now measurable** |
 
 The 🔴 CRITICAL bug below exists because one table tried to be both. `orders` records what we asked for at submit time; `fills` records what the broker executed, **one row per execution** — a partial fill is two rows, never one row updated twice. `fills.fill_id` is the broker's own activity id, so replaying the activity feed is a primary-key conflict rather than a duplicate row: idempotency is structural, not something each caller has to code correctly. `insert_fill` is `INSERT OR IGNORE` — `REPLACE` would delete-and-reinsert and silently rewrite a stored execution.
 
@@ -60,9 +61,20 @@ Two silent-data-loss bugs were caught by tests that expected one thing and got a
 
 ⚠️ **Open finding for Task 4 — the join key.** `fills.order_id` holds the *broker's* order id while `orders.order_id` is *ours*, so joining them matches **zero rows** — verbatim the defect CLAUDE.md's RULE 1 table already records. Task 3 populates `orders.broker_order_id` on every row, so the correct join is `fills.order_id = orders.broker_order_id`. Detail and the recommended column rename: [`go-live-metrics-implementation-plan.md`](docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md) Task 3.
 
+**Task 5 makes a trade measurable for the first time.** From those 250 executions: **61 round trips across 55 symbols**, 41 wins, gross P&L **+3106.72**. ⭐ Rebuilding all 61 reproduces the cache **byte-identically, ids included** — the property that buys the right to be wrong later: if the pairing or the R formula has a bug, fix it and recompute all history. That works only because ids are derived (`sha256(first_entry_fill|last_exit_fill)`), never random.
+
+**The FLR ambiguity this file records as unresolvable is resolved.** `buy 311 → sell 311 → sell 267 → buy 267` is one plan and unambiguously two trips; running-position tracking splits **15 fills into 2 trips**:
+
+```
+long  qty=311  49.24 -> 50.57  pnl=414.84   (7 entry fills, 3 exit)
+short qty=267  50.71 -> 48.61  pnl=561.65   (2 entry fills, 3 exit)
+```
+
+⚠️ Not yet measured: `r_multiple` and `slippage` are NULL until Task 6, and `total_fees` is 0.0 carrying `fees_attributable=0` — Alpaca attributes no fees per trade, so D7's net-of-cost number is a portfolio-level figure, not a per-trade one.
+
 ```
 $ cd tools && uv run --extra dev pytest tests/ -q
-444 passed, 10 warnings in 32.42s          # 353 + 91 — a floor, not evidence
+481 passed, 10 warnings in 33.19s          # 353 + 128 — a floor, not evidence
 ```
 
 ⚠️ **`setup/deploy/preflight.sh` is uncommitted and awaiting an owner decision.** The committed version calls five `hermes` subcommands that do not exist (`model check`, `broker ping`, `data check-freshness`, `kill-switch status`, `notification test` — each exits 2 with an argparse error), so it fails check 1 and would abort every cycle; the live `trading` and `trading-small` profiles already run a rewritten copy that works. The rewrite's remaining defect: check 1 greps `DEEPSEEK_API_KEY` while both profiles run `provider: xai` / `grok-4.6`, so it asserts a key the model never uses. Owner has chosen a real `hermes -z` auth probe; not yet implemented.

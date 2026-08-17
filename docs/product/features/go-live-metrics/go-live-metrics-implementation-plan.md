@@ -104,7 +104,24 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **Tests:** `tools/tests/test_round_trips.py` — simple pair · partial fills · scale-out · **FLR flip case ⇒ exactly 2 trips (long then short)** · open position ⇒ no row · **⭐ rebuild invariant: build → corrupt cache → rebuild ⇒ byte-identical incl. `round_trip_id`** · rebuild idempotent · link table maps every composing fill with correct `entry`/`exit` leg.
   **ID tests (`tools/tests/test_ids.py`, new):** same inputs ⇒ same ID **across processes** (compute in a subprocess, compare); ID **unaffected** by dict/set ordering, float `repr`, timezone representation, or wall-clock; delimiter prevents the `"ab"+"c" == "a"+"bc"` collision; a **late middle fill keeps `round_trip_id` stable but changes `content_hash`**; **no `round_trip_id` is ever a UUID** (assert no randomness in the derived path).
 - **Acceptance:** FLR yields 2 correct trips; **rebuild reproduces the cache byte-identically, IDs included**; IDs are provably deterministic.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `0a6c509` (2026-08-16). 37 tests (16 ids + 21 round trips); suite 481.
+  - **The system can measure a trade for the first time.** Built from the 250 real executions Task 4 imported: **61 round trips across 55 symbols**, 180 fill links, 41 wins, gross P&L **+3106.72**.
+    ```
+    PANW  long  qty= 48  332.55 -> 354.21  pnl= 1039.84
+    OKTA  long  qty= 57  135.43 -> 147.60  pnl=  693.67
+    HWM   long  qty= 48  279.07 -> 265.21  pnl= -665.28
+    ```
+  - ⭐ **The rebuild invariant holds on real data** — rebuilding all 61 trips produces byte-identical rows, `round_trip_id` and `content_hash` included. Only possible because ids are derived, not random; mutating `round_trip_id` to a UUID fails **9 tests**.
+  - **The FLR ambiguity is resolved.** PROJECT_STATUS records `buy 311 → sell 311 → sell 267 → buy 267` as an identity problem `plan_id` grouping cannot answer. Running-position tracking answers it deterministically — **15 fills → 2 trips**:
+    ```
+    long  qty=311  49.24 -> 50.57  pnl=414.84   (7 entry fills, 3 exit)
+    short qty=267  50.71 -> 48.61  pnl=561.65   (2 entry fills, 3 exit)
+    ```
+  - Entry/exit are quantity-weighted, so partials and scale-outs need no special case; a single fill that flips the position is split across both trips and links to each with a different leg.
+  - **Honest-data decisions:** `total_fees` is `0.0` **with `fees_attributable=0`** — Alpaca's fill activities carry no fee data and account-level fees have no `order_id`, so per-trade attribution does not exist and the flag stops `net_pnl` being silently overstated (design §3b-bis; D7 evaluates cost at portfolio level). `initial_stop` / `r_multiple` / `slippage` stay **NULL for Task 6** — a 0.0 would later be indistinguishable from a measurement. An open position yields **no row**. Orphan fills still measure, with plan context NULL.
+  - `round_trip_id` is never stamped onto `fills` — that would need an UPDATE and break append-only immutability.
+  - **Mutation-checked** (committed code): UUID id → 9 failures · no delimiter → 2 · unsorted `content_hash` → 1 · plain mean instead of qty-weighted → 1.
+  - ⚠️ **Process note:** after a mutation restore, `touch` the restored files. Python validates its bytecode cache on whole-second source mtime, so a `git checkout` in the same second as the `.pyc` write leaves the cache falsely valid and the "restored" run silently executes the MUTATED code while `inspect.getsource` shows the correct source.
 
 ### Task 6 — R-multiple + slippage
 - **Files:** `tools/audit/round_trips.py`
