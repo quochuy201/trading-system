@@ -9,7 +9,66 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-08-16** · Branch: `main` (27 ahead of `origin/main`, unpushed) · Tests: **368 passing** (verified 08-16) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs** · ⚠️ `setup/deploy/preflight.sh` uncommitted (08-16 entry)
+Last updated: **2026-09-05** · Branch: `main` (51 ahead of `origin/main` — push pending, see the 09-05 entry) · Tests: **536 passing** (verified 09-05) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs**
+
+---
+
+## ⏩ 2026-09-05 — sync to `origin`; what a second machine does and does not get
+
+Work continues on another computer. Nothing about the feature changed today — this
+entry records the state being handed over and the parts of it that **git does not carry**.
+
+**State.** `go-live-metrics` (BUILD-PLAN queue #1): Tasks 1–7 done, **8 of 11**; Tasks 8–11
+todo with their verification criteria in
+[`go-live-metrics-implementation-plan.md`](docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md)
+(§Task 8–11). Per-task commits and evidence: the 2026-08-16 entry below. Suite re-run today
+on a clean tree:
+
+```
+$ cd tools && uv run --extra dev pytest tests/ -q
+536 passed, 10 warnings in 34.35s
+$ git status --short      # empty
+```
+
+**Does not travel with the clone.** Fresh-clone bootstrap (`.env`, `uv sync`, launcher) is
+[README §Quick Start](README.md#quick-start), corrected today in `e2c4303`.
+
+| Not in git | Why | To continue without it |
+|---|---|---|
+| `.env` — `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | secrets (`.gitignore:2`) | hand-carry; template at `setup/deploy/.env.EXAMPLE`. A 401 here halts trading **silently** |
+| `tools/trading.db` — 25 MB (`.gitignore:3`) | data, not source | see below |
+| `.remember/`, Claude session memory | machine-local | not needed — the build traps (mutation testing, stale `.pyc`, `_POST_MIGRATION_INDEXES`) are written into the plan file |
+
+**The database is only half reconstructible.** Row counts on this machine today:
+
+```
+$ for t in orders fills round_trips portfolio_snapshots decisions trade_plans \
+           trade_transactions scan_funnel price_data; do
+    printf "%-20s %s\n" "$t" "$(sqlite3 tools/trading.db "select count(*) from $t")"; done
+orders               0
+fills                250
+round_trips          61
+portfolio_snapshots  1
+decisions            572
+trade_plans          13
+trade_transactions   22
+scan_funnel          25
+price_data           172232
+```
+
+- **Rebuildable from the broker by design:** `fills` — `sync_fills()` walks the activity feed
+  from a **persisted cursor** (`reconcile.py:99`), so an empty DB imports all 250 from scratch;
+  `round_trips` then follows from `rebuild_round_trips()` (`round_trips.py:287`), which the
+  Task 5 invariant proves byte-identical. `price_data` refetches (slowly).
+- **Not rebuildable:** `decisions` (572), `trade_plans` (13), `trade_transactions` (22),
+  `scan_funnel` (25) — these exist nowhere but this file. **Copy `tools/trading.db` across
+  out of band** (it is deliberately gitignored) or that history is gone.
+- `orders` is 0, as expected — the D5 clock counts forward from the first order after
+  `a83b5ca`; see the 08-16 entry. Nothing to carry.
+
+**Unchanged:** the ratified decisions (leave history alone, count forward — `b2eaa6f`) and the
+0-of-61 `no_order_recorded` result stand as recorded below; do not revisit them on the other
+machine.
 
 ---
 
