@@ -44,7 +44,8 @@
       "WebFetch(domain:hermes-agent.nousresearch.com)",
       "Bash(./install.sh hermes *)",
       "Bash(chmod +x *)",
-      "Skill(remember)"
+      "Skill(remember)",
+      "Bash(echo \"=== exit=$? ===\")"
     ],
     "deny": [
       "Bash(rm *)",
