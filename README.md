@@ -31,15 +31,19 @@ hermes profile install github.com/you/trading-system --alias
 ### Configure
 
 ```bash
-cp .env.EXAMPLE .env
+cp setup/deploy/.env.EXAMPLE .env   # .env is read from the repo ROOT by server.py
 # Edit .env with your Alpaca API keys
 ```
 
 ### Run
 
 ```bash
-# Start the MCP tools server
-cd tools && uv run server.py
+# Install deps — uv.lock is not committed, it is regenerated per platform
+(cd tools && uv sync --extra dev)
+
+# Start the MCP tools server — use the launcher, NOT `uv run server.py`
+# (`uv run` can re-resolve and write on the stdio channel, breaking the MCP handshake)
+tools/run_mcp.sh
 
 # Then chat with the orchestrator on your platform
 ```
