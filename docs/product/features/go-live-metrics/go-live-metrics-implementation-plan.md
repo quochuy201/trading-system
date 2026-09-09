@@ -202,7 +202,8 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** `reconcile_fills()` in the monitor cadence and at EOD; then `rebuild_round_trips()`; write the EOD snapshot row; render a **Go-Live Scorecard** block in the daily report; EOD skill reports scorecard progress.
 - **Tests:** `tools/tests/test_reconcile.py` (integration) — an EOD pass populates trips + snapshot; a reconciliation exception does **not** abort EOD or affect orders.
 - **Acceptance:** one EOD cycle end-to-end produces metrics + scorecard.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — new fail-safe `run_eod_reconcile()` MCP tool (sync_fills → sync_orders_terminal → rebuild_round_trips → write_performance_snapshot, each stage isolated so one failure can't abort EOD or touch orders); Go-Live Scorecard block rendered in the daily report (`_write_report_markdown`); `skills/eod-review/SKILL.md` Step 1.5 calls reconcile then scorecard. Tools added to `eod` + `monitor` groups (`test_tool_groups` 62→63). Tests: 2 in `test_reconcile.py` (end-to-end populate; reconcile-exception is captured, not raised, and leaves orders untouched). Suite 537.
+  - **Deviation (RULE 2):** did **not** put DB-writing reconcile in the every-minute mechanical `monitor_sentinel.py` (heavy + risky per-minute, and the sentinel is a no-LLM wake-queuer). Instead `run_eod_reconcile` is reachable by the `monitor` role so the LLM monitor reconciles on wake. Same "reconcile in the monitor cadence" intent, without a per-minute DB write.
 
 ### Task 11 — Integration proof + docs
 - **Files:** `PROJECT_STATUS.md`, `docs/product/ROADMAP.md`, this plan

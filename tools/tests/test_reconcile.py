@@ -721,3 +721,48 @@ def test_rename_refuses_to_touch_a_populated_legacy_table():
     with pytest.raises(RuntimeError, match="refusing to auto-rename"):
         init_db(repo.conn)
     repo.close()
+
+
+# --- Task 10: run_eod_reconcile wiring ---
+
+def test_eod_reconcile_populates_trips_and_snapshot(monkeypatch):
+    """One EOD pass turns broker executions into fills, round trips, and a
+    performance snapshot — the compute layer wired end to end."""
+    import server
+    repo = Repository(":memory:")
+    broker = _ActivityBroker(activities=[
+        _act(1, order="brk-1", qty=10, price=100.0, side="buy"),
+        _act(2, order="brk-2", qty=10, price=110.0, side="sell"),
+    ])
+    monkeypatch.setattr(server, "get_repo", lambda: repo)
+    monkeypatch.setattr(server, "get_broker", lambda: broker)
+
+    out = json.loads(server.run_eod_reconcile("paper"))
+    assert out["errors"] == []
+    assert out["fills_imported"] == 2
+    assert out["round_trips"] >= 1
+    assert out["snapshot_rows"] >= 1
+    assert repo.conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 2
+    assert repo.conn.execute("SELECT COUNT(*) FROM round_trips").fetchone()[0] >= 1
+    assert repo.conn.execute(
+        "SELECT COUNT(*) FROM performance_metrics").fetchone()[0] >= 1
+
+
+def test_eod_reconcile_failure_does_not_abort_or_touch_orders(env, monkeypatch):
+    """Fail-safe: a reconciliation exception is captured, not raised, and the
+    order path is never affected (design §7, spec Risks)."""
+    server, repo, _ = env
+    repo.save_trade_plan(TradePlan(plan_id="p1", symbol="NVDA", side="buy", quantity=10))
+    server.place_order("NVDA", "buy", "market", 10, plan_id="p1")
+    before = len(_orders(repo))
+    assert before == 1
+
+    def _boom(*a, **k):
+        raise RuntimeError("feed exploded")
+
+    monkeypatch.setattr("audit.reconcile.sync_fills", _boom)
+
+    out = json.loads(server.run_eod_reconcile("paper"))  # must not raise
+    assert any("sync_fills" in e for e in out["errors"])
+    # Orders are untouched — reconciliation never affects the order path.
+    assert len(_orders(repo)) == before

@@ -1,7 +1,7 @@
 ---
 name: trading-eod-review
 description: "Use when the trading day ends and all positions are closed or the time stop has passed — triggers daily journaling, performance metrics, compliance scoring, and reflection."
-requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_daily_funnel, get_portfolio_state, send_notification, log_decision]
+requires_tools: [query_decisions, query_transaction_ledger, generate_performance_report, get_compliance_score, get_daily_funnel, get_portfolio_state, send_notification, log_decision, run_eod_reconcile, get_go_live_scorecard]
 ---
 
 # EOD Review Agent
@@ -35,6 +35,11 @@ Before any other analysis, check for stale/pending orders:
 3. query_decisions(start_date=today, end_date=today)
 4. get_compliance_score(start_date=today, end_date=today)
 ```
+
+### Step 1.5: Reconcile Fills & Go-Live Progress
+Turn the day's real executions into measurable trades before you compute anything:
+1. `run_eod_reconcile()` — imports broker fills, closes terminal orders, rebuilds round trips, and writes the EOD performance snapshot. It is fail-safe: if it returns a non-empty `errors` list, note it in the journal but continue the review (it never blocks EOD or touches orders).
+2. `get_go_live_scorecard()` — the D5 readiness ladder (trades vs 100, expectancy-R, regimes, and the still-`UNAVAILABLE` gate/D7/paper-vs-backtest criteria). Report the `verdict` and the trade count (e.g. `trades 0/100, NOT READY`) in the journal. Remember: the clock counts only trades placed through intent capture — a `verdict` of NOT READY with `trades 0` is the expected current state, not a bug.
 
 ### Step 2: Calculate Metrics
 Compute PnL, win rate, expectancy, largest win/loss, max drawdown for closed trades.

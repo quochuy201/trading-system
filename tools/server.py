@@ -1314,6 +1314,14 @@ def generate_performance_report(
         },
     }
     metrics["funnel"] = get_daily_funnel(end_date)
+    # Go-live D5 scorecard from the new orders/fills model (paper track). Never
+    # let it break the legacy-ledger report during cutover.
+    try:
+        from audit.performance import go_live_scorecard
+        metrics["scorecard"] = go_live_scorecard(get_repo(), "paper")
+    except Exception:
+        logging.getLogger(__name__).exception("scorecard for report failed")
+        metrics["scorecard"] = None
 
     # Save to DB
     report = PerformanceReport(
@@ -1352,6 +1360,66 @@ def get_compliance_score(start_date: str = "", end_date: str = "", sop_version: 
         "by_type": comp["by_type"],
     })
 
+
+
+@mcp.tool()
+def run_eod_reconcile(mode: str = "paper") -> str:
+    """Reconcile broker fills, rebuild round trips, and snapshot performance.
+
+    When to use: once at EOD (and when the monitor needs current fills). Imports
+    executions from the broker Activities feed into `fills`, closes terminal
+    orders, rebuilds the `round_trips` cache, and appends an EOD performance
+    snapshot. Reads the broker and writes only audit tables — it touches no
+    order-placement path and must never block trading.
+
+    Sample input: run_eod_reconcile("paper")
+
+    Expected output:
+    {"mode": "paper", "fills_imported": 3, "orders_closed": 0,
+     "round_trips": 1, "snapshot_rows": 1, "errors": []}
+    Each stage is isolated: a failure in one is logged into "errors" and the
+    remaining stages still run, so a reconciliation error never aborts EOD.
+    Returns {"error": ...} only if the repo/broker cannot be obtained at all;
+    never raises.
+    """
+    _track_tool("run_eod_reconcile")
+    try:
+        repo, broker = get_repo(), get_broker()
+    except Exception as e:
+        return json.dumps({"error": f"reconcile setup failed: {e}"})
+
+    log = logging.getLogger(__name__)
+    result: dict = {"mode": mode, "fills_imported": None, "orders_closed": None,
+                    "round_trips": None, "snapshot_rows": None, "errors": []}
+
+    def _stage(name, fn):
+        try:
+            return fn()
+        except Exception as e:  # one stage failing must not abort the others
+            log.exception("run_eod_reconcile stage failed: %s", name)
+            result["errors"].append(f"{name}: {e}")
+            return None
+
+    from audit.performance import write_performance_snapshot
+    from audit.reconcile import sync_fills, sync_orders_terminal
+    from audit.round_trips import rebuild_round_trips
+
+    f = _stage("sync_fills", lambda: sync_fills(broker, repo, mode))
+    if f is not None:
+        result["fills_imported"] = f.get("inserted")
+    o = _stage("sync_orders_terminal", lambda: sync_orders_terminal(broker, repo))
+    if o is not None:
+        result["orders_closed"] = o.get("closed")
+    rt = _stage("rebuild_round_trips", lambda: rebuild_round_trips(repo))
+    if rt is not None:
+        result["round_trips"] = rt.get("trips")
+    snap = _stage("write_performance_snapshot",
+                  lambda: write_performance_snapshot(repo, mode))
+    if snap is not None:
+        result["snapshot_rows"] = snap
+
+    log.info("run_eod_reconcile mode=%s result=%s", mode, result)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -1526,6 +1594,30 @@ def _write_report_markdown(report, metrics: dict, start_date: str, end_date: str
         for vtype, count in compliance["by_type"].items():
             lines.append(f"- **{vtype}**: {count}")
         lines.append("")
+
+    scorecard = metrics.get("scorecard")
+    if scorecard:
+        def _mark(p):
+            return "✅" if p is True else ("❌" if p is False else "—")
+        c = scorecard["criteria"]
+        exp = c["expectancy_r"]["value"]
+        lines += [
+            f"## Go-Live Scorecard (D5) — {scorecard['mode']}",
+            "",
+            f"**Verdict: {scorecard['verdict']}**",
+            "",
+            "| Criterion | Value | Pass |",
+            "|-----------|-------|------|",
+            f"| Trades (R-computable) | {c['trades']['value']} / {c['trades']['floor']} | {_mark(c['trades']['pass'])} |",
+            f"| Expectancy (R) | {f'{exp:+.2f}' if exp is not None else 'n/a'} | {_mark(c['expectancy_r']['pass'])} |",
+            f"| Regimes covered | {c['regimes']['value']} / {c['regimes']['required']} | {_mark(c['regimes']['pass'])} |",
+            f"| Paper vs backtest | {c['paper_vs_backtest'].get('status', 'n/a')} | {_mark(c['paper_vs_backtest']['pass'])} |",
+            f"| Gate live | {c['gate_live'].get('status', 'n/a')} | {_mark(c['gate_live']['pass'])} |",
+            f"| D7 edge | {c['d7_edge'].get('status', 'n/a')} | {_mark(c['d7_edge']['pass'])} |",
+            "",
+            f"R-excluded trips: {scorecard['r_excluded']}",
+            "",
+        ]
 
     if trading.get("by_symbol"):
         lines.append("## By Symbol")
@@ -2931,6 +3023,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "save_transaction", "get_trade_plan", "get_portfolio_state",
         "check_daily_limits", "cancel_order", "calc_technical_indicators",
         "get_options_positions", "get_options_market_data", "notify_sell",
+        "run_eod_reconcile",
     },
     "risk": {
         "check_daily_limits", "get_positions", "get_portfolio_state",
@@ -2945,7 +3038,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "generate_performance_report", "get_compliance_score",
         "get_portfolio_state", "get_positions", "get_daily_funnel",
         "generate_tuning_config", "get_tuning_config",
-        "get_go_live_scorecard",
+        "get_go_live_scorecard", "run_eod_reconcile",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",
