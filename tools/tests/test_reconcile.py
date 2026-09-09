@@ -766,3 +766,66 @@ def test_eod_reconcile_failure_does_not_abort_or_touch_orders(env, monkeypatch):
     assert any("sync_fills" in e for e in out["errors"])
     # Orders are untouched — reconciliation never affects the order path.
     assert len(_orders(repo)) == before
+
+
+# --- Task 11: end-to-end proof (deterministic; live paper fill needs creds) ---
+
+class _TradingBroker(_ActivityBroker):
+    """An activity-feed broker that can also accept orders, so one broker drives
+    the whole place_order -> reconcile path in a test."""
+
+    _n = 0
+
+    def place_order(self, symbol, side, order_type, quantity,
+                    limit_price=None, stop_price=None):
+        self._n += 1
+        oid = f"brk-{self._n}"
+        return TradeTransaction(
+            transaction_id=oid, symbol=symbol, side=side, order_type=order_type,
+            quantity=quantity, price=0.0, broker_order_id=oid, status="accepted")
+
+
+def test_full_pipeline_yields_a_measurable_round_trip(monkeypatch):
+    """Task 11 deterministic proof: intent -> broker executions -> reconcile ->
+    a round trip with a REAL fill price AND a computed R.
+
+    Proves the whole go-live-metrics machinery end to end. The only thing it
+    cannot prove is a genuine Alpaca paper fill (needs creds + market hours) —
+    that is the remaining live confirmation before the D5 bug is fully closed.
+    """
+    import server
+    repo = Repository(":memory:")
+    broker = _TradingBroker(activities=[
+        _act(1, order="brk-1", qty=10, price=150.00, side="buy"),
+        _act(2, order="brk-2", qty=10, price=158.00, side="sell"),
+    ])
+    monkeypatch.setattr(server, "get_repo", lambda: repo)
+    monkeypatch.setattr(server, "get_broker", lambda: broker)
+    monkeypatch.setattr(server, "_log_to_ledger", lambda **kw: None)
+    monkeypatch.setattr(server, "_kill_switch_state",
+                        {"active": False, "triggered_at": None, "reason": None})
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+    # A planned long with a stop, then its exit — both through the intent path.
+    repo.save_trade_plan(TradePlan(plan_id="p1", symbol="NVDA", side="buy",
+                                   quantity=10, stop_loss=145.00))
+    server.place_order("NVDA", "buy", "market", 10, plan_id="p1")   # brk-1
+    server.place_order("NVDA", "sell", "market", 10, plan_id="p1")  # brk-2
+
+    server.run_eod_reconcile("paper")
+
+    trips = repo.conn.execute(
+        """SELECT entry_price, exit_price, initial_stop, r_multiple,
+                  r_uncomputable_reason FROM round_trips WHERE mode='paper'"""
+    ).fetchall()
+    assert len(trips) == 1
+    t = trips[0]
+    assert t["entry_price"] == pytest.approx(150.00)   # a real fill, never 0.0
+    assert t["exit_price"] == pytest.approx(158.00)
+    assert t["initial_stop"] == pytest.approx(145.00)
+    assert t["r_uncomputable_reason"] is None
+    assert t["r_multiple"] == pytest.approx(1.6)        # (158-150)/(150-145)
+
+    # The scorecard now counts exactly this trade.
+    sc = json.loads(server.get_go_live_scorecard("paper"))
+    assert sc["criteria"]["trades"]["value"] == 1

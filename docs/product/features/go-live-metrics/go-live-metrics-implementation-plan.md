@@ -210,7 +210,7 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** place a paper order → reconcile → confirm a `round_trips` row with a **real non-zero fill price** and a computed R. Close the 🔴 CRITICAL bug in `PROJECT_STATUS.md` with evidence; bump ROADMAP to `shipped`.
 - **Tests:** full suite green (331 + new).
 - **Acceptance:** **a real paper trade appears as a measurable round trip.** This is the proof the bug is dead.
-- **Status:** ☐ todo
+- **Status:** ◑ **partial** — deterministic end-to-end proof done (`test_reconcile.py::test_full_pipeline_yields_a_measurable_round_trip`: intent → broker executions → `run_eod_reconcile` → one round trip, entry 150.00 / exit 158.00 / stop 145.00, **r_multiple 1.6**, scorecard trades 1). Suite 538. **Remaining (blocked on environment):** the *live* Alpaca paper fill — needs `.env` creds + market open, not available on this machine — and, only after it lands, closing the 🔴 CRITICAL bug in `PROJECT_STATUS.md` with real-trade evidence and flipping `ROADMAP.md` to `shipped`. Not marked shipped: the machinery is proven, a genuine paper fill is not yet.
 
 ---
 
