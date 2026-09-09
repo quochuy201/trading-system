@@ -188,7 +188,7 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
   ⛔ **Do not migrate it** (6 of its 9 non-zero prices are the plan's limit price — intents, not executions; converting them would fabricate go-live evidence). ⛔ **Do not delete it** (`save_transaction` is a live tool in the `monitor` + `trader` skills; removal is a real refactor, out of scope). See `design.md` §6.
 - **Tests:** `tools/tests/test_reconcile.py::test_legacy_table_untouched` — `fills` never contains a row sourced from `trade_transactions`; no new code path reads it.
 - **Acceptance:** zero legacy rows influence any metric, and the table is otherwise unchanged.
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `test_legacy_table_untouched` added (test-only, no code change — the fence already held: only `repository.py`'s legacy `save_transaction` methods read the table; `audit/` never does). Suite 527 (was 526 on this machine; 10 deploy tests fail environmentally — empty `price_data` DB + no Hermes CLI). Mutation-checked: a simulated legacy-row leak into `fills` trips the assertion.
 
 ### Task 9 — `get_go_live_scorecard()` MCP tool
 - **Files:** `tools/server.py` (new `@mcp.tool()`, `eod` group)

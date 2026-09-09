@@ -260,6 +260,44 @@ def test_legacy_transactions_still_written(env):
     assert len(repo.get_transactions_for_plan("p1")) == 1
 
 
+def test_legacy_table_untouched(env):
+    """Task 8 fence: no metric is ever sourced from `trade_transactions`.
+
+    The legacy table keeps its rows — including a priced one that is really the
+    plan's intended limit, not an execution (the exact shape the fill-capture
+    bug left behind). The go-live path (fills -> round_trips ->
+    v_performance_current) must ignore it entirely: given a broker with no
+    executions, reconciliation yields zero fills and zero round trips even
+    though the legacy table is populated. If any code path read the legacy
+    rows into the metric path, `fills`/`round_trips` would be non-empty here.
+    """
+    server, repo, _ = env
+    from audit.performance import current_performance
+    from audit.round_trips import rebuild_round_trips
+
+    # Seed the legacy table: a zero-price row and a priced row that is really
+    # the plan's intent (APLD 35.47 == entry_limit_price, per design §6).
+    repo.save_trade_plan(TradePlan(plan_id="p1", symbol="AAPL", side="buy", quantity=10))
+    repo.save_trade_plan(TradePlan(plan_id="p2", symbol="APLD", side="buy", quantity=5))
+    repo.save_transaction(TradeTransaction(
+        plan_id="p1", symbol="AAPL", side="buy", order_type="limit",
+        quantity=10, price=0.0, broker_order_id="legacy-1", status="filled"))
+    repo.save_transaction(TradeTransaction(
+        plan_id="p2", symbol="APLD", side="buy", order_type="limit",
+        quantity=5, price=35.47, broker_order_id="legacy-2", status="filled"))
+    assert repo.conn.execute(
+        "SELECT COUNT(*) FROM trade_transactions").fetchone()[0] == 2
+
+    # Reconcile from a broker with NO executions, then rebuild + read metrics.
+    _sync(_ActivityBroker(activities=[]), repo)
+    rebuild_round_trips(repo)
+
+    # The legacy rows influence nothing downstream.
+    assert repo.conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    assert repo.conn.execute("SELECT COUNT(*) FROM round_trips").fetchone()[0] == 0
+    assert current_performance(repo) == []
+
+
 # --- Task 3: trade_plans.regime migration ---
 
 
