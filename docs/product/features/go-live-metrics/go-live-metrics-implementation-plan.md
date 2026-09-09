@@ -195,7 +195,7 @@ Ordered, bite-sized tasks. TDD per `CLAUDE.md`: write the test, watch it fail, i
 - **What:** return the D5 ladder — trades vs floor 100 / convincing 200, `expectancy_r`, regimes covered (distinct `regime_at_entry`), paper-vs-backtest %, gate live?, D7 status, `r_excluded`, and `verdict` (`READY` only if **all** pass; unknown ≠ pass). Docstring per repo convention.
 - **Tests:** `tools/tests/test_scorecard.py` (new) + `tools/tests/test_tool_groups.py` (tool exposed in `eod`) — all-pass ⇒ READY; any fail/unknown ⇒ NOT READY; exclusions surfaced; JSON error on failure, never raises.
 - **Acceptance:** returns today's real state (`trades 0/100`, `verdict NOT READY`).
-- **Status:** ☐ todo
+- **Status:** ☑ **done** — `go_live_scorecard()` in `audit/performance.py` (pure, D5 thresholds as module constants) + thin `get_go_live_scorecard()` MCP tool in `server.py` (eod group; `test_tool_groups` 61→62). 8 tests in `test_scorecard.py`; suite 535. Core property tested: measurable criteria can pass yet verdict stays NOT READY because gate/D7/paper-vs-backtest are UNAVAILABLE (unknown ≠ pass). expectancy is `null` not `0.0` when no trip is R-computable.
 
 ### Task 10 — Wire into monitor + EOD + daily report
 - **Files:** monitor path / `tools/monitor_sentinel.py`, EOD job, daily report renderer, `skills/eod-review/SKILL.md`

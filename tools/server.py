@@ -1355,6 +1355,38 @@ def get_compliance_score(start_date: str = "", end_date: str = "", sop_version: 
 
 
 @mcp.tool()
+def get_go_live_scorecard(mode: str = "paper") -> str:
+    """Report go-live readiness against the D5 ladder for one trading mode.
+
+    When to use: EOD review, or any time you must answer "are we ready to trade
+    real capital yet?" Reads only audit records (round_trips / the performance
+    view) — changes nothing.
+
+    Sample input: get_go_live_scorecard("paper")
+
+    Expected output:
+    {"mode": "paper", "verdict": "NOT READY",
+     "criteria": {"trades": {"value": 0, "floor": 100, "convincing": 200, "pass": false},
+                  "expectancy_r": {"value": null, "pass": null},
+                  "regimes": {"value": 0, "required": 2, "pass": false},
+                  "paper_vs_backtest": {"value": null, "pass": null, "status": "UNAVAILABLE", ...},
+                  "gate_live": {...}, "d7_edge": {...}},
+     "r_excluded": 0, "strategies": [...]}
+    verdict is "READY" only if every criterion passes; an UNAVAILABLE/unknown
+    criterion (pass=null) is never counted as a pass. On failure returns
+    {"error": "..."} — never raises.
+    """
+    _track_tool("get_go_live_scorecard")
+    try:
+        from audit.performance import go_live_scorecard
+        return json.dumps(go_live_scorecard(get_repo(), mode))
+    except Exception as e:  # observation-only tool; must never break the caller
+        logging.getLogger(__name__).exception(
+            "get_go_live_scorecard failed mode=%s", mode)
+        return json.dumps({"error": f"scorecard failed: {e}"})
+
+
+@mcp.tool()
 def get_daily_funnel(date: str = "") -> str:
     """Assemble the full decision funnel for a date — even on zero-trade days.
 
@@ -2913,6 +2945,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "generate_performance_report", "get_compliance_score",
         "get_portfolio_state", "get_positions", "get_daily_funnel",
         "generate_tuning_config", "get_tuning_config",
+        "get_go_live_scorecard",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",

@@ -247,3 +247,97 @@ def write_performance_snapshot(repo: Repository, mode: str,
     repo.conn.commit()
     _log.info("performance snapshot mode=%s rows=%d", mode, written)
     return written
+
+
+# --- Go-live D5 ladder (BUILD-PLAN D5) -------------------------------------
+# One home for the ladder thresholds. D5: >=100 closed R-computable trades with
+# positive expectancy-in-R, spanning >1 regime, paper within ~15-20% of
+# backtest, gate live, D7 passed. The last three are not yet measurable and are
+# reported UNAVAILABLE — never a pass (honest-data rule 5: unknown != pass).
+GO_LIVE_TRADES_FLOOR = 100
+GO_LIVE_TRADES_CONVINCING = 200
+GO_LIVE_MIN_REGIMES = 2  # ">1 regime"
+
+
+def _unavailable(reason: str) -> dict:
+    """A criterion we cannot measure yet — carried as unknown, never a pass."""
+    return {"value": None, "pass": None, "status": "UNAVAILABLE", "reason": reason}
+
+
+def go_live_scorecard(repo: Repository, mode: str = "paper") -> dict:
+    """Assemble the D5 go-live readiness ladder for one trading mode.
+
+    Reads audit records only (`round_trips` + `v_performance_current`); writes
+    nothing and changes no trading behaviour.
+
+    Args:
+        repo: Repository.
+        mode: "paper" | "live" | "simulation". The ladder is a mode-level
+            question, so metrics are aggregated across strategies here (the
+            view groups by strategy; a per-strategy breakdown is returned under
+            "strategies").
+
+    Returns:
+        dict with:
+          - "mode": the mode scored.
+          - "verdict": "READY" only if every criterion's ``pass`` is True; an
+            unknown criterion (``pass`` is None) is never a pass, so today's
+            verdict is "NOT READY".
+          - "criteria": {trades, expectancy_r, regimes, paper_vs_backtest,
+            gate_live, d7_edge}, each a dict carrying at least ``value`` and
+            ``pass`` (None = unknown). ``expectancy_r.value`` is None when no
+            trade is R-computable — never coerced to 0.0.
+          - "r_excluded": count of closed round trips excluded from R (a
+            shrinking denominator kept visible).
+          - "strategies": per-(mode, strategy) rows from `current_performance`.
+
+    Never raises for empty data — an empty mode yields trades 0 and a NOT READY
+    verdict, which is the honest current state, not an error.
+    """
+    row = repo.conn.execute(
+        """SELECT
+             COUNT(r_multiple)                            AS r_trades,
+             COUNT(*) - COUNT(r_multiple)                 AS r_excluded,
+             AVG(r_multiple)                              AS expectancy_r,
+             COUNT(DISTINCT CASE WHEN r_multiple IS NOT NULL
+                                 THEN regime_at_entry END) AS regimes
+           FROM round_trips WHERE mode = ?""",
+        (mode,),
+    ).fetchone()
+    r_trades = row["r_trades"] or 0
+    r_excluded = row["r_excluded"] or 0
+    expectancy_r = row["expectancy_r"]  # None when nothing is R-computable
+    regimes = row["regimes"] or 0
+
+    criteria = {
+        "trades": {
+            "value": r_trades,
+            "floor": GO_LIVE_TRADES_FLOOR,
+            "convincing": GO_LIVE_TRADES_CONVINCING,
+            "pass": r_trades >= GO_LIVE_TRADES_FLOOR,
+        },
+        "expectancy_r": {
+            "value": expectancy_r,
+            "pass": (expectancy_r > 0) if expectancy_r is not None else None,
+        },
+        "regimes": {
+            "value": regimes,
+            "required": GO_LIVE_MIN_REGIMES,
+            "pass": regimes >= GO_LIVE_MIN_REGIMES,
+        },
+        "paper_vs_backtest": _unavailable(
+            "backtest baseline not wired (backtest-engine not built)"),
+        "gate_live": _unavailable("governance-gate not shipped"),
+        "d7_edge": _unavailable("edge validation not built (D7)"),
+    }
+    verdict = "READY" if all(
+        c["pass"] is True for c in criteria.values()) else "NOT READY"
+    _log.info("go_live_scorecard mode=%s trades=%d verdict=%s",
+              mode, r_trades, verdict)
+    return {
+        "mode": mode,
+        "verdict": verdict,
+        "criteria": criteria,
+        "r_excluded": r_excluded,
+        "strategies": current_performance(repo, mode=mode),
+    }
