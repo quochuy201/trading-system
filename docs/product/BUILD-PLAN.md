@@ -5,7 +5,7 @@ Consolidates `ROADMAP.md` (12 features + research queue R1–R5), the vault agen
 (`Hermes-Brain/05-Projects/trading-system-agenda.md`), the confirmed Pattern C
 architecture, and the governance-gate design corpus into a single buildable sequence.
 
-**Author:** Claude (reconciliation pass) · **Date:** 2026-07-25 · **Status:** ✅ **RATIFIED — D1–D7 all decided (2026-07-25). Wave 0 is ready to build.**
+**Author:** Claude (reconciliation pass) · **Date:** 2026-07-25 · **Status:** ✅ **RATIFIED — D1–D7 all decided (2026-07-25). Wave 0 partly built (2026-10-07): `go-live-metrics` building; `governance-gate` not started.**
 **Rule respected:** this is a *backlog + sequencing* artifact, not per-feature formal design. Each feature still gets its spec→design→plan before it's built (see §5). Nothing here invents design detail that wasn't already in the source docs.
 
 ---
@@ -135,7 +135,7 @@ REPO            AlpacaOptionsSource + 5 MCP tools  ──✗──  no options a
 HERMES DEPLOY   options-trader skill (IVR gate)    ──✗──  no options tools
 ```
 
-**So:** the **FlashAlpha escalation is unnecessary**; the real defect is **deployment divergence**. Handled by `data-source-adapters` Task 7 (a reachability test — *capability that exists but is unreachable must fail a test, not a quarter of trading sessions*), with the broader repo-vs-Hermes skill reconciliation deferred to `deployment` (parked).
+**So:** the **FlashAlpha escalation is unnecessary**; the real defect is **deployment divergence**. Handled by `data-source-adapters` Task 7 (a reachability test — *capability that exists but is unreachable must fail a test, not a quarter of trading sessions*), with the broader repo-vs-Hermes skill reconciliation deferred to `deployment` (queue #0, ⏸ paused).
 
 ---
 
@@ -167,6 +167,8 @@ HERMES DEPLOY   options-trader skill (IVR gate)    ──✗──  no options t
 ---
 
 ### Go-live measurement — data assessment (2026-07-25) ⚠️ THE CLOCK IS NOT RUNNING
+
+> **Update 2026-10-07:** the table below is a dated 07-25 snapshot. `go-live-metrics` Tasks 1–10 now capture broker fills (250 fills → 61 round trips, 0 R-computable because all predate intent capture). The D5 clock runs forward from intent capture: **0/100**.
 
 **Audit of `tools/trading.db` (actual query, not inspection of schema):**
 
@@ -215,9 +217,8 @@ The one change every source calls #1: move the constitution from advisory markdo
 |---------|------|-------|------------------|-------|
 | **Deterministic Governance Gate** | `governance-gate` | 5 Risk | ✅ designed (D1 scope: 12 rules) | Pure-function gate inside `place_order` at the kill-switch choke point. Verdict = APPROVED/REDUCED/REJECTED/PENDING. Fail-safe: any error → REJECTED. Exits bypass. |
 | **Typed Action Contract** (gate input) | `action-contract` | 4 Action | folds into gate design | The `TradePlan` the gate consumes (extends `tools/models.py:54`). First slice of pipeline contracts. |
-| **`risk_limits.yaml` + audit table** | — | 5 Risk / 6 Audit | ⚠️ pending D2 | Single limit source + `governance_decisions` table with `brief_hash`/`plan_hash` (seeds Wave 4 hash-chain). |
-
-| **Go-live metrics / trade-outcome capture** | `go-live-metrics` | 6 Audit | **Fill write-back** (`filled_qty`/`filled_avg_price`/`filled_at`) + **commissions/fees** + **round-trip identity** + **R per closed trade** → populate `performance_metrics` (add expectancy-in-R) + **go-live scorecard**. Small + cheap, but **gates ALL evidence** (D5 + D7): today only **1 of 22** trades is measurable and the counter isn't running. Build early. |
+| **`risk_limits.yaml` + audit table** | — | 5 Risk / 6 Audit | ✅ D2 ratified 07-25; folded into `governance-gate` (not started) | Single limit source + `governance_decisions` table with `brief_hash`/`plan_hash` (seeds Wave 4 hash-chain). |
+| **Go-live metrics / trade-outcome capture** | `go-live-metrics` | 6 Audit | 🔨 building — Tasks 1–10 done, 11 partial (queue #1) | **Fill write-back** (`filled_qty`/`filled_avg_price`/`filled_at`) + **commissions/fees** + **round-trip identity** + **R per closed trade** → populate `performance_metrics` (add expectancy-in-R) + **go-live scorecard**. Small + cheap, but **gates ALL evidence** (D5 + D7): on 07-25 only **1 of 22** trades was measurable and the counter wasn't running. Build early. |
 
 **Exit criteria:** every OPERATING_MANUAL entry rule enforced in code; one unit test per rule; gate cannot be bypassed by the LLM; ships behind `GOVERNANCE_GATE_ENABLED` flag in paper. **Plus:** fills are captured with real prices + fees, and the scorecard reports D5 ladder progress. **Verification (per §4.5):** one test per rule **both directions**, golden cases, property invariants, **shadow/log-only period before enforcing**, and per-`rule_id` verdict telemetry with a **zero-approvals-over-N-sessions alert**.
 
@@ -263,7 +264,7 @@ The one change every source calls #1: move the constitution from advisory markdo
 Real work, deliberately deferred. Deeper research + design happens when we reach each phase.
 
 - **Backtest engine** (`backtest-engine`) — already scoped as a Wave-1 feature; the equity engine exists (v3 harness + `week_runner` + `param_sweep`). What's deferred: transaction-cost model, buy-and-hold + single-agent benchmark arms, routing through the live `place_order` path, options coverage. **Blocks D7.** Design later.
-- ~~**Deployment / release process**~~ — **🔴 UNPARKED 2026-07-25: this is a PREREQUISITE, not a later phase.** `./install.sh hermes` (the command documented in CLAUDE.md) **is broken** — it reads `${REPO_DIR}/deploy/…` but those assets live at `setup/deploy/`; with `set -euo pipefail` it aborts at line 85, before MCP registration, kanban setup, and cron. **Nothing we design reaches the runtime until this works.** It is the mechanical root cause of the options divergence (built + tested + unreachable for 34 sessions). Scope: path fix **+ post-install verification** (assert tools reachable, skills present, crons registered) — the silent failure is the real defect. See queue #0.
+- ~~**Deployment / release process**~~ — **🔴 UNPARKED 2026-07-25: this is a PREREQUISITE, not a later phase.** On 07-25 `./install.sh hermes` was broken: it read `${REPO_DIR}/deploy/…` but those assets live at `setup/deploy/`, so it aborted before MCP registration, kanban setup, and cron. That was the mechanical root cause of the options divergence (built + tested + unreachable for 34 sessions). **Fixed 2026-08-08:** one installer, separate `REPO_ROOT`/`DEPLOY_DIR`, all paths validated up front (`0aced42`, `21900d9`, `3365aee`), plus post-install verification (`verify.sh`). Now ⏸ paused at 10 of 12 tasks; the only blocker is an owner-approved real install. See queue #0.
 
 ### ⛔ Quarantined — re-derive in design, never build as-is
 
@@ -355,16 +356,15 @@ Ratified features enter `docs/product/features/<slug>/` as `spec → design → 
 
 | # | Feature | Implements | Why this position | Status |
 |---|---------|-----------|-------------------|--------|
-| **0** | **`deployment`** 🔴 | — | **UNPARKED — prerequisite.** **THREE installers exist and none can complete** — they fail on *complementary* halves because one `$REPO_DIR` is used for two roots at different depths (`<repo>/` vs `<repo>/setup/deploy/`). **Nothing built reaches the runtime until this is fixed + verified.** Path fix is minutes; **`verify.sh` (reachability, not presence) is the actual feature.** | ⏸ **PAUSED 08-09** — Tasks 1–9 shipped, **DoD 6 of 9**. ⭐ The 🔴 options-reachability bug is **closed by live handshake** (61 tools, all 5 options tools in the *deployed* profile). Backlog: Tasks 11–12 (installer never copies `skills/`; `verify.sh` check 5 reads the wrong cron path) then Task 10. |
-| 1 | **`go-live-metrics`** ⬅ **NEXT** | D5 (measurement) | The evidence clock isn't running (1 of 22 trades measurable). Cheap, unblocks D5 + D7 + every future measurement. Nothing should be measured until this works. | ✅ **designed** — 11 tasks, ready to build |
+| **0** | **`deployment`** 🔴 | — | **UNPARKED — prerequisite.** On 07-25 three installers existed and none could complete, because one `$REPO_DIR` was used for two roots at different depths (`<repo>/` vs `<repo>/setup/deploy/`). Fixed 08-08: **one installer** (`./install.sh`) with separate roots. **`verify.sh` (reachability, not presence) is the actual feature.** | ⏸ **PAUSED** (08-09) — **10 of 12 tasks** (1–8, 11, 12 done; 9–10 partial), **DoD 6 of 9**. ⭐ The 🔴 options-reachability bug is **closed by live handshake** 08-09 (61 tools, all 5 options tools in the *deployed* profile). Only blocker: an owner-approved real install (Tasks 9–10). |
+| 1 | **`go-live-metrics`** ⬅ **NOW** | D5 (measurement) | The evidence clock wasn't running (07-25: 1 of 22 trades measurable). Cheap, unblocks D5 + D7 + every future measurement. Nothing should be measured until this works. | 🔨 **building** — Tasks 1–10 done; Task 11 partial (deterministic end-to-end proof done; live paper fill pending creds + an open market). D5 clock 0/100 |
 | 2 | **`governance-gate`** | **D1** (rule scope) + **D2** (risk config) | P0 safety. **D2 ships inside this feature** — `risk_limits.dev/live.yaml` (% of equity, git-versioned) + `TRADING_ENV` switch bound to broker mode + drift detector; the gate is its only consumer. Ships **shadow-first** per §4.5. **12 rules, each traced to an OPERATING_MANUAL section.** | ✅ **designed** |
 | 3 | **`data-source-adapters`** | **D3** | Canonical `MarketDataSource` + capability-flagged adapters + `AlpacaSource` (daily/intraday/quotes); monitoring reads the execution broker's feed. **Also closes the 🔴 options divergence** — the feed is built but unreachable by its consumer (see D6 correction). **Blocks #4.** | ✅ **designed** |
 | 4 | **`capital-aware-selection`** | **D6** | Fixes the drought at its source: affordability pre-filter + rank by return-on-capital across equity/options in one pass. Independent of the scanner rebuild. **Needs #3** for options BPR (equity-only can ship first). | ✅ **designed** (8 tasks) |
 | 5 | **`pipeline-contracts`** | (Pattern C) | Typed `TradingBrief`/`TradePlan` — unlocks gate Tier-4 + Pattern C's one-shot decision call. | ⬜ queued |
 | 6 | **`strategy-config`** | (Jun-27 direction) | M/R as config records (not a plugin framework). Cross-asset strategy eligibility for D6's unified scan. | ⬜ queued |
 | 7 | **`agent-learning-loop`** 🆕 | R2, R3, ROADMAP #3/#9/#12 | **Monitor quality + EOD capture + durable knowledge — how the agent actually evolves.** Consolidates five scattered items. See §4.8. | ⬜ **needs design** |
-| 7 | **`backtest-engine`** | **D7** (blocks it) | ⏸ parked — design when its phase opens. | ⏸ parked |
-| 8 | **`deployment`** | — | ⏸ parked — design once there's something built to deploy. | ⏸ parked |
+| 8 | **`backtest-engine`** | **D7** (blocks it) | ⏸ parked — design when its phase opens. | ⏸ parked |
 
 **Every decision maps somewhere — no orphans:**
 
@@ -376,7 +376,7 @@ Ratified features enter `docs/product/features/<slug>/` as `spec → design → 
 | **D4 scanner rebuild** | **research-only track** — `research/R1-scanner-redesign.md` §S4. **Deliberately NOT in the build queue** (deprioritized behind data foundation + D7). |
 | D5 go-live ladder | queue #1 `go-live-metrics` (measurement) + owner decision at the gate |
 | D6 cross-asset selection | queue #4 `capital-aware-selection` (+ #6 for strategy eligibility) |
-| D7 edge validation | queue #7 `backtest-engine` (parked) + #1 (R per trade) |
+| D7 edge validation | queue #8 `backtest-engine` (parked) + #1 (R per trade) |
 
 ---
 
@@ -396,6 +396,8 @@ $ sqlite3 tools/trading.db "select count(*) from journal_entries"
 0
 ```
 **The EOD journal writes nothing.** Table exists, writer doesn't — identical to `fills` (13 of 22 price=0.0) and `portfolio_snapshots` (0 rows). So the reflection step produces no durable record, and *nothing accumulates* into knowledge.
+
+*Update 2026-10-07:* broker fills are now captured (`sync_fills` → `fills`, go-live-metrics Task 4). `portfolio_snapshots` now has a writer, `write_daily_snapshot` in `audit/drawdown.py` (Task 6b), but only tests call it so far. `journal_entries` is unchanged: `save_journal_entry` has no caller outside tests.
 
 **Scope to design (consolidates 5 scattered items):**
 
@@ -440,12 +442,12 @@ So building proceeds without re-litigating:
 
 ## 6. Immediate next actions
 
-**Decision pass COMPLETE — D1–D7 all ratified 2026-07-25.** Building can start.
+**Decision pass COMPLETE — D1–D7 all ratified 2026-07-25.** Building has started (see queue #0–#1).
 
-1. **`go-live-metrics` FIRST** (Wave 0) — fix fill write-back + fees + round-trip identity + R/expectancy + scorecard. **Rationale: the evidence clock is not running.** Only 1 of 22 trades is measurable, and paper trading currently accumulates *zero* usable evidence — every week unfixed is a week that can't count toward D5/D7. Small, cheap, unblocks everything.
+1. **`go-live-metrics`** (Wave 0) — 🔨 **in progress (2026-10-07).** Tasks 1–10 done: fill write-back, round-trip identity, R/expectancy, scorecard, EOD reconcile. Left: Task 11's live paper fill (needs creds + an open market), then `shipped`. The D5 clock now counts forward from intent capture (0/100).
 2. **`governance-gate`** (Wave 0) — promote to a clean `spec→design→plan`, re-derived from the **D1 math/portfolio subset** (Tier 1–3), quarantining the archived drafts’ unratified specifics. Ship **log-only/shadow first** (§4.5), then enforce.
 3. **`capital-aware-selection`** (Wave 2, but independent) — the actual fix for the 34-session drought; works on the current scanner, so it doesn't wait on the scanner rebuild.
 4. **Research track (no build):** R1 §S4 scanner/factor design (D4) continues in parallel.
 5. Keep `ROADMAP.md` statuses in sync as each item graduates; log shipped work in `PROJECT_STATUS.md`.
 
-**Parked (captured, not now):** `backtest-engine`, `deployment` — design when their phase opens.
+**Parked (captured, not now):** `backtest-engine` — design when its phase opens. (`deployment` is not parked: it is queue #0, ⏸ paused awaiting an owner-approved install.)
