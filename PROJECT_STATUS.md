@@ -9,7 +9,7 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-10-07** · Branch: `main` is **6 ahead of `origin/main` — unpushed** (go-live-metrics, 09-09); work in flight on `refactor/dead-config-cleanup` · Tests: **544 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⚠️ **runtime is behind the repo** — last install 2026-08-09/10, nothing deployed since (owner: "do not deploy")
+Last updated: **2026-10-07** · Branch: `main` is **23 ahead of `origin/main` — unpushed** (go-live-metrics 09-09; dead-config + doc cleanup 10-07) · Tests: **544 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⚠️ **runtime is behind the repo** — last install 2026-08-09/10, nothing deployed since (owner: "do not deploy")
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: **2026-10-07** · Branch: `main` is **6 ahead of `origin/main` —
 
 Phase 2A of the consolidate-in-place refactor. Change note + gate:
 [`docs/product/changes/dead-config-cleanup/`](docs/product/changes/dead-config-cleanup/change.md).
-Branch `refactor/dead-config-cleanup`, not yet landed.
+Landed on `main` 2026-10-07 by local fast-forward, together with `docs/stale-doc-cleanup`; not pushed.
 
 | Commit | What | Evidence nothing read it |
 |---|---|---|
@@ -36,6 +36,12 @@ deferred to D2 (`governance-gate`).
 
 **Caveat:** Hermes is not on this machine, so "Hermes ignores `mcp_tools`" rests on the repo's own
 tooling. Confirm with `verify.sh` check 2 after the next reinstall.
+
+**Same day — stale-doc pass** (`docs/stale-doc-cleanup`): `CLAUDE.md` 253 → 198 lines with ~20 stale
+claims fixed and line refs replaced by symbol names; `README.md`, `ARCHITECTURE-MAP.md`, `ROADMAP.md`,
+`BUILD-PLAN.md` statuses, the product README and this file's lower sections re-verified; superseded
+`docs/design/` docs bannered; 6 tracked `.fuse_hidden*` files removed. The safety bugs from the owner's
+2026-10-05 audit and 2026-10-07 design review were re-verified and added to Known bugs.
 
 ## ⏩ 2026-09-09 — `go-live-metrics` Tasks 8–11: the compute layer goes live (deterministically)
 
@@ -1074,7 +1080,7 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 
 - **`go-live-metrics`** — Tasks 1–10 done, **Task 11 partial**: needs one *live* Alpaca paper fill (`.env` creds + open market) to close the fill-capture bug. Plan: `docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md`.
 - **`deployment`** — ⏸ **paused at 10 of 12 tasks** (1–8, 11, 12 done; 9–10 partial; 6 of 9 done-criteria). The only blocker is an owner-approved real install (`verify.sh` green after a clean install, and a second install changing nothing). Plan: `docs/product/features/deployment/deployment-implementation-plan.md`.
-- **Refactor (consolidate in place)** — `dead-config-cleanup` on `refactor/dead-config-cleanup` and the stale-doc pass on `docs/stale-doc-cleanup`, both awaiting owner acceptance before a local merge into `main`.
+- **Refactor (consolidate in place)** — Phase 2A (`dead-config-cleanup`) and the stale-doc pass landed on `main` 2026-10-07 (local, unpushed). Next, per the 2026-10-05 audit: the two 🔴 safety fixes in Known bugs (idempotent order submit; restore the truncated monitor/EOD skills).
 
 ### Strategy-agnostic backtest engine — ⏸ PARKED
 Parked in BUILD-PLAN §4.7 (`backtest-engine`, blocked by D7). The design record below is kept for when its phase opens. Its spec is no longer in the tree: `git show 52fbd45:docs/specs/2026-06-05-strategy-agnostic-backtest-design.md`.
