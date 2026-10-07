@@ -146,7 +146,7 @@ Check these **before** touching thresholds; the 2026-06-23 drought was stale dat
 
 - **`scan_funnel` table** — mechanical per-run funnel, written by both scan tools, complete even when the agent under-logs.
 - **`get_daily_funnel(date)`** — joins scan + decisions + ledger into a `why_zero` line.
-- **Tuning bridge** — `scan_universe_swing` (not `scan_universe`) and the risk-check tools read `tools/scanner/tuning_config.json`. ⚠️ Since `4c78ff6` the EOD skill writes tuning *proposals* to `reports/sop-changes/` instead of calling `generate_tuning_config`, so nothing updates the file.
+- **Tuning bridge** — `scan_universe_swing` (not `scan_universe`) and the risk-check tools read `tools/scanner/tuning_config.json`. ⚠️ Nothing updates the file: commit `4c78ff6` truncated the EOD skill (348→68 lines) and the monitor skill (548→129), and the `generate_tuning_config` step was lost with it (PROJECT_STATUS Known bugs).
 - **`get_go_live_scorecard()`** — D5 readiness; **`run_eod_reconcile()`** turns broker fills into round trips.
 
 ## BACKTEST RULES (non-negotiable — violating them produces misleading results)

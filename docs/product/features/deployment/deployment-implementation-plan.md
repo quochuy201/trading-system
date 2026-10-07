@@ -6,7 +6,7 @@
 
 ## ⏸ PAUSED 2026-08-09 — owner decision, work moved to backlog
 
-Tasks 1–9 are done and committed. **The feature's headline goal is met:** the five options
+Tasks 1–8, 11 and 12 are done and committed; Tasks 9 and 10 are partial (◑ below) <!-- edited by claude-code 2026-10-07: was "Tasks 1–9 are done and committed" -->. **The feature's headline goal is met:** the five options
 MCP tools are confirmed reachable *in the deployed profile* by real handshake, closing the
 34-session 🔴 bug.
 

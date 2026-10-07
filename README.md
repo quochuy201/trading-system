@@ -27,7 +27,7 @@ The installer schedules these weekday cron jobs, in this order through the day. 
 | `trading-data-refresh` | Refresh daily bars for the scan universe |
 | `trading-equity-morning` | Preflight, then create the `equity` board's daily chain |
 | `trading-options-morning` | Preflight, then create the `options` board's daily chain |
-| `trading-monitor-sentinel` | Every minute in market hours: a mechanical check (no LLM) that wakes the monitor skill when a stop, target or loss limit is near |
+| `trading-monitor-sentinel` | Every minute in market hours: runs the monitor skill as a **full LLM session** (`hermes -p trading -z`). The no-LLM pre-check `tools/monitor_sentinel.py` exists but nothing calls it |
 | `trading-iv-capture` | Capture implied volatility across the universe |
 | `trading-eod` | EOD review skill: reconcile fills, go-live scorecard, journal, compliance score |
 
