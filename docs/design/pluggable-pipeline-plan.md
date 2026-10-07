@@ -1,5 +1,7 @@
 # Scalable Scanner & Research Pipeline — Implementation Plan
 
+> ⚠️ **SUPERSEDED — historical, do not build from this.** Same pluggable registry + 14-factor design as `consolidated-architecture.md`; never executed, and overridden by BUILD-PLAN §1.5 (no registry until a 3rd strategy) and D4 (4–6 factors). Current architecture: [`docs/product/BUILD-PLAN.md`](../product/BUILD-PLAN.md) §1.5 and the ratified decisions D1–D7. *(Banner added 2026-10-07.)*
+
 **Status:** DRAFT — review and approve before execution
 **Date:** 2026-06-28
 **Goal:** End-to-end daily scan pipeline that covers 400 symbols, costs < $0.10/day, and adapts when strategies decay

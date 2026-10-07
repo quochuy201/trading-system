@@ -1,5 +1,7 @@
 # Detailed Design: Multi-Agent Trading System
 
+> ⚠️ **SUPERSEDED — historical, do not build from this.** The original MVP design (7 agents, MeshClaw for development, a dashboard). Replaced by the single `trading` profile + Hermes kanban design (`setup/deploy/SOUL.md`). Current architecture: [`docs/product/BUILD-PLAN.md`](../product/BUILD-PLAN.md) §1.5 and the ratified decisions D1–D7. *(Banner added 2026-10-07.)*
+
 ## 1. Overview
 
 This document describes the design of a multi-agent autonomous trading system that uses specialized AI agents coordinated through a hub-and-spoke architecture to execute the full trading lifecycle — from market scanning and analysis through execution, monitoring, and post-trade review.

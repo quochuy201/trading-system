@@ -1,6 +1,6 @@
 # Implementation Plan: Go-Live Metrics
 
-- **Slug:** `go-live-metrics` · **Status:** `plan` · **Design:** [`go-live-metrics-design.md`](go-live-metrics-design.md) · **Spec:** [`go-live-metrics-spec.md`](go-live-metrics-spec.md)
+- **Slug:** `go-live-metrics` · **Status:** `building` (Tasks 1–10 done, 11 partial) · **Design:** [`go-live-metrics-design.md`](go-live-metrics-design.md) · **Spec:** [`go-live-metrics-spec.md`](go-live-metrics-spec.md)
 - **Executor:** Claude Code · **Date:** 2026-08-08 · **Rev 3** — three-layer architecture · **Status: building** (Task 1 done 2026-08-16)
 
 ## How to Use This Plan

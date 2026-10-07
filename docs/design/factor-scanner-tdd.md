@@ -1,5 +1,7 @@
 # Technical Design Document: Factor-Based Scanner Replacement
 
+> ⚠️ **Unratified research input — not a build spec.** Kept because [`research/R1-scanner-redesign.md`](../product/research/R1-scanner-redesign.md) §S4 starts from it. Its factor count and weights are not decided: D4 caps the eventual scanner at **4–6 economically-justified factors**, built only after the data foundation and D7. *(Banner added 2026-10-07.)*
+
 **Version:** 1.0.0 — DRAFT FOR REVIEW
 **Date:** 2026-06-28
 **Status:** DESIGN PHASE — no implementation started

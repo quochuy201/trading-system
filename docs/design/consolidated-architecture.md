@@ -1,5 +1,7 @@
 # Trading System Architecture — Consolidated Design
 
+> ⚠️ **SUPERSEDED — historical, do not build from this.** Its `tools/pipeline/` + factor registry with 14 factors was never built, and BUILD-PLAN overrides it: no plugin registry until a 3rd strategy needs one (§1.5), and D4 caps the scanner at 4–6 factors. Current architecture: [`docs/product/BUILD-PLAN.md`](../product/BUILD-PLAN.md) §1.5 and the ratified decisions D1–D7. *(Banner added 2026-10-07.)*
+
 **Status:** DESIGN COMPLETE — awaiting implementation approval
 **Date:** 2026-06-28
 **Capital:** $5,000 starting · $200/month break-even · $50-100/day at $25K+
