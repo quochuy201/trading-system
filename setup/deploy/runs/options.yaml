@@ -15,9 +15,3 @@ scanner_profile: options   # Scanner configuration profile
 
 # Phases to run in the morning workflow
 phases: [risk, research, trade]
-
-# Asset-specific risk budget (more conservative for options)
-risk_budget:
-  max_risk_per_trade_pct: 2.0
-  max_open_positions: 5
-  daily_loss_limit_pct: 5.0

@@ -17,9 +17,3 @@ scanner_profile: equity    # Scanner configuration profile
 # Phases to run in the morning workflow
 # Note: monitor and EOD are handled by shared services
 phases: [risk, research, trade]
-
-# Asset-specific risk budget (overrides config.yaml defaults)
-risk_budget:
-  max_risk_per_trade_pct: 1.5
-  max_open_positions: 8
-  daily_loss_limit_pct: 4.0

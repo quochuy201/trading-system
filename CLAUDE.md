@@ -64,7 +64,7 @@ A cross-cutting fix that touched one file is incomplete. This failed ~10 times: 
 
 - **`scanner/filters.py:153-167`** — `SWING_V1` hardcodes **13 strategy thresholds** in Python, each commented with the SOP gate it mirrors. The comment `"r_rsi3_max": 10.0, # R-G5 (v1.2.0: was 15; v1.1.0: was 30)` *is a record of hand-copying a value across three SOP versions.* Change the SOP and the scanner silently keeps the old number.
 - **`max_open_positions`** drifted **5 vs 10** between `config.yaml` and `OPERATING_MANUAL.md`.
-- **`setup/deploy/runs/*.yaml`** carries `risk_budget` overrides nothing reads — a **4th** risk-limit source.
+- **`setup/deploy/runs/*.yaml`** carried `risk_budget` overrides nothing read — a **4th** risk-limit source (removed 2026-10-07, `dead-config-cleanup`).
 - **`install.sh`** used one `$REPO_DIR` for two roots at different depths → all three installers broken.
 
 **Corollary:** a value duplicated "for convenience" is a future drift bug with a delay fuse. If code needs a strategy number, it **reads** it — it does not restate it.
@@ -249,5 +249,5 @@ Check these **before** touching thresholds; the 2026-06-23 drought was stale dat
 - **`.env`** (repo root, loaded by `server.py`) — required `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`; optional `ALPACA_BASE_URL`, `TRADING_DATA_SOURCE`, `DISCORD_WEBHOOK_URL`, `SLACK_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`+`TELEGRAM_CHAT_ID`, `REDDIT_CLIENT_ID`+`REDDIT_CLIENT_SECRET`.
 - **`TRADING_TOOL_GROUPS`** — per-profile tool gating (`server.py:2855`); unset = all tools.
 - **`setup/deploy/distribution.yaml`** · **`mcp.json`** — Hermes manifest + a generic MCP declaration. Hermes never reads `mcp.json` (it keys servers under `mcp_servers:` in the profile config); `install.sh` points Kermes users at it.
-- **`setup/deploy/runs/*.yaml`** — ⚠️ carry `risk_budget` overrides **nothing reads** (a 4th undocumented risk source). Don't trust; resolved in `deployment`.
+- **`setup/deploy/runs/*.yaml`** — per-asset run descriptors. Only `board` is read (by `verify.sh` check 6). Risk limits never go here.
 - **After D2:** `config/risk_limits.{dev,live}.yaml` becomes the single risk source, selected by `TRADING_ENV` bound to broker mode.
