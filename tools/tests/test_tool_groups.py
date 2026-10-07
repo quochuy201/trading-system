@@ -13,11 +13,36 @@ SNIPPET = (
 )
 
 
+# Registered tools vs TOOL_GROUPS, before any gating. UNGROUPED_BY_DESIGN is
+# reported as null when server.py does not define it, so a missing declaration
+# fails the assertion with the sets visible instead of a subprocess traceback.
+GROUPING_SNIPPET = (
+    "import json, server; print(json.dumps({"
+    "'registered': sorted(server.mcp._tool_manager._tools), "
+    "'groups': {k: sorted(v) for k, v in server.TOOL_GROUPS.items()}, "
+    "'ungrouped_by_design': sorted(server.UNGROUPED_BY_DESIGN) "
+    "if hasattr(server, 'UNGROUPED_BY_DESIGN') else None}))"
+)
+
+
 def _tools_for(groups):
     env = {**os.environ, "TRADING_TOOL_GROUPS": groups}
     out = subprocess.run([sys.executable, "-c", SNIPPET], cwd=TOOLS_DIR,
                          env=env, capture_output=True, text=True, check=True)
     return set(json.loads(out.stdout.strip().splitlines()[-1]))
+
+
+def _grouping():
+    """Return the tool-group wiring of an ungated server.
+
+    Keys: ``registered`` (sorted tool names), ``groups`` (group name -> sorted
+    tool names, i.e. TOOL_GROUPS), ``ungrouped_by_design`` (sorted names, or
+    ``None`` when server.py has no such name).
+    """
+    env = {**os.environ, "TRADING_TOOL_GROUPS": ""}
+    out = subprocess.run([sys.executable, "-c", GROUPING_SNIPPET], cwd=TOOLS_DIR,
+                         env=env, capture_output=True, text=True, check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
 def test_unset_exposes_everything():
@@ -67,3 +92,22 @@ def test_eod_has_funnel():
 def test_common_always_present():
     for g in ("research", "trader", "monitor", "risk", "eod"):
         assert {"check_kill_switch", "log_decision"} <= _tools_for(g)
+
+
+# A tool in no group is unreachable by every role-scoped profile. That hid five
+# options tools for 34 sessions, so "in no group" must be a declared decision.
+
+def test_every_registered_tool_is_grouped_or_ungrouped_by_design():
+    g = _grouping()
+    grouped = set().union(*g["groups"].values())
+    assert sorted(set(g["registered"]) - grouped) == g["ungrouped_by_design"]
+
+
+def test_ungrouped_by_design_is_only_capture_iv_universe():
+    # cron imports capture_iv_universe directly; no agent calls it
+    assert _grouping()["ungrouped_by_design"] == ["capture_iv_universe"]
+
+
+def test_reset_tuning_config_is_in_eod_group():
+    # beside its siblings generate_tuning_config / get_tuning_config
+    assert "reset_tuning_config" in _grouping()["groups"]["eod"]

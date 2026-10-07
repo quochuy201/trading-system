@@ -214,7 +214,7 @@ Check these **before** touching thresholds; the 2026-06-23 drought was stale dat
 - State-mutating tools log to the ledger via `_log_to_ledger()` (`:68`).
 - **Never raise to the agent** — return `{"error": "..."}`.
 - Wrap flaky broker calls in `with_retry(fn, _retry_config)()`.
-- **Adding a tool means editing `TOOL_GROUPS` (`:2799`)** — a tool in no group is unreachable by every profile. `tests/test_tool_groups.py` asserts the total; update it deliberately, never to silence a failure.
+- **Adding a tool means editing `TOOL_GROUPS` in `server.py`** — a tool in no group is unreachable by every profile. A tool that must stay out of every group (e.g. one only cron calls) goes in `UNGROUPED_BY_DESIGN` instead. `tests/test_tool_groups.py` fails on any tool that is in neither, and asserts the total; update it deliberately, never to silence a failure.
 
 **Broker adapters** — implement `broker/adapter.py`; return the same shapes as `alpaca.py`; simulation must respect `current_time`.
 

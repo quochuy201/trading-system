@@ -3038,7 +3038,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "generate_performance_report", "get_compliance_score",
         "get_portfolio_state", "get_positions", "get_daily_funnel",
         "generate_tuning_config", "get_tuning_config",
-        "get_go_live_scorecard", "run_eod_reconcile",
+        "get_go_live_scorecard", "run_eod_reconcile", "reset_tuning_config",
     },
     "backtest": {
         "start_backtest_v2", "advance_to_next_day", "load_day_bars",
@@ -3052,6 +3052,15 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_market_regime",
     },
 }
+
+
+# Registered tools that belong to NO group on purpose. A tool in no group is
+# unreachable by every role-scoped profile — that silently hid five options tools
+# for 34 sessions — so every exception is named here and
+# tests/test_tool_groups.py fails on any undeclared one.
+# capture_iv_universe: run by cron (trading-iv-capture.sh imports it directly),
+# never by an agent.
+UNGROUPED_BY_DESIGN: frozenset[str] = frozenset({"capture_iv_universe"})
 
 
 def _apply_tool_groups() -> None:
