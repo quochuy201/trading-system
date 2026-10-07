@@ -4,14 +4,6 @@
 model: deepseek-ai/deepseek-v4-flash  # Primary model
 fallback_model: deepseek-ai/deepseek-v3  # Fallback for rate limits/overload
 
-# MCP tools configuration
-mcp_tools:
-  trading-tools:  # Group name for trading-specific tools
-    - analysis/*  # Technical analysis tools
-    - broker/*    # Broker/adapter tools
-    - persistence/*  # Database/persistence tools
-    - notifications/*  # Notification tools
-
 # Discord configuration (machine-local via .env)
 discord:
   enabled: true

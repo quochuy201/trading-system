@@ -248,6 +248,6 @@ Check these **before** touching thresholds; the 2026-06-23 drought was stale dat
 - **`config.yaml`** — risk parameters, broker mode (`paper | live | simulation`), scheduling, income gating.
 - **`.env`** (repo root, loaded by `server.py`) — required `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`; optional `ALPACA_BASE_URL`, `TRADING_DATA_SOURCE`, `DISCORD_WEBHOOK_URL`, `SLACK_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`+`TELEGRAM_CHAT_ID`, `REDDIT_CLIENT_ID`+`REDDIT_CLIENT_SECRET`.
 - **`TRADING_TOOL_GROUPS`** — per-profile tool gating (`server.py:2855`); unset = all tools.
-- **`setup/deploy/distribution.yaml`** · **`mcp.json`** — Hermes manifest + MCP declaration. ⚠️ `mcp.json`'s `mcp_tools:` namespaces do **not** match `TOOL_GROUPS` — dead config that looks authoritative.
+- **`setup/deploy/distribution.yaml`** · **`mcp.json`** — Hermes manifest + a generic MCP declaration. Hermes never reads `mcp.json` (it keys servers under `mcp_servers:` in the profile config); `install.sh` points Kermes users at it.
 - **`setup/deploy/runs/*.yaml`** — ⚠️ carry `risk_budget` overrides **nothing reads** (a 4th undocumented risk source). Don't trust; resolved in `deployment`.
 - **After D2:** `config/risk_limits.{dev,live}.yaml` becomes the single risk source, selected by `TRADING_ENV` bound to broker mode.
