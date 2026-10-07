@@ -9,9 +9,33 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-09-09** · Branch: `refactor/consolidate-and-go-live-metrics` (5 commits, **local — unpushed**; `main` matches `origin`) · Tests: **538 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⛔ **repo does NOT reach the Hermes runtime — see Known bugs**
+Last updated: **2026-10-07** · Branch: `main` is **6 ahead of `origin/main` — unpushed** (go-live-metrics, 09-09); work in flight on `refactor/dead-config-cleanup` · Tests: **544 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⚠️ **runtime is behind the repo** — last install 2026-08-09/10, nothing deployed since (owner: "do not deploy")
 
 ---
+
+## ⏩ 2026-10-07 — `dead-config-cleanup`: three pieces of dead config removed
+
+Phase 2A of the consolidate-in-place refactor. Change note + gate:
+[`docs/product/changes/dead-config-cleanup/`](docs/product/changes/dead-config-cleanup/change.md).
+Branch `refactor/dead-config-cleanup`, not yet landed.
+
+| Commit | What | Evidence nothing read it |
+|---|---|---|
+| `896e773` | `profile.yaml`: dropped `mcp_tools:` | `grep -rn mcp_tools` → only its own definition; Hermes keys servers under `mcp_servers:` (`mcp_probe.py:164-171`, `verify.sh:85`) |
+| `a80fa39` | `runs/equity.yaml`, `runs/options.yaml`: dropped `risk_budget:` (a 4th risk source) | only `verify.sh` check 6 reads these files, and it reads `board` only |
+| `609967a` | `server.py`: `reset_tuning_config` → `eod` group; new `UNGROUPED_BY_DESIGN = {capture_iv_universe}` (cron-only) | the 2 tools were in no group; a new test fails on any undeclared ungrouped tool |
+
+Tests were written first by a separate test writer and locked: `tests/test_deploy_config.py` (new, 3) +
+3 in `tests/test_tool_groups.py`. `task-gate check` → `544 passed, 10 deselected, RESULT PASS`.
+An independent review found no defect.
+
+**Checked and deliberately not changed:** `config.yaml scanner.universe` is still read by
+`tools/scripts/load_backtest_week.py:55`. `max_open_positions` (code default 5 in `risk/checks.py:8`
+vs 10 ratified in `config.yaml`/`OPERATING_MANUAL.md`): fixing it loosens a live risk check, so it is
+deferred to D2 (`governance-gate`).
+
+**Caveat:** Hermes is not on this machine, so "Hermes ignores `mcp_tools`" rests on the repo's own
+tooling. Confirm with `verify.sh` check 2 after the next reinstall.
 
 ## ⏩ 2026-09-09 — `go-live-metrics` Tasks 8–11: the compute layer goes live (deterministically)
 
