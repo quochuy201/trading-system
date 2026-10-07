@@ -77,5 +77,9 @@ Every item below was checked by command on 2026-10-07 before being put in scope.
   The two open choices took the recommended defaults: `max_open_positions` deferred to D2
   (`governance-gate`), and `reset_tuning_config` joins the `eod` group. Stale-doc and CLAUDE.md
   cleanup is a separate unit on its own branch, after this one.
-- Accepted first time: _pending_
-- Owner corrections: _none yet_
+- **Accepted first time: yes** (2026-10-07). Owner reply: "accept".
+- Owner corrections: none.
+- Raised after the review, not yet answered: whether `reset_tuning_config` should leave the `eod`
+  group for `UNGROUPED_BY_DESIGN`, because the 2026-10-05 audit shows tuning overrides can loosen
+  risk limits. Current state kept; changing it means changing a locked test (owner's yes needed).
+- Landed: local fast-forward of `main` together with `docs/stale-doc-cleanup`. Not pushed.
