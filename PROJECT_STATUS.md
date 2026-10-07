@@ -634,6 +634,60 @@ All OPERATING_MANUAL invariants preserved (kill switch inactive, limits ok, comp
 
 **Current board state:** 9 historical done tasks + 1 running + 4 todo (dependency-gated). System healthy for paper trading day.
 
+## ⏩ Session handoff — 2026-06-14 session 2 (Engine B directional-swing merged to main)
+
+**Completed integration of Engine B directional-swing feature:**
+
+- **Merged to main**: feature/engine-b-directional-swing → main (commit f2bf544)
+- **Updated all Hermes profiles**: ./install.sh hermes completed successfully
+- **Profiles updated**:
+  - trading-research: gained updated skills/research/reference/options-vol-edge-dd.md
+  - trading-monitor: gained updated skills/monitor/SKILL.md
+  - trading-eod: gained updated skills/eod-review/SKILL.md
+  - trading-system/trading-orchestrator/trading-trader/trading-risk/trading-backtest: gained access to updated tools/
+- **Verification**:
+  - All 287 tests pass (including new Engine B tests)
+  - Tool-group counts unchanged (no new MCP tools added)
+  - Spec coverage verified (all Engine B v1.1.0 artifacts present)
+
+**Feature now live in multi-profile architecture:**
+- Research agent generates armed plans with 3-leg DD
+- Monitor agent watches armed plans and executes hybrid exit
+- EOD-review agent handles weekly param propose-and-ratify
+- All agents share confirmation parameters and armed-plan storage via tools/
+
+Ready for paper trading validation.
+
+## ⏩ Session handoff — 2026-06-14 session 1 (Engine B directional-swing complete)
+
+**Completed 8-task TDD plan for Engine B directional-swing refinement (2–4 wk):** All tasks implemented, tested, and spec-approved.
+
+- **Task 1:** Bounded confirmation-params loader (`tools/confirmation_params.py`, `.json`, tests) - commit a06546a
+- **Task 2:** Armed-plan store (`tools/armed_plans.py`, tests, `.gitignore` update) - commit f7b22dd  
+- **Task 3:** Sentinel armed-plan trigger pass (`tools/monitor_sentinel.py`, tests) - commit dd7a1fd
+- **Task 4:** SOP v1.1.0 (`sops/options/vol-edge/v1.1.0.md`) - commit d204177
+- **Task 5:** Research DD reference (`skills/research/reference/options-vol-edge-dd.md`) - commit b9f4b75
+- **Task 6:** Monitor skill — confirmation + hybrid exit (`skills/monitor/SKILL.md`) - commit f573659
+- **Task 7:** EOD weekly param-review step (`skills/eod-review/SKILL.md`) - commit 5572997
+- **Task 8:** Full-suite regression + spec cross-check - all tests pass (287), tool groups unchanged, spec artifacts verified
+
+**Feature summary:** Refined Engine B into long-only directional-swing strategy with:
+- 4-stage scan funnel (quantum scan → options gates → 3-leg DD → armed plan)
+- 3-leg research (technical + social + LLM synthesis) with armed-plan output
+- Two-phase entry: armed plan (pre-market) → intraday confirmation → immediate marketable order
+- Hybrid exit: underlying-close trailing stop + premium scale-out at +50% max gain
+- Bounded adaptive confirmation parameters with propose-and-ratify governance
+- No resting orders (either side), conviction-down-only sizing
+- Long-only scope (SPY UPTREND only), DTE 35–45, IVR committee instrument select
+
+**Verification:** 
+- All 287 tests pass (including new Tasks 1-3 tests)
+- Tool-group counts unchanged (no new MCP tools added)
+- All spec artifacts present and verified
+- Ready for integration into trading-system profile and paper trading
+
+**Next step:** Merge to main after final validation.
+
 ## ⏩ Profile Audit & Setup — 2026-06-12
 
 **Checked all trading profiles (per user query "checking all trading profile" and memory invariants):**
@@ -987,17 +1041,23 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 ---
 ## Built & validated
 
-### Core trading system (Phase 0 — pre-options)
+*Re-verified 2026-10-07 against the repo; cite code by name, not line.*
+
+### Core trading system
 - **OPERATING_MANUAL.md** — the constitution: modes (NORMAL/DEFENSIVE/HALTED), sizing math (Kelly + expectancy), staircase risk limits, circuit breakers, EOD reflection.
-- **Agents** (`SOUL.md` + `skills/*/SKILL.md`): Orchestrator, Research, Trader, Monitor, Risk Manager, EOD Review, Backtest.
-- **Equity day-trade strategy**: `sops/equity/intraday-momentum/` — catalyst-driven momentum, score-based sizing.
-- **MCP tools** (`tools/server.py`): broker (place_order, positions, account), data (market data, historical, indicators), risk (kill switch, daily limits, portfolio risk, position size), persistence (trade plans, transactions, decisions ledger), scanner, social sentiment.
+- **Agents**: orchestrator `setup/deploy/SOUL.md` + six skills in `skills/*/SKILL.md` — research, trader, monitor, risk-manager, eod-review, backtest.
+- **Equity strategies**: `sops/equity/swing/` v1.0.0–v1.6.0 (Engine M momentum + Engine R mean-reversion; `config.yaml` pins v1.6.0) is the active one. `sops/equity/intraday-momentum/` v1.1.0 is listed under `strategies.disabled`.
+- **MCP tools** (`tools/server.py`), grouped per role in `TOOL_GROUPS`; `tests/test_tool_groups.py` asserts the total and that every tool is grouped or in `UNGROUPED_BY_DESIGN`.
 - **Broker adapters** (`tools/broker/`): `adapter.py` (abstract) → `alpaca.py` (live/paper) + `simulation.py` (backtest). Global `_broker` swapped during backtest.
-- **Backtest v3 harness** (`tools/backtest/harness.py`): equity-only, daily-cycle bar replay, mechanical exits + LLM-on-events. **No-look-ahead guard** = clock-bounded data queries (`query_price_data(end=current_time)`); **entry-timing guard** = `_fill_price_bar` fills at next bar's open, not decision-bar close.
+- **Backtest v3 harness** (`tools/backtest/harness.py`): equity-only, daily-cycle bar replay, mechanical exits + LLM-on-events. **No-look-ahead guard** = clock-bounded data queries (`query_price_data(end=current_time)`). ⚠️ The **entry-timing guard is dead code**: `_fill_price_bar` lives in `broker/simulation.py`, starts `None`, and nothing in `tools/` ever sets it (`grep -rn _fill_price_bar tools` → only its own reads), so fills fall through to the current bar.
+- **Fill capture — `go-live-metrics` Tasks 1–10** (2026-08-16 → 09-09): `orders` (intent) / `fills` (append-only) / `round_trips` (rebuildable), `sync_fills`, `rebuild_round_trips`, `v_performance_current`, the fail-safe `run_eod_reconcile()` and `get_go_live_scorecard()` tools, both called by the EOD skill. Proven by a deterministic end-to-end test; live paper fill pending (In progress).
+- **Deployment tooling** (2026-08-08 → 08-10): one installer (`./install.sh`, separate `REPO_ROOT`/`DEPLOY_DIR`, paths checked up front by `require_paths`), `setup/deploy/verify.sh` (checks reachability, not presence) + `mcp_probe.py`, provenance stamp. `preflight.sh` rewritten 2026-08-16 (`33b51cc`, `277a013`, `ce77a56`).
+- **Notifications**: Slack, Discord, Telegram — fire-and-forget.
 
 ### Options Vol-Edge — Phases 1 & 2 COMPLETE
 - **Phase 1 (SOP + agent behavior, markdown)** — merged `9a44cc5`:
   - `sops/options/vol-edge/v1.0.0.md` — Engine A (vol-edge credit/debit spreads) + Engine B (big-fish momentum debit spreads + leashed single-leg longs). Defined-risk only.
+  - `v1.1.0.md` — Engine B directional-swing, long-only (`d204177`, 2026-06-14). `config.yaml` still pins v1.0.0.
   - DD reference, trader/monitor skill updates, `ROADMAP.md`, `HANDOFF.md`.
 - **Phase 2 (MCP tooling)** — commits `8d5882a`..`3cd74e4`:
   - `tools/analysis/options.py` — pure fns: parse_occ_symbol, calc_iv_rank, calc_hv, calc_put_skew (IV **points**), calc_expected_move, black_scholes_price, implied_vol_from_price (BSM inversion).
@@ -1012,9 +1072,14 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 ---
 ## In progress
 
-### Strategy-agnostic backtest engine — DESIGN being written
+- **`go-live-metrics`** — Tasks 1–10 done, **Task 11 partial**: needs one *live* Alpaca paper fill (`.env` creds + open market) to close the fill-capture bug. Plan: `docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md`.
+- **`deployment`** — ⏸ **paused at 10 of 12 tasks** (1–8, 11, 12 done; 9–10 partial; 6 of 9 done-criteria). The only blocker is an owner-approved real install (`verify.sh` green after a clean install, and a second install changing nothing). Plan: `docs/product/features/deployment/deployment-implementation-plan.md`.
+- **Refactor (consolidate in place)** — `dead-config-cleanup` on `refactor/dead-config-cleanup` and the stale-doc pass on `docs/stale-doc-cleanup`, both awaiting owner acceptance before a local merge into `main`.
+
+### Strategy-agnostic backtest engine — ⏸ PARKED
+Parked in BUILD-PLAN §4.7 (`backtest-engine`, blocked by D7). The design record below is kept for when its phase opens. Its spec is no longer in the tree: `git show 52fbd45:docs/specs/2026-06-05-strategy-agnostic-backtest-design.md`.
+
 Goal: test ANY strategy (equity, options, future) without modifying the engine core.
-Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not yet written).
 
 **Decisions locked so far:**
 - **Swap point = broker adapter**, NOT the engine. Same MCP tools serve live (Hermes/Alpaca) and backtest (SimulationBroker). Deploy to Hermes = swap broker back to Alpaca; agent/skills/tools/exits byte-identical.
@@ -1027,7 +1092,7 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 
 **Still to design:** SimulationBroker options methods (chain/positions/greeks from history), ExitChecker rule format, migration path from v3 harness, output metrics (win rate, expectancy, IVR-vs-control comparison to validate the strategy's central premise).
 
-**Spec `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` — REVISED after peer review; all findings resolved. Ready for a 2nd review pass / implementation plan.**
+**Spec (recoverable from `52fbd45`) — revised after peer review, all findings resolved; next step when unparked is a 2nd review pass.**
 
 **Resolutions (chose **Option A: historical IV surface**, verified feasible — Alpaca serves per-strike historical option bars; BSM-inverting each strike's close reconstructs real skew, e.g. QQQ showed IV 0.327@m0.78 vs 0.282@m0.85):**
 1. Greeks: spec now lists `black_scholes_greeks()` as NEW prerequisite work (step 1), not existing.
@@ -1041,11 +1106,11 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 ---
 ## Known bugs & gaps
 
-- 🔴 **CRITICAL — `./install.sh hermes` is broken; the repo cannot reach the Hermes runtime.** The root `install.sh` reads from `${REPO_DIR}/deploy/…`, but **`deploy/` does not exist at the repo root** — those assets live at **`setup/deploy/`** (`profile.yaml`, `SOUL.md`, `preflight.sh`, `cron/`, `runs/`, `mcp.json`, plus a second `install.sh`). With `set -euo pipefail` (line 2) the script **aborts at line 85**, before MCP registration, kanban setup, and cron install. The command is the one documented in `CLAUDE.md`. **Consequence:** repo changes never deploy; Hermes keeps running the last successfully-installed copy while the repo moves on. This is the mechanical root cause of the deployment divergence below. Fix = path correction **plus post-install verification** (assert tools reachable, skills present, crons registered) — the failure was silent, which is the real defect. Found 2026-07-25.
+- 🟡 **MOSTLY FIXED (2026-08-08/10) — the installer could not reach the Hermes runtime.** *Original (2026-07-25):* `./install.sh hermes` read `${REPO_DIR}/deploy/…` but the assets live at `setup/deploy/`; with `set -euo pipefail` it aborted before MCP registration, kanban and cron, so repo changes never deployed. **Now:** one installer (`./install.sh`; the other two archived as `docs/_archive/*.before-fix-2026-08-08`), `REPO_DIR` replaced by `REPO_ROOT` + `DEPLOY_DIR` (`0aced42`, `21900d9`, `3365aee`), paths checked up front (`require_paths`), and post-install `verify.sh`. On 2026-08-09 it ran against the real profile and stopped only because `verify.sh` failed; both causes fixed 2026-08-10 (deployment Tasks 11–12). **Remaining:** one owner-approved real install proving `verify.sh` passes and a second run changes nothing (deployment Tasks 9–10). The runtime is behind the repo until then.
 
-- 🔴 **CRITICAL — no installer installs the runtime payload; the live system is hand-assembled.** Beyond the path bug above, all three installers **never copy `tools/`, never copy `skills/`, and never provision `.env`** (`grep -n '\.env\|tools/\.' install.sh setup/install.sh setup/deploy/install.sh` → no matches). Worse, the halves that *do* run wire the runtime back into the dev checkout: `install.sh:121` registers the MCP server as `--command "${REPO_DIR}/tools/run_mcp.sh"`, and the generated cron scripts `cd "$REPO_DIR/tools"` (`:60,:69`). The three scripts also disagree on the repo root — `./install.sh` → repo root, `setup/deploy/install.sh` → `setup/`, and **`setup/install.sh` has `REPO_DIR=""` (line 4)** — so one `$REPO_DIR` is used for two roots at different depths and each script breaks on a complementary half. **Consequence:** everything live under `profiles/trading/` (`project/tools/`, the five `trading-*` skills, `project/.env`, the rewritten cron scripts) was assembled by hand — which is exactly how a bad `.env` got in and cost four trading days (see 08-02 entry). **Mitigating:** the Python is already fully relocatable — zero absolute paths in any `.py`/`.sh`/`.yaml`; everything anchors to `Path(__file__)` (`server.py:15`, `persistence/db.py:263`, `server.py:1350,1380`, `scanner/tuning.py:20`) — and the hand-made copy is currently in sync (`server.py` sha `d460e49d…` identical, all 5 skills and the whole `sops/` tree identical). **Agreed fix (2026-08-02):** `install.sh` copies the payload into `~/.hermes/profiles/trading/project/` and provisions `.env`; keep `tools/..` anchoring so dev resolves to `<repo>/tools/..` and live to `project/tools/..` by location alone. Belongs to `deployment` (build-queue #0). Found 2026-08-02.
+- 🔴 **CRITICAL — the installer does not install the runtime payload.** `./install.sh` never copies `tools/` and never provisions `.env` (`grep -n '\.env\|tools/' install.sh` → only the MCP registration). It registers the MCP server as `${REPO_ROOT}/tools/run_mcp.sh`, which points the runtime at the **dev checkout**. Skills *are* copied since `fd59de4` (2026-08-10). **Consequence:** the live payload under `profiles/trading/` was hand-assembled — which is how a bad `.env` cost four trading days (2026-08-02 entry). **Mitigating:** the Python is relocatable (everything anchors to `Path(__file__)`). **Agreed fix (2026-08-02), not yet built:** copy the payload into `~/.hermes/profiles/trading/project/` and provision `.env`. Owner: `deployment`. Found 2026-08-02.
 
-- 🔴 **CRITICAL — deployment divergence: options tooling is built, tested, and unreachable.** The repo has `AlpacaOptionsSource` (`tools/data/options_source.py`) + five MCP tools — `get_options_chain` (`server.py:1465`), `get_options_market_data` (:1514), `calc_iv_rank` (:1573), `get_put_skew` (:1697), `calc_expected_move` (:1766) — all smoke-tested live on Alpaca paper (see Phase 2/3 below). But the **running `options-trader` skill exists only in the Hermes deployment** (`Hermes/skills/options-trader/`), has **no counterpart in this repo**, and references **zero** of those tools (verified `grep -c` = 0). Its IVR gate therefore falls back to web search → stale/contradictory reads → **34 consecutive zero-trade sessions** and 6 escalations for an options feed **that already exists**. The XSP escalation (33×) also originates from this untracked skill. **The FlashAlpha feed purchase is unnecessary.** Guard = reachability test (`data-source-adapters` Task 7); full skill reconciliation = `deployment`. Found 2026-07-25.
+- 🟡 **HALF CLOSED — options tooling built but unused by the running options skill.** *Reachability is closed:* on 2026-08-09 a real MCP handshake to the deployed profile reached all five options tools (`get_options_chain`, `get_options_market_data`, `calc_iv_rank`, `get_put_skew`, `calc_expected_move`); `verify.sh` check [3] now guards it. *Still open:* the runtime-only `options-trader` skill (no repo counterpart) reportedly calls none of them and fell back to web search — the cause of 34 zero-trade sessions and the XSP/FlashAlpha escalations (neither purchase is needed). `deployment-spec.md` puts reconciling that skill out of scope, and **no feature owns it yet**. Found 2026-07-25.
 
 - 🟡 **MOSTLY FIXED (2026-09-09) — order fills are never written back to the DB (trade outcomes unmeasurable).** *(Original 🔴 CRITICAL finding, kept verbatim for the record; resolution appended at the end of this bullet.)* `trade_transactions` rows are written at order-submit with `status` = `pending_new`/`accepted` (order *acknowledgements*) and are **never updated after execution**: **13 of 22 rows have `price = 0.0`**, and there are no `filled_qty` / `filled_avg_price` / `filled_at` fields. Consequence: **only 1 of 22 recorded trades is R-computable**; `performance_metrics`, `journal_entries`, `portfolio_snapshots` are all **0 rows**. Expectancy/win-rate cannot be computed, so **paper trading currently produces NO measurable evidence** — the go-live clock (D5) and edge validation (D7) are both blocked, and this cannot be reconstructed retroactively. Also missing: commissions/fees (needed for net-of-cost results) and an unambiguous round-trip/position identity (see the FLR `plan_id` with buy 311 → sell 311 → sell 267 → buy 267). Schema is otherwise sound — `trade_plans` does capture `stop_loss`/`take_profit`/entry, so R is computable in principle. Fix = feature `go-live-metrics` (docs/product/BUILD-PLAN.md, Wave 0). Found 2026-07-25 by direct DB audit. **Update 2026-09-09:** the write-back path now exists and is wired — `orders`/`fills`/`round_trips`, `sync_fills`, `rebuild_round_trips`, and the fail-safe `run_eod_reconcile()` tool (Tasks 1–10) — proven end to end by `tests/test_reconcile.py::test_full_pipeline_yields_a_measurable_round_trip` (placed order → reconcile → one round trip with a real fill price and `r_multiple` 1.6). Metrics are computable again; `get_go_live_scorecard()` reports D5 progress. **Not fully closed:** a *live* Alpaca paper fill has not yet been run through the path (needs `.env` + open market), and the D5 clock reads 0/100 by design (counts forward from the first order placed after intent capture). See the 2026-09-09 entry above.
 
@@ -1063,6 +1128,19 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 - **Backtest does not yet share full live code path** — `backtest_enter`/`backtest_exit` are separate MCP tools from `place_order`/`place_multileg_order`. The new engine design fixes this (route through the same tools via SimulationBroker).
 - **Options simulation methods are stubs** — `simulation.py` options methods raise NotImplementedError pending the backtest engine.
 - **No edge validation yet** — agent discipline is proven, but the strategy's profitability (positive expectancy, win rate matching deltas, IVR-filter beating control) is UNVALIDATED. This is the backtest engine's purpose.
+- 🟠 **The EOD → scanner tuning bridge is half-wired.** `scan_universe_swing` and the risk-check tools read `tools/scanner/tuning_config.json`, but since `4c78ff6` (2026-08-08) `skills/eod-review` no longer calls `generate_tuning_config` — its Step 6 writes a proposal to `reports/sop-changes/` instead (`grep -rn generate_tuning_config skills/` → 0). Nothing updates the file. D2 lets automation write `tuning_config.json`, so either restore the call or retire the bridge — **owner decision**. Found 2026-10-07.
+
+- 🟠 **`max_open_positions` drift: code 5, constitution 10.** `risk/checks.py` defaults to 5 and `check_portfolio_risk` uses it unless tuning overrides it; `config.yaml` and `OPERATING_MANUAL.md` say 10 (ratified 2026-06-11); `skills/risk-manager/SKILL.md` says "default 5". The live check is the stricter value. Fixing it loosens a risk check, so it waits for D2's `risk_limits.{dev,live}.yaml` (`governance-gate`). Found 2026-10-07.
+
+- 🟠 **Two cron scripts `cd` to a `tools/` the installer never creates** *(found by reading, not run).* `setup/deploy/cron/trading-data-refresh.sh` and `trading-iv-capture.sh` do `cd "$(dirname "$0")/../tools"`. The installer copies them into `<profile>/scripts/` and `$HERMES_HOME/scripts/` but never creates a `tools/` beside either (see the payload bug above). `write_cron_scripts()` in `install.sh`, which has the correct absolute paths, is defined but never called, and has a `$spand` typo. Found 2026-10-07.
+
+- 🟠 **Kermes and MeshClaw install paths don't work.** `./install.sh kermes` links `skills/` and `sops/` only, registers no MCP server, and suggests `uv run server.py` (which breaks the handshake). `./install.sh meshclaw` copies `$REPO_ROOT/SOUL.md`, which does not exist (it is `setup/deploy/SOUL.md`), so it aborts. Only `hermes` is supported. Found 2026-10-07.
+
+- **`journal_entries` has no writer** — `Repository.save_journal_entry` is called only by tests, so no journal accumulates and the learning loop has nothing to read. Belongs to `agent-learning-loop` (not yet designed).
+
+- **`setup/deploy/profiles/*/SOUL.md` (7 per-role SOULs) are used by nothing** — leftovers of the multi-profile design; `install.sh` deploys the single `trading` profile from `setup/deploy/SOUL.md` and deletes legacy `trading-<role>` profiles. Candidate for removal once the single-profile design is confirmed final.
+
+- **`config.yaml schedule:` is read by no code** (09:45 / 16:15 ET) and disagrees with the crons `install.sh` installs. The real schedule lives in `install_hermes`.
 
 ---
 ## Roadmap (options program)
@@ -1072,67 +1150,14 @@ Spec target: `docs/specs/2026-06-05-strategy-agnostic-backtest-design.md` (not y
 | 1 | Strategy SOP + agent behavior (markdown) | ✅ Complete |
 | 2 | Options MCP tooling | ✅ Complete |
 | 3 | Paper-trade validation | 🔄 In progress (plumbing + discipline validated; edge not yet) |
-| 4 | Strategy-agnostic backtest engine | 🔄 Design in progress |
+| 4 | Strategy-agnostic backtest engine | ⏸ Parked (BUILD-PLAN §4.7, blocked by D7) |
 
-Future strategy versions: v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1.3.0 (earnings-vol single-leg).
+Strategy versions: v1.1.0 shipped (Engine B directional-swing, `d204177`); next v1.1.x (paper-tuned params), v1.2.0 (iron condors), v1.3.0 (earnings-vol single-leg).
 
 ---
 ## Key references
 - `CLAUDE.md` — build/test commands, architecture, backtest rules (NON-NEGOTIABLE).
 - `OPERATING_MANUAL.md` — risk constitution.
 - `docs/AGENT_EVOLUTION_STANDARD.md` — how the agent learns/remembers safely (frozen-model = externalized learning; four-store separation; Tier 1/2/3 trust; runtime-trust memory). **Includes a "Deployment on Hermes" section**: Hermes (Nous Research) auto-generates SKILL.md + has a Curator; its autonomous skill-promotion MUST be gated through human ratification for risk-bearing behavior. Read before wiring any memory/learning loop or deploying to Hermes.
-- `docs/specs/` — design + implementation-plan docs per feature.
+- `docs/product/` — `ROADMAP.md`, `BUILD-PLAN.md`, `ARCHITECTURE-MAP.md`, per-feature `features/<slug>/<slug>-{spec,design,implementation-plan}.md`, per-change `changes/<slug>/change.md`. (The old `docs/specs/` was untracked in `570f314`; recover with `git show 570f314^:<path>`.)
 - `sops/options/vol-edge/HANDOFF.md` + `ROADMAP.md` — options program detail.
-
-## ⏩ Session handoff — 2026-06-14 session 1 (Engine B directional-swing complete)
-
-**Completed 8-task TDD plan for Engine B directional-swing refinement (2–4 wk):** All tasks implemented, tested, and spec-approved.
-
-- **Task 1:** Bounded confirmation-params loader (`tools/confirmation_params.py`, `.json`, tests) - commit a06546a
-- **Task 2:** Armed-plan store (`tools/armed_plans.py`, tests, `.gitignore` update) - commit f7b22dd  
-- **Task 3:** Sentinel armed-plan trigger pass (`tools/monitor_sentinel.py`, tests) - commit dd7a1fd
-- **Task 4:** SOP v1.1.0 (`sops/options/vol-edge/v1.1.0.md`) - commit d204177
-- **Task 5:** Research DD reference (`skills/research/reference/options-vol-edge-dd.md`) - commit b9f4b75
-- **Task 6:** Monitor skill — confirmation + hybrid exit (`skills/monitor/SKILL.md`) - commit f573659
-- **Task 7:** EOD weekly param-review step (`skills/eod-review/SKILL.md`) - commit 5572997
-- **Task 8:** Full-suite regression + spec cross-check - all tests pass (287), tool groups unchanged, spec artifacts verified
-
-**Feature summary:** Refined Engine B into long-only directional-swing strategy with:
-- 4-stage scan funnel (quantum scan → options gates → 3-leg DD → armed plan)
-- 3-leg research (technical + social + LLM synthesis) with armed-plan output
-- Two-phase entry: armed plan (pre-market) → intraday confirmation → immediate marketable order
-- Hybrid exit: underlying-close trailing stop + premium scale-out at +50% max gain
-- Bounded adaptive confirmation parameters with propose-and-ratify governance
-- No resting orders (either side), conviction-down-only sizing
-- Long-only scope (SPY UPTREND only), DTE 35–45, IVR committee instrument select
-
-**Verification:** 
-- All 287 tests pass (including new Tasks 1-3 tests)
-- Tool-group counts unchanged (no new MCP tools added)
-- All spec artifacts present and verified
-- Ready for integration into trading-system profile and paper trading
-
-**Next step:** Merge to main after final validation.
-## ⏩ Session handoff — 2026-06-14 session 2 (Engine B directional-swing merged to main)
-
-**Completed integration of Engine B directional-swing feature:**
-
-- **Merged to main**: feature/engine-b-directional-swing → main (commit f2bf544)
-- **Updated all Hermes profiles**: ./install.sh hermes completed successfully
-- **Profiles updated**:
-  - trading-research: gained updated skills/research/reference/options-vol-edge-dd.md
-  - trading-monitor: gained updated skills/monitor/SKILL.md
-  - trading-eod: gained updated skills/eod-review/SKILL.md
-  - trading-system/trading-orchestrator/trading-trader/trading-risk/trading-backtest: gained access to updated tools/
-- **Verification**:
-  - All 287 tests pass (including new Engine B tests)
-  - Tool-group counts unchanged (no new MCP tools added)
-  - Spec coverage verified (all Engine B v1.1.0 artifacts present)
-
-**Feature now live in multi-profile architecture:**
-- Research agent generates armed plans with 3-leg DD
-- Monitor agent watches armed plans and executes hybrid exit
-- EOD-review agent handles weekly param propose-and-ratify
-- All agents share confirmation parameters and armed-plan storage via tools/
-
-Ready for paper trading validation.
