@@ -54,7 +54,7 @@ A cross-cutting fix that touched one file is incomplete. This failed ~10 times: 
 
 **Live violations** (each tracked in PROJECT_STATUS Known bugs):
 
-- **`SWING_V1`** in `scanner/filters.py` hardcodes **13 strategy thresholds** in Python. Its own comment says it "MUST mirror `sops/equity/swing/v1.2.0.md`" — the newest swing SOP is **v1.6.0**. That is the bug: change the SOP and the scanner silently keeps the old numbers.
+- **`SWING_V1`** in `scanner/filters.py` hardcodes **13 strategy thresholds** in Python, each copied from a swing-SOP gate; its comment pins them to v1.2.0. SOPs v1.3–v1.6 happen not to change a gate, but nothing checks that: change a gate in the SOP and the scanner silently keeps the old number.
 - **`max_open_positions`**: `risk/checks.py` defaults to **5**; `config.yaml` and `OPERATING_MANUAL.md` say **10** (ratified 2026-06-11). The live check uses 5. Fix belongs to D2 (`governance-gate`).
 
 **Corollary:** a value duplicated "for convenience" is a future drift bug with a delay fuse. If code needs a strategy number, it **reads** it — it does not restate it.
@@ -146,7 +146,7 @@ Check these **before** touching thresholds; the 2026-06-23 drought was stale dat
 
 - **`scan_funnel` table** — mechanical per-run funnel, written by both scan tools, complete even when the agent under-logs.
 - **`get_daily_funnel(date)`** — joins scan + decisions + ledger into a `why_zero` line.
-- **Tuning bridge** — EOD writes `tools/scanner/tuning_config.json`; `scan_universe_swing` applies it before each scan (`scan_universe` does not).
+- **Tuning bridge** — `scan_universe_swing` (not `scan_universe`) and the risk-check tools read `tools/scanner/tuning_config.json`. ⚠️ Since `4c78ff6` the EOD skill writes tuning *proposals* to `reports/sop-changes/` instead of calling `generate_tuning_config`, so nothing updates the file.
 - **`get_go_live_scorecard()`** — D5 readiness; **`run_eod_reconcile()`** turns broker fills into round trips.
 
 ## BACKTEST RULES (non-negotiable — violating them produces misleading results)
