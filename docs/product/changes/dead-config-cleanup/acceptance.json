@@ -1,0 +1,5 @@
+{"base": "main", "fixCap": 5, "timeoutSec": 120,
+ "commands": [{"id": "A1",
+   "run": ".venv/bin/python -m pytest tests/ -v -p no:cacheprovider --deselect tests/test_deploy_preflight.py::test_all_checks_pass --deselect tests/test_deploy_preflight.py::test_check_1_does_not_depend_on_any_key_name --deselect tests/test_deploy_preflight.py::test_four_day_old_data_still_passes --deselect tests/test_deploy_preflight.py::test_active_kill_switch_fails_check_4 --deselect tests/test_deploy_preflight.py::test_installed_copy_derives_its_own_profile --deselect tests/test_deploy_preflight.py::test_gateway_scoped_hermes_home_does_not_double_the_path --deselect tests/test_deploy_verify.py::test_missing_cron_store_fails",
+   "cwd": "tools"}],
+ "lockAlso": []}
