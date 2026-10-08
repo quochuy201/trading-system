@@ -9,21 +9,33 @@ Update it as part of finishing each unit of work — like committing code.
 > specs/designs/plans, and the architecture map, start at
 > [`docs/product/ROADMAP.md`](docs/product/ROADMAP.md).
 
-Last updated: **2026-10-07** · Branch: `main` is **23 ahead of `origin/main` — unpushed** (go-live-metrics 09-09; dead-config + doc cleanup 10-07) · Tests: **544 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⚠️ **runtime is behind the repo** — last install 2026-08-09/10, nothing deployed since (owner: "do not deploy")
+Last updated: **2026-10-08** · Branch: `main`, in sync with `origin/main` (pushed 2026-10-08) · Tests: **544 passing** (this machine; 10 deploy-script tests fail *environmentally* — empty `price_data` DB + no `hermes` CLI) · **Paper trading ENABLED** · ⚠️ **runtime is behind the repo** — last install 2026-08-09/10, nothing deployed since (owner: "do not deploy")
 
 ---
+
+## ⏩ 2026-10-08 — published to `origin` under the personal author identity
+
+The 23 commits made since `origin/main` (`4301da9`) carried a work email. Before pushing, they were
+rewritten (`git filter-branch`, unpushed range only) to `zelyuh <zelyuh@users.noreply.github.com>`, the
+identity already used for this repo's earlier personal commits, and set as this repo's local git identity.
+Author and committer dates, messages and content are unchanged, with two exceptions: one commit message's
+reference to an earlier commit was remapped, and a machine path with a work username in the
+`dead-config-cleanup` change note was replaced by a portable description. The 41 already-published
+commits with the work email were left alone; rewriting them would need a force-push.
+
+Old → new commit IDs (older notes may cite the old ones): `daa6226`→`bb2924f`; `dffc6d6`→`8b9ffc5`; `49c679d`→`5239a58`; `1a0af60`→`15a2522`; `6118813`→`e3af96a`; `070f0f0`→`0bf15b3`; `7101277`→`b81165e`; `896e773`→`06266d7`; `a80fa39`→`91d3d56`; `609967a`→`d06a65a`; `016a240`→`0b6320c`; `ff26b94`→`3d4a50c`; `b459e55`→`26cc940`; `bbaaf2a`→`61b9ff7`; `eed52dc`→`061542a`; `44426ec`→`4fd6b28`; `1a12c37`→`2bddd68`; `096704f`→`256b9ee`; `c064ca9`→`0795f29`; `2c839b0`→`f311e00`; `395083d`→`647b45a`; `f7b0a0b`→`26575eb`; `728a265`→`1e85be3`.
 
 ## ⏩ 2026-10-07 — `dead-config-cleanup`: three pieces of dead config removed
 
 Phase 2A of the consolidate-in-place refactor. Change note + gate:
 [`docs/product/changes/dead-config-cleanup/`](docs/product/changes/dead-config-cleanup/change.md).
-Landed on `main` 2026-10-07 by local fast-forward, together with `docs/stale-doc-cleanup`; not pushed.
+Landed on `main` 2026-10-07 by local fast-forward, together with `docs/stale-doc-cleanup`; pushed 2026-10-08.
 
 | Commit | What | Evidence nothing read it |
 |---|---|---|
-| `896e773` | `profile.yaml`: dropped `mcp_tools:` | `grep -rn mcp_tools` → only its own definition; Hermes keys servers under `mcp_servers:` (`mcp_probe.py:164-171`, `verify.sh:85`) |
-| `a80fa39` | `runs/equity.yaml`, `runs/options.yaml`: dropped `risk_budget:` (a 4th risk source) | only `verify.sh` check 6 reads these files, and it reads `board` only |
-| `609967a` | `server.py`: `reset_tuning_config` → `eod` group; new `UNGROUPED_BY_DESIGN = {capture_iv_universe}` (cron-only) | the 2 tools were in no group; a new test fails on any undeclared ungrouped tool |
+| `06266d7` | `profile.yaml`: dropped `mcp_tools:` | `grep -rn mcp_tools` → only its own definition; Hermes keys servers under `mcp_servers:` (`mcp_probe.py:164-171`, `verify.sh:85`) |
+| `91d3d56` | `runs/equity.yaml`, `runs/options.yaml`: dropped `risk_budget:` (a 4th risk source) | only `verify.sh` check 6 reads these files, and it reads `board` only |
+| `d06a65a` | `server.py`: `reset_tuning_config` → `eod` group; new `UNGROUPED_BY_DESIGN = {capture_iv_universe}` (cron-only) | the 2 tools were in no group; a new test fails on any undeclared ungrouped tool |
 
 Tests were written first by a separate test writer and locked: `tests/test_deploy_config.py` (new, 3) +
 3 in `tests/test_tool_groups.py`. `task-gate check` → `544 passed, 10 deselected, RESULT PASS`.
@@ -47,15 +59,15 @@ claims fixed and line refs replaced by symbol names; `README.md`, `ARCHITECTURE-
 
 Owner set the direction: **consolidate in place** (not a rewrite), keep the current repo as the baseline (tag `backup/pre-refactor-2026-09-09`), and finish `go-live-metrics` as the feature that lets the system measure itself. All work on branch `refactor/consolidate-and-go-live-metrics`, **local and unpushed** (public remote — no push without owner say-so). One commit per task.
 
-**Env fix first (`daa6226`).** `pyproject.toml` pinned `mcp[cli]>=1.0.0` which now resolves to **2.x**, where `FastMCP` was renamed — `server.py`'s `from mcp.server.fastmcp import FastMCP` then fails at import and takes 5 tests with it. Pinned `mcp[cli]>=1.0.0,<2`. Baseline after: `526 passed`; the 10 failing tests are all in `test_deploy_preflight.py`/`test_deploy_verify.py` and fail *for environmental reasons on this machine* — `price_data` is empty (the 25 MB `trading.db` is gitignored, not carried) and there is no `hermes` CLI — not code regressions.
+**Env fix first (`bb2924f`).** `pyproject.toml` pinned `mcp[cli]>=1.0.0` which now resolves to **2.x**, where `FastMCP` was renamed — `server.py`'s `from mcp.server.fastmcp import FastMCP` then fails at import and takes 5 tests with it. Pinned `mcp[cli]>=1.0.0,<2`. Baseline after: `526 passed`; the 10 failing tests are all in `test_deploy_preflight.py`/`test_deploy_verify.py` and fail *for environmental reasons on this machine* — `price_data` is empty (the 25 MB `trading.db` is gitignored, not carried) and there is no `hermes` CLI — not code regressions.
 
-**Task 8 — `trade_transactions` fence (`dffc6d6`, test-only).** No code change: the fence already held (only `repository.py`'s legacy `save_transaction` methods read the table; nothing in `audit/` does). Added `test_reconcile.py::test_legacy_table_untouched` — seeds the legacy table (incl. a priced row that is really the plan's intent) and proves the go-live path ignores it (zero fills / round trips despite legacy rows). Mutation-checked: a simulated legacy-row leak into `fills` trips the assertion.
+**Task 8 — `trade_transactions` fence (`8b9ffc5`, test-only).** No code change: the fence already held (only `repository.py`'s legacy `save_transaction` methods read the table; nothing in `audit/` does). Added `test_reconcile.py::test_legacy_table_untouched` — seeds the legacy table (incl. a priced row that is really the plan's intent) and proves the go-live path ignores it (zero fills / round trips despite legacy rows). Mutation-checked: a simulated legacy-row leak into `fills` trips the assertion.
 
-**Task 9 — `get_go_live_scorecard()` (`49c679d`).** Pure `go_live_scorecard(repo, mode)` in `audit/performance.py` (D5 thresholds as module constants — one home) + a thin MCP tool in the `eod` group. Reports the D5 ladder; **unknown ≠ pass** — `gate_live`/`d7_edge`/`paper_vs_backtest` are `UNAVAILABLE` (not built), and expectancy is `null` (never `0.0`) when nothing is R-computable, so the verdict is honestly `NOT READY` today. `test_tool_groups` 61→62; 8 tests in `test_scorecard.py`.
+**Task 9 — `get_go_live_scorecard()` (`5239a58`).** Pure `go_live_scorecard(repo, mode)` in `audit/performance.py` (D5 thresholds as module constants — one home) + a thin MCP tool in the `eod` group. Reports the D5 ladder; **unknown ≠ pass** — `gate_live`/`d7_edge`/`paper_vs_backtest` are `UNAVAILABLE` (not built), and expectancy is `null` (never `0.0`) when nothing is R-computable, so the verdict is honestly `NOT READY` today. `test_tool_groups` 61→62; 8 tests in `test_scorecard.py`.
 
-**Task 10 — reconcile + scorecard wired into EOD (`1a0af60`). This turns the previously-dark compute layer on.** New fail-safe `run_eod_reconcile()` MCP tool: `sync_fills → sync_orders_terminal → rebuild_round_trips → write_performance_snapshot`, each stage isolated so a failure is captured and the rest still run — it reads the broker and writes only audit tables, touches no order-placement path, and never raises. The daily report (`_write_report_markdown`) now renders a Go-Live Scorecard block; `skills/eod-review/SKILL.md` Step 1.5 calls reconcile then scorecard. Tools registered in `eod` + `monitor` (`test_tool_groups` 62→63). *Deviation:* reconcile was **not** added to the per-minute mechanical `monitor_sentinel.py` (a per-minute DB write would be heavy/risky; the sentinel is a no-LLM wake-queuer) — the LLM monitor reconciles on wake instead.
+**Task 10 — reconcile + scorecard wired into EOD (`15a2522`). This turns the previously-dark compute layer on.** New fail-safe `run_eod_reconcile()` MCP tool: `sync_fills → sync_orders_terminal → rebuild_round_trips → write_performance_snapshot`, each stage isolated so a failure is captured and the rest still run — it reads the broker and writes only audit tables, touches no order-placement path, and never raises. The daily report (`_write_report_markdown`) now renders a Go-Live Scorecard block; `skills/eod-review/SKILL.md` Step 1.5 calls reconcile then scorecard. Tools registered in `eod` + `monitor` (`test_tool_groups` 62→63). *Deviation:* reconcile was **not** added to the per-minute mechanical `monitor_sentinel.py` (a per-minute DB write would be heavy/risky; the sentinel is a no-LLM wake-queuer) — the LLM monitor reconciles on wake instead.
 
-**Task 11 — deterministic end-to-end proof (`6118813`, partial).** `test_full_pipeline_yields_a_measurable_round_trip`: a planned long placed through the intent path, its buy/sell executions served via the activity feed, then `run_eod_reconcile` → **one round trip, entry 150.00 / exit 158.00 / stop 145.00, `r_multiple` 1.6**, which the scorecard counts (trades 1). Proves the whole machinery end to end.
+**Task 11 — deterministic end-to-end proof (`e3af96a`, partial).** `test_full_pipeline_yields_a_measurable_round_trip`: a planned long placed through the intent path, its buy/sell executions served via the activity feed, then `run_eod_reconcile` → **one round trip, entry 150.00 / exit 158.00 / stop 145.00, `r_multiple` 1.6**, which the scorecard counts (trades 1). Proves the whole machinery end to end.
 
 ```
 $ .venv/bin/python -m pytest tests/ -q      # this machine
@@ -1080,7 +1092,7 @@ Projected v1.2.0 on same span ≈ $285/wk (in-sample arithmetic, not forecast).
 
 - **`go-live-metrics`** — Tasks 1–10 done, **Task 11 partial**: needs one *live* Alpaca paper fill (`.env` creds + open market) to close the fill-capture bug. Plan: `docs/product/features/go-live-metrics/go-live-metrics-implementation-plan.md`.
 - **`deployment`** — ⏸ **paused at 10 of 12 tasks** (1–8, 11, 12 done; 9–10 partial; 6 of 9 done-criteria). The only blocker is an owner-approved real install (`verify.sh` green after a clean install, and a second install changing nothing). Plan: `docs/product/features/deployment/deployment-implementation-plan.md`.
-- **Refactor (consolidate in place)** — Phase 2A (`dead-config-cleanup`) and the stale-doc pass landed on `main` 2026-10-07 (local, unpushed). Next, per the 2026-10-05 audit: the two 🔴 safety fixes in Known bugs (idempotent order submit; restore the truncated monitor/EOD skills).
+- **Refactor (consolidate in place)** — Phase 2A (`dead-config-cleanup`) and the stale-doc pass landed on `main` 2026-10-07; pushed 2026-10-08. Next, per the 2026-10-05 audit: the two 🔴 safety fixes in Known bugs (idempotent order submit; restore the truncated monitor/EOD skills).
 
 ### Strategy-agnostic backtest engine — ⏸ PARKED
 Parked in BUILD-PLAN §4.7 (`backtest-engine`, blocked by D7). The design record below is kept for when its phase opens. Its spec is no longer in the tree: `git show 52fbd45:docs/specs/2026-06-05-strategy-agnostic-backtest-design.md`.
